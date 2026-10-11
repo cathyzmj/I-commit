@@ -777,7 +777,7 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .kmap { overflow-x: auto; margin: 4px -6px 0; padding: 0 2px 6px; -webkit-overflow-scrolling: touch; }
 .kmap svg { display: block; font-family: inherit; }
 .klinks path { fill: none; stroke: rgba(27, 31, 29, 0.16); stroke-width: 1.6; }
-.klinks path.on { stroke: url(#klink); stroke-width: 2.4; }
+.klinks path.on { stroke: #f7a35c; stroke-width: 2.4; }
 .kn { cursor: pointer; outline: none; }
 .kn text { font-size: 12.5px; fill: var(--ink); paint-order: stroke; stroke: rgba(255, 255, 255, 0.85); stroke-width: 3px; stroke-linejoin: round; }
 .kn .khit { fill: transparent; }
@@ -788,7 +788,7 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .kglow { fill: rgba(255, 210, 60, 0.35); filter: blur(3px); }
 .kcore { fill: rgba(255, 255, 255, 0.95); }
 .kr-track { fill: none; stroke: rgba(27, 31, 29, 0.12); stroke-width: 3.4; }
-.kr-fill { fill: none; stroke: url(#klink); stroke-width: 3.4; stroke-linecap: round; }
+.kr-fill { fill: none; stroke: #f5a14f; stroke-width: 3.4; stroke-linecap: round; }
 .kn.branch.lit .kcore { fill: #ffe27a; }
 .kn .klabel { font-size: 12px; font-weight: 700; fill: var(--ink); }
 .kn.root .klabel { font-size: 13.5px; }
@@ -819,3 +819,16 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .kleaf.next { background: rgba(255, 215, 0, 0.18); box-shadow: inset 0 0 0 1.5px rgba(242, 169, 0, 0.55); }
 .kleaf.next .kt::after { content: '  · next'; color: #b8860b; font-size: 12px; font-weight: 650; }
 .kripple { fill: rgba(255, 210, 60, 0.35); stroke: #ffc93c; stroke-width: 2; }
+/* Big maps scroll inside the card, with a thumbnail for getting around. */
+.kmap-wrap { position: relative; }
+.kmap.wide { max-height: min(78vh, 980px); overflow: auto; overscroll-behavior: contain; border-radius: 14px; }
+.kmini { position: absolute; right: 12px; bottom: 12px; width: 190px; height: 130px; border-radius: 12px; overflow: hidden; cursor: pointer; touch-action: none;
+  background: rgba(255, 255, 255, 0.72); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 6px 20px rgba(31, 52, 80, 0.16); }
+.kmini[hidden] { display: none; }
+.kmini svg { width: 100%; height: 100%; display: block; }
+.kmini path { fill: none; stroke: rgba(27, 31, 29, 0.22); stroke-width: 6; }
+.kmini path.on { stroke: #f7a35c; }
+.kmini circle { fill: rgba(27, 31, 29, 0.25); }
+.kmini circle.on { fill: #ffc93c; }
+.kmini-view { position: absolute; border: 2px solid #f2705f; border-radius: 4px; background: rgba(250, 128, 114, 0.12); pointer-events: none; }
