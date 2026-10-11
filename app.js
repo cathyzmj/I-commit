@@ -540,7 +540,7 @@ function parseHash() {
   if (a === 'calendar') return { tab: 'commitments', page: b === 'review' ? 'review' : 'calendar' };
   if (a === 'new') return { tab: 'commitments', id: 'new', edit: true, freq: FREQS.includes(b) ? b : 'daily' };
   if (a === 'week') return { tab: 'routine' };
-  if (a === 'knowledge') return b ? { tab: 'routine', page: 'tree-edit', treeId: b } : { tab: 'routine', page: 'knowledge' };
+  if (a === 'knowledge') return b === 'new' || c === 'edit' ? { tab: 'routine', page: 'tree-edit', treeId: b } : { tab: 'routine', page: 'knowledge', focus: b || null };
   if (a === 'tests') return { tab: 'routine', page: 'tests', testId: b || null };
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
   return { tab: ['today', 'routine', 'cal', 'buddy', 'commitments'].includes(a) ? a : 'today' };
@@ -550,6 +550,7 @@ window.addEventListener('hashchange', () => {
   route = parseHash();
   treeDraft = null;
   if (route.tab === 'buddy') refreshBuddy();
+  if (route.page === 'knowledge' && route.focus) focusTree(route.focus);
   if (route.tab === 'apps') {
     if (route.day) { appsDay = route.day; appsMonth = route.day.slice(0, 7); }
     refreshApps();
@@ -585,6 +586,7 @@ function render() {
   else if (route.tab === 'commitments') html = commitmentsTabHtml();
   else html = todayTabHtml();
   $app.dataset.tab = route.id || route.page ? 'page' : route.tab;
+  $app.dataset.page = route.page || '';
   $app.innerHTML = html + tabBarHtml() + sideNavHtml();
   fillSideSections();
 }
@@ -760,7 +762,7 @@ function todayTabHtml() {
     daily += `<div class="sec">${escapeHtml(section)}</div>`;
     for (const [id, it] of entries) {
       const daysDone = it.ticks.filter((_, i) => dayDone(it, i)).length;
-      daily += todayDailyRow(wk, ti, id, it, `${targetLabel(it)} · ${daysDone}/7 this week`);
+      daily += todayDailyRow(wk, ti, id, it, `${targetLabel(it)} · ${daysDone}/7 this week`) + routineTreeLines(id);
       if (id === state.testRoutine) {
         const n = state.tests.filter((x) => x.date === iso).length;
         daily += `<a class="trow-extra" href="#/tests">${n ? `${n} result${n === 1 ? '' : 's'} logged today · ` : ''}+ Log a result</a>`;
@@ -1600,56 +1602,121 @@ function leafDot(n) {
 const leafAct = (tree, n) => `data-act="${n.cover ? 'tree-cover' : 'tree-lit'}" data-tree="${tree.id}" data-node="${n.id}" ${tree.isMap ? 'data-map="1"' : ''} role="button" tabindex="0" aria-pressed="${!!n.lit}"`;
 function treeSvg(tree, nodes, { interactive = true, narrow = narrowMap() } = {}) {
   if (narrow) return treeRowsSvg(tree, nodes, { interactive });
-  const items = [];   // { n, depth, y, x, leaf, p }
-  const links = [];
-  let row = 0, maxDepth = 0, maxLeaf = 0;
+  // Columns stretch to the card's width so the map uses the space it has.
+  const depthOf = (ns) => (ns.length ? 1 + Math.max(...ns.map((n) => (treeFold.has(n.id) && interactive ? 0 : depthOf(n.k)))) : 0);
+  const maxDepth = depthOf(nodes);
+  const avail = Math.max(620, Math.min(($app.clientWidth || 1000) - 60, 1500));
+  const col = Math.max(150, Math.min(300, (avail - K_PAD * 2 - 230) / Math.max(1, maxDepth)));
+  const ROW = 36, CH = 7.4; // row height and approximate width of a character (13.5px text)
+  const items = [], links = [];
+  let y = K_PAD + 24;
   const place = (n, depth) => {
     const leaf = !n.k.length;
     const folded = !leaf && treeFold.has(n.id) && interactive;
-    const it = { n, depth, leaf, folded, p: leaf ? null : treeProgress(n.k), x: K_PAD + depth * K_COL };
-    maxDepth = Math.max(maxDepth, depth);
-    if (leaf || folded) { it.y = K_PAD + 14 + row++ * K_ROW; maxLeaf = Math.max(maxLeaf, Math.min(n.t.length, 34)); }
+    const it = { n, depth, leaf, folded, p: leaf ? null : treeProgress(n.k), x: K_PAD + depth * col };
+    if (leaf || folded) { it.y = y; y += ROW; }
     else {
+      y += ROW * 0.45; // room for the branch's label above its dot
       const kids = n.k.map((c) => place(c, depth + 1));
       it.y = (kids[0].y + kids[kids.length - 1].y) / 2;
       for (const c of kids) links.push({ a: it, b: c });
+      y += ROW * 0.25;
     }
     items.push(it);
     return it;
   };
-  const rootP = treeProgress(nodes);
-  const root = { n: { id: 'root', t: tree.name || 'Tree', k: nodes }, depth: 0, leaf: false, p: rootP, x: K_PAD, root: true };
+  const root = { n: { id: 'root', t: tree.name || 'Tree', k: nodes }, depth: 0, leaf: false, p: treeProgress(nodes), x: K_PAD + 6, root: true };
   const kids = nodes.map((c) => place(c, 1));
   if (!kids.length) return '';
-  root.y = (kids[0].y + kids[kids.length - 1].y) / 2;
+  const h = y + K_PAD;
+  // Tall maps keep the centre dot near the top so it stays in view.
+  root.y = h > 900 ? kids[0].y : (kids[0].y + kids[kids.length - 1].y) / 2;
   for (const c of kids) links.push({ a: root, b: c });
-  const w = K_PAD * 2 + maxDepth * K_COL + maxLeaf * 6.6 + 24;
-  const h = K_PAD * 2 + row * K_ROW + 10;
+  const w = Math.max(avail, K_PAD * 2 + maxDepth * col + 260);
   const litness = (it) => (it.leaf ? (it.n.lit ? 1 : 0) : it.p.pct);
   const path = ({ a, b }) => { const mx = (a.x + b.x) / 2; return `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`; };
+  const back = ({ a, b }) => { const mx = (a.x + b.x) / 2; return `M${b.x},${b.y} C${mx},${b.y} ${mx},${a.y} ${a.x},${a.y}`; };
   const ring = (it, r) => { const c = 2 * Math.PI * r; return `<circle class="kr-track" r="${r}"/><circle class="kr-fill" r="${r}" stroke-dasharray="${(it.p.pct * c).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90)"/>`; };
   const nodeSvg = (it) => {
     const t = escapeHtml(it.n.t);
     if (it.leaf) {
-      return `<g class="kn leaf ${it.n.lit ? 'lit' : ''} ${it.n.cov ? 'cov' : ''}" transform="translate(${it.x},${it.y})" ${interactive ? leafAct(tree, it.n) : ''}>
-        <title>${t}${it.n.cov ? ` · ${it.n.cov.lit}/${it.n.cov.total} course topics` : ''}</title><rect class="khit" x="-10" y="-13" width="${Math.min(it.n.t.length, 34) * 6.6 + 30}" height="26" rx="8"/>
-        ${leafDot(it.n)}<text x="13" y="4">${escapeHtml(clip(it.n.t, 34))}</text></g>`;
+      const chars = Math.max(10, Math.floor((w - it.x - 40) / CH));
+      return `<g class="kn leaf ${it.n.lit ? 'lit' : ''} ${it.n.cov ? 'cov' : ''}" data-nid="${it.n.id}" transform="translate(${it.x},${it.y})" ${interactive ? leafAct(tree, it.n) : ''}>
+        <title>${t}${it.n.cov ? ` · ${it.n.cov.lit}/${it.n.cov.total} course topics` : ''}</title><rect class="khit" x="-12" y="-15" width="${Math.min(it.n.t.length, chars) * CH + 34}" height="30" rx="9"/>
+        ${leafDot(it.n)}<text x="15" y="5">${escapeHtml(clip(it.n.t, chars))}${it.n.cov ? ` <tspan class="kcount">${it.n.cov.lit}/${it.n.cov.total}</tspan>` : ''}</text></g>`;
     }
-    const big = it.root ? 13 : 9;
-    const done = it.p.lit === it.p.total;
-    return `<g class="kn branch ${done ? 'lit' : ''} ${it.folded ? 'folded' : ''} ${it.root ? 'root' : ''}" transform="translate(${it.x},${it.y})"
+    const big = it.root ? 16 : 10;
+    const done = it.p.total > 0 && it.p.lit === it.p.total;
+    const chars = it.root ? 26 : Math.max(12, Math.floor((col - 16) / 7.6));
+    return `<g class="kn branch ${done ? 'lit' : ''} ${it.folded ? 'folded' : ''} ${it.root ? 'root' : ''}" data-nid="${it.n.id}" transform="translate(${it.x},${it.y})"
         ${interactive && !it.root ? `data-act="tree-fold" data-node="${it.n.id}" role="button" tabindex="0" aria-expanded="${!it.folded}"` : ''}>
       <title>${t} · ${it.p.lit}/${it.p.total}</title>
-      ${done ? `<circle class="kglow" r="${big + 5}"/>` : ''}<circle class="kcore" r="${big - 3}"/>${ring(it, big)}
-      ${it.root ? `<text class="kpct" y="4">${Math.round(it.p.pct * 100)}</text>` : it.folded ? `<text class="kplus" y="4">+</text>` : ''}
-      <text class="klabel" x="${it.root ? -10 : -6}" y="${it.root ? big + 18 : -(big + 7)}">${escapeHtml(clip(it.n.t, it.root ? 22 : 19))}</text>
-      ${it.folded ? `<text class="kcount" x="${big + 6}" y="4">${it.p.lit}/${it.p.total}</text>` : ''}</g>`;
+      ${done ? `<circle class="kglow" r="${big + 6}"/>` : ''}<circle class="kcore" r="${big - 3}"/>${ring(it, big)}
+      ${it.root ? `<text class="kpct" y="4.5">${Math.round(it.p.pct * 100)}</text>` : it.folded ? `<text class="kplus" y="5">+</text>` : ''}
+      <text class="klabel" x="${it.root ? -12 : -8}" y="${it.root ? big + 22 : -(big + 8)}">${escapeHtml(clip(it.n.t, chars))}</text>
+      ${it.folded ? `<text class="kcount" x="${big + 7}" y="5">${it.p.lit}/${it.p.total}</text>` : ''}</g>`;
   };
-  return `<div class="kmap"><svg viewBox="0 0 ${Math.ceil(w)} ${Math.ceil(h)}" width="${Math.ceil(w)}" height="${Math.ceil(h)}" role="img" aria-label="${escapeHtml(tree.name || 'Knowledge tree')}">
+  return `<div class="kmap wide"><svg viewBox="0 0 ${Math.ceil(w)} ${Math.ceil(h)}" width="${Math.ceil(w)}" height="${Math.ceil(h)}" role="img" aria-label="${escapeHtml(tree.name || 'Knowledge tree')}">
     <defs><linearGradient id="klink" x1="0" x2="1"><stop offset="0" stop-color="#fa8072"/><stop offset="1" stop-color="#ffc93c"/></linearGradient></defs>
-    <g class="klinks">${links.map((l) => { const v = litness(l.b); return `<path d="${path(l)}" class="${v > 0 ? 'on' : ''}" ${v > 0 ? `style="opacity:${(0.35 + 0.65 * v).toFixed(2)}"` : ''}/>`; }).join('')}</g>
+    <g class="klinks">${links.map((l) => { const v = litness(l.b); return `<path d="${path(l)}" data-from="${l.a.n.id}" data-to="${l.b.n.id}" data-back="${back(l)}" class="${v > 0 ? 'on' : ''}" ${v > 0 ? `style="opacity:${(0.35 + 0.65 * v).toFixed(2)}"` : ''}/>`; }).join('')}</g>
     ${nodeSvg(root)}${items.map(nodeSvg).join('')}
   </svg></div>`;
+}
+// When a topic lights up, a stream of light runs from its dot along the links to the centre dot.
+let pendingStream = null;
+function runStream() {
+  const id = pendingStream;
+  pendingStream = null;
+  if (!id || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  for (const svg of $app.querySelectorAll('.kmap svg')) {
+    const start = svg.querySelector(`[data-nid="${CSS.escape(id)}"]`);
+    if (!start) continue;
+    const segs = [];
+    let cur = id;
+    for (let guard = 0; guard < 12; guard++) {
+      const link = svg.querySelector(`.klinks path[data-to="${CSS.escape(cur)}"]`);
+      if (!link) break;
+      segs.push(link.dataset.back);
+      cur = link.dataset.from;
+    }
+    if (!segs.length) continue;
+    const d = segs.map((sg, i) => (i ? sg.replace(/^M/, 'L') : sg)).join(' ');
+    const ns = 'http://www.w3.org/2000/svg';
+    const g = document.createElementNS(ns, 'g');
+    g.setAttribute('class', 'kstream');
+    svg.insertBefore(g, svg.querySelector('.klinks').nextSibling);
+    const probe = document.createElementNS(ns, 'path');
+    probe.setAttribute('d', d);
+    g.appendChild(probe);
+    const len = probe.getTotalLength();
+    probe.remove();
+    const dur = Math.min(1600, 500 + len * 0.9);
+    [[46, 0, 5], [22, 120, 3], [10, 220, 2]].forEach(([dash, delay, width]) => {
+      const p = document.createElementNS(ns, 'path');
+      p.setAttribute('d', d);
+      p.style.strokeWidth = width;
+      p.style.strokeDasharray = `${dash} ${len + dash}`;
+      g.appendChild(p);
+      p.animate([{ strokeDashoffset: dash, opacity: 1 }, { strokeDashoffset: -len, opacity: 0.9 }],
+        { duration: dur, delay, easing: 'cubic-bezier(.45,0,.25,1)', fill: 'forwards' });
+    });
+    // Ripples: one where the topic lit up, one when the stream reaches the centre.
+    const xy = (el) => (el.getAttribute('transform').match(/translate\(([-\d.]+),([-\d.]+)\)/) || []).slice(1).map(Number);
+    const ripple = (el, delay, r) => {
+      const [cx, cy] = xy(el);
+      if (cx == null) return;
+      const c = document.createElementNS(ns, 'circle');
+      c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', r);
+      c.setAttribute('class', 'kripple');
+      g.appendChild(c);
+      c.style.transformOrigin = `${cx}px ${cy}px`;
+      c.animate([{ transform: 'scale(1)', opacity: 0.9 }, { transform: 'scale(3.2)', opacity: 0 }], { duration: 650, delay, easing: 'ease-out', fill: 'both' });
+    };
+    ripple(start, 0, 7);
+    const target = svg.querySelector(`[data-nid="${CSS.escape(cur)}"]`) || svg.querySelector('.kn.root');
+    if (target) ripple(target, dur - 120, 14);
+    setTimeout(() => g.remove(), dur + 400);
+  }
 }
 // Phones: the same dots and links, one topic per row (children step right under their branch).
 const R_ROW = 34, R_IND = 22;
@@ -1670,18 +1737,19 @@ function treeRowsSvg(tree, nodes, { interactive }) {
   const h = K_PAD * 2 + (rows.length - 1) * R_ROW;
   const v = (it) => (it.leaf ? (it.n.lit ? 1 : 0) : it.p.pct);
   const path = ({ a, b }) => `M${a.x},${a.y + 8} L${a.x},${b.y - 10} Q${a.x},${b.y} ${a.x + 10},${b.y} L${b.x - 8},${b.y}`;
+  const back = ({ a, b }) => `M${b.x - 8},${b.y} L${a.x + 10},${b.y} Q${a.x},${b.y} ${a.x},${b.y - 10} L${a.x},${a.y + 8}`;
   const ring = (it, r) => { const c = 2 * Math.PI * r; return `<circle class="kr-track" r="${r}"/><circle class="kr-fill" r="${r}" stroke-dasharray="${(it.p.pct * c).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90)"/>`; };
   // Card width minus margins, in characters of ~7px, so long names end in … instead of running off.
   const room = (it, extra = 0) => Math.max(8, Math.floor((Math.min(window.innerWidth, 640) - 70 - it.x - extra) / 7.1));
   const node = (it) => {
     const t = escapeHtml(it.n.t);
     if (it.leaf) {
-      return `<g class="kn leaf ${it.n.lit ? 'lit' : ''} ${it.n.cov ? 'cov' : ''}" transform="translate(${it.x},${it.y})" ${interactive ? leafAct(tree, it.n) : ''}>
+      return `<g class="kn leaf ${it.n.lit ? 'lit' : ''} ${it.n.cov ? 'cov' : ''}" data-nid="${it.n.id}" transform="translate(${it.x},${it.y})" ${interactive ? leafAct(tree, it.n) : ''}>
         <title>${t}</title><rect class="khit" x="-12" y="-15" width="1000" height="30" rx="8"/>
         ${leafDot(it.n)}<text x="14" y="4.5">${escapeHtml(clip(it.n.t, room(it, it.n.cov ? 30 : 0)))}${it.n.cov ? ` <tspan class="kcount">${it.n.cov.lit}/${it.n.cov.total}</tspan>` : ''}</text></g>`;
     }
     const big = it.root ? 11 : 8, done = it.p.lit === it.p.total;
-    return `<g class="kn branch ${done ? 'lit' : ''} ${it.folded ? 'folded' : ''} ${it.root ? 'root' : ''}" transform="translate(${it.x},${it.y})"
+    return `<g class="kn branch ${done ? 'lit' : ''} ${it.folded ? 'folded' : ''} ${it.root ? 'root' : ''}" data-nid="${it.n.id}" transform="translate(${it.x},${it.y})"
         ${interactive && !it.root ? `data-act="tree-fold" data-node="${it.n.id}" role="button" tabindex="0" aria-expanded="${!it.folded}"` : ''}>
       <title>${t}</title><rect class="khit" x="-12" y="-15" width="1000" height="30" rx="8"/>
       ${done ? `<circle class="kglow" r="${big + 5}"/>` : ''}<circle class="kcore" r="${big - 3}"/>${ring(it, big)}
@@ -1690,7 +1758,7 @@ function treeRowsSvg(tree, nodes, { interactive }) {
   };
   return `<div class="kmap rows"><svg width="100%" height="${h}" role="img" aria-label="${escapeHtml(tree.name || 'Knowledge tree')}">
     <defs><linearGradient id="klink" x1="0" x2="1"><stop offset="0" stop-color="#fa8072"/><stop offset="1" stop-color="#ffc93c"/></linearGradient></defs>
-    <g class="klinks">${links.map((l) => { const x = v(l.b); return `<path d="${path(l)}" class="${x > 0 ? 'on' : ''}" ${x > 0 ? `style="opacity:${(0.35 + 0.65 * x).toFixed(2)}"` : ''}/>`; }).join('')}</g>
+    <g class="klinks">${links.map((l) => { const x = v(l.b); return `<path d="${path(l)}" data-from="${l.a.n.id}" data-to="${l.b.n.id}" data-back="${back(l)}" class="${x > 0 ? 'on' : ''}" ${x > 0 ? `style="opacity:${(0.35 + 0.65 * x).toFixed(2)}"` : ''}/>`; }).join('')}</g>
     ${rows.map(node).join('')}</svg></div>`;
 }
 let lastNarrow = narrowMap();
@@ -1704,11 +1772,12 @@ function treeBodyHtml(t) {
   if (!t.map.length) return treeSvg(t, t.nodes) + `<p class="help center">This map shows the full course list. <a href="#/knowledge/${t.id}/edit">Add a simplified map</a> to see just the core skills.</p>`;
   return treeSvg({ ...t, isMap: true }, deriveMap(t.nodes, t.map).nodes);
 }
+let nextLeafId = null;
 const treeOpen = new Set(); // list view: branches folded open this session (top level starts open)
 function treeNodesHtml(tree, nodes, depth = 0) {
   return `<ul class="ktree">${nodes.map((n) => {
     if (!n.k.length) {
-      return `<li><button class="kleaf ${n.lit ? 'lit' : ''}" data-act="tree-lit" data-tree="${tree.id}" data-node="${n.id}" aria-pressed="${!!n.lit}">
+      return `<li><button class="kleaf ${n.lit ? 'lit' : ''} ${n.id === nextLeafId ? 'next' : ''}" data-act="tree-lit" data-tree="${tree.id}" data-node="${n.id}" aria-pressed="${!!n.lit}">
         <span class="kdot"></span><span class="kt">${escapeHtml(n.t)}</span></button></li>`;
     }
     const p = treeProgress(n.k);
@@ -1722,7 +1791,8 @@ const treeMain = (t) => (t.nodes.length ? t.nodes : deriveMap(t.nodes, t.map).no
 function treeCardHtml(t) {
   const p = treeProgress(treeMain(t));
   const c = t.commitmentId && state.commitments.find((x) => x.id === t.commitmentId);
-  return `<section class="card ktree-card" data-section="${escapeHtml(t.name)}">
+  nextLeafId = (nextTopic(t) || {}).id;
+  return `<section class="card ktree-card" id="tree-${t.id}" data-section="${escapeHtml(t.name)}">
     <div class="card-head"><h2>${escapeHtml(t.name)}</h2><a class="txt-btn" href="#/knowledge/${t.id}/edit">Edit</a></div>
     <div class="kprog"><b>${Math.round(p.pct * 100)}%</b><span>${t.map.length && t.nodes.length ? 'of the course' : 'lit'} · ${p.lit} of ${p.total} topics${p.week ? ` · <em>+${p.week} this week</em>` : ''}</span></div>
     <div class="hbar"><i style="width:${p.pct * 100}%"></i></div>
@@ -1822,22 +1892,73 @@ function toggleCover(treeId, nodeId) {
   if (!d || !d.cover) return;
   const leaves = d.cover.map((id) => findNode(t.nodes, id)).filter(Boolean);
   const all = leaves.every((l) => l.lit);
-  for (const l of leaves) { if (all) { delete l.lit; delete l.at; } else if (!l.lit) { l.lit = true; l.at = todayISO(); } }
+  let fresh = 0;
+  for (const l of leaves) { if (all) { delete l.lit; delete l.at; } else if (!l.lit) { l.lit = true; l.at = todayISO(); fresh++; } }
+  if (!all) pendingStream = nodeId;
+  const note = fresh ? logRoutineFromTree(t, fresh) : '';
   save();
   render();
-  toast(all ? `Cleared ${leaves.length} course topics` : `Ticked ${leaves.length} course topics`);
+  runStream();
+  const topics = `${leaves.length} course topic${leaves.length === 1 ? '' : 's'}`;
+  toast((all ? `Cleared ${topics}` : `Ticked ${topics}`) + (note ? ` · ${note}` : ''));
+}
+// Learning course topics counts as doing the linked routine today: a task is ticked; a counter of
+// lessons/topics goes up by the number learned (hour counters are left for you to log).
+function logRoutineFromTree(t, n) {
+  const c = t.commitmentId && state.commitments.find((x) => x.id === t.commitmentId);
+  const w = c && getWeek(currentWeekKey());
+  const it = w && w.items[c.id];
+  if (!it) return '';
+  const i = todayIndex(currentWeekKey());
+  if (it.kind === 'counter') {
+    if (isHourUnit(it.unit)) return '';
+    if (it.freq === 'weekly') it.count = round2(it.count + n * (it.step || 1)); else it.counts[i] = round2(it.counts[i] + n * (it.step || 1));
+    return `${c.name} +${n}`;
+  }
+  if (it.freq === 'weekly') { if (it.done) return ''; it.done = true; }
+  else { if (it.ticks[i]) return ''; it.ticks[i] = true; }
+  return `${c.name} ticked for today`;
+}
+// The next topic to learn in the course list (first one not yet lit).
+const nextTopic = (t) => treeLeaves(t.nodes).find((n) => !n.lit) || null;
+function pathTo(nodes, id, trail = []) {
+  for (const n of nodes) { if (n.id === id) return trail; const r = pathTo(n.k, id, [...trail, n]); if (r) return r; }
+  return null;
+}
+// Opens the list view at the next topic of a tree (used from Today and the routine's page).
+function focusTree(id) {
+  const t = state.trees.find((x) => x.id === id);
+  if (!t) return;
+  treeView = 'list';
+  const next = nextTopic(t);
+  for (const b of (next && pathTo(t.nodes, next.id)) || []) { treeOpen.add(b.id); treeOpen.delete(`-${b.id}`); }
+  setTimeout(() => {
+    const el = document.querySelector(`.kleaf[data-node="${CSS.escape(next ? next.id : '')}"]`) || document.getElementById(`tree-${id}`);
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, 60);
+}
+function routineTreeLines(cid) {
+  const today = todayISO();
+  return state.trees.filter((t) => t.commitmentId === cid && t.nodes.length).map((t) => {
+    const next = nextTopic(t);
+    const done = treeLeaves(t.nodes).filter((n) => n.lit && n.at === today).length;
+    return `<a class="trow-extra" href="#/knowledge/${t.id}">${done ? `${done} topic${done === 1 ? '' : 's'} today · ` : ''}${next ? `Next: ${escapeHtml(clip(next.t, 48))}` : 'Course finished 🎉'} ›</a>`;
+  }).join('');
 }
 function toggleLeaf(treeId, nodeId, inMap = false) {
   const t = state.trees.find((x) => x.id === treeId);
   const n = t && findNode(inMap ? t.map : t.nodes, nodeId);
   if (!n) return;
-  if (n.lit) { delete n.lit; delete n.at; } else { n.lit = true; n.at = todayISO(); }
+  if (n.lit) { delete n.lit; delete n.at; } else { n.lit = true; n.at = todayISO(); pendingStream = nodeId; }
+  const note = n.lit && !inMap ? logRoutineFromTree(t, 1) : '';
   save();
   render();
+  runStream();
+  if (note) toast(note);
 }
 function treesForCommitment(id) {
   const ts = state.trees.filter((t) => t.commitmentId === id);
-  return ts.map((t) => { const p = treeProgress(treeMain(t)); return `<a class="crow" href="#/knowledge"><div class="ctext"><div class="n">🌳 ${escapeHtml(t.name)}</div>
+  return ts.map((t) => { const p = treeProgress(treeMain(t)); return `<a class="crow" href="#/knowledge/${t.id}"><div class="ctext"><div class="n">🌳 ${escapeHtml(t.name)}</div>
     <div class="sub">${Math.round(p.pct * 100)}% lit · ${p.lit}/${p.total} topics</div><div class="mini"><i style="width:${p.pct * 100}%"></i></div></div><span class="chev">›</span></a>`; }).join('');
 }
 

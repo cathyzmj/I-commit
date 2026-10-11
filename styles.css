@@ -808,3 +808,14 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .kr-track.thin, .kr-fill.thin { stroke-width: 2.4; }
 .kn.leaf.cov .kdotc { fill: rgba(255, 255, 255, 0.95); stroke: none; }
 .kn.leaf.cov.lit .kdotc { fill: #ffd34d; }
+#app[data-page="knowledge"] { max-width: 1400px; }
+.kmap.wide .kn text { font-size: 13.5px; }
+.kmap.wide .kn .klabel { font-size: 13.5px; }
+.kmap.wide .kn.root .klabel { font-size: 15px; }
+.kmap.wide .kn .kpct { font-size: 12px; }
+.kstream path { fill: none; stroke: #ffc93c; stroke-linecap: round; filter: drop-shadow(0 0 4px rgba(255, 190, 40, 0.95)); }
+.kstream path:nth-child(2) { stroke: #fff3b0; }
+.kstream path:nth-child(3) { stroke: #ffffff; }
+.kleaf.next { background: rgba(255, 215, 0, 0.18); box-shadow: inset 0 0 0 1.5px rgba(242, 169, 0, 0.55); }
+.kleaf.next .kt::after { content: '  · next'; color: #b8860b; font-size: 12px; font-weight: 650; }
+.kripple { fill: rgba(255, 210, 60, 0.35); stroke: #ffc93c; stroke-width: 2; }
