@@ -1634,7 +1634,7 @@ function treeSvg(tree, nodes, { interactive = true, narrow = narrowMap() } = {})
   const root = { n: { id: 'root', t: tree.name || 'Tree', k: nodes }, depth: 0, leaf: false, p: treeProgress(nodes), x: K_PAD + 6, root: true };
   const kids = nodes.map((c, i) => place(c, 1, i));
   if (!kids.length) return '';
-  const h = y + K_PAD;
+  const h = y + K_PAD + (interactive ? 180 : 0); // space below the last branch so it can scroll clear of the thumbnail
   root.y = (kids[0].y + kids[kids.length - 1].y) / 2;
   for (const c of kids) links.push({ a: root, b: c });
   const w = Math.max(avail, K_PAD * 2 + maxDepth * col + 260);
@@ -1671,7 +1671,8 @@ function treeSvg(tree, nodes, { interactive = true, narrow = narrowMap() } = {})
   const mini = interactive ? `<div class="kmini" hidden aria-hidden="true" style="width:${mw}px;height:${mh}px"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
       ${links.map((l) => `<path d="${path(l)}" class="${litness(l.b) > 0 ? 'on' : ''}"/>`).join('')}
       ${all.map((it) => `<circle cx="${it.x}" cy="${it.y}" r="${it.root ? 22 : it.leaf ? 9 : 14}" class="${(it.leaf ? it.n.lit : it.p.lit === it.p.total && it.p.total) ? 'on' : ''}"/>`).join('')}
-    </svg><i class="kmini-view"></i></div>` : '';
+    </svg><i class="kmini-view"></i><button class="kmini-x" data-act="mini-hide" aria-label="Hide thumbnail">×</button></div>
+    <button class="kmini-show" data-act="mini-show" hidden>Show thumbnail</button>` : '';
   return `<div class="kmap-wrap"><div class="kmap wide" ${interactive ? `data-tree="${tree.id}"` : ''}><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" data-rooty="${root.y}" role="img" aria-label="${escapeHtml(tree.name || 'Knowledge tree')}">
     <defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${W}" y2="0"><stop offset="0" stop-color="#fa8072"/><stop offset="1" stop-color="#ffc93c"/></linearGradient></defs>
     <g class="klinks">${linkPaths}</g>
@@ -1681,6 +1682,13 @@ function treeSvg(tree, nodes, { interactive = true, narrow = narrowMap() } = {})
 // Big maps scroll inside their card; a thumbnail in the corner shows where you are, and
 // tapping or dragging it moves there. Scroll positions survive re-rendering (e.g. after a tap).
 const mapScroll = new Map();
+let miniOff = false;
+try { miniOff = localStorage.getItem('kmini') === 'off'; } catch {}
+function setMini(off) {
+  miniOff = off;
+  try { localStorage.setItem('kmini', off ? 'off' : 'on'); } catch {}
+  initMaps();
+}
 function initMaps() {
   for (const box of $app.querySelectorAll('.kmap.wide[data-tree]')) {
     const id = box.dataset.tree, svg = box.querySelector('svg');
@@ -1698,7 +1706,9 @@ function initMaps() {
     }
     if (!mini) continue;
     const fits = box.scrollHeight <= box.clientHeight + 2 && box.scrollWidth <= box.clientWidth + 2;
-    mini.hidden = fits;
+    mini.hidden = fits || miniOff;
+    const show = box.parentElement.querySelector('.kmini-show');
+    if (show) show.hidden = fits || !miniOff;
     const view = mini.querySelector('.kmini-view');
     const sync = () => {
       const mw = mini.clientWidth, mh = mini.clientHeight;
@@ -1715,7 +1725,7 @@ function initMaps() {
       box.scrollLeft = ((e.clientX - r.left) / r.width) * box.scrollWidth - box.clientWidth / 2;
       box.scrollTop = ((e.clientY - r.top) / r.height) * box.scrollHeight - box.clientHeight / 2;
     };
-    mini.onpointerdown = (e) => { e.preventDefault(); mini.setPointerCapture(e.pointerId); go(e); mini.onpointermove = go; };
+    mini.onpointerdown = (e) => { if (e.target.closest('.kmini-x')) return; e.preventDefault(); mini.setPointerCapture(e.pointerId); go(e); mini.onpointermove = go; };
     mini.onpointerup = mini.onpointercancel = () => { mini.onpointermove = null; };
   }
   pendingFocusNode = null;
@@ -3699,6 +3709,8 @@ document.addEventListener('click', (e) => {
       render(); break;
     }
     case 'tree-view': treeView = btn.dataset.v; render(); break;
+    case 'mini-hide': setMini(true); break;
+    case 'mini-show': setMini(false); break;
     case 'tree-prompt': { const f = btn.closest('form'); copyText(treePrompt(f.name.value.trim(), f.source.value.trim())); break; }
     case 'tree-delete': {
       if (!confirm('Delete this knowledge tree?')) break;

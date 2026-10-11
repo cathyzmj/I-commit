@@ -821,7 +821,7 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .kripple { fill: rgba(255, 210, 60, 0.35); stroke: #ffc93c; stroke-width: 2; }
 /* Big maps scroll inside the card, with a thumbnail for getting around. */
 .kmap-wrap { position: relative; }
-.kmap.wide { max-height: min(78vh, 980px); overflow: auto; overscroll-behavior: contain; border-radius: 14px; }
+.kmap.wide { max-height: min(72vh, 940px); overflow: auto; border-radius: 14px; }
 .kmini { position: absolute; right: 12px; bottom: 12px; width: 190px; height: 130px; border-radius: 12px; overflow: hidden; cursor: pointer; touch-action: none;
   background: rgba(255, 255, 255, 0.72); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.9);
   box-shadow: 0 6px 20px rgba(31, 52, 80, 0.16); }
@@ -832,3 +832,10 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .kmini circle { fill: rgba(27, 31, 29, 0.25); }
 .kmini circle.on { fill: #ffc93c; }
 .kmini-view { position: absolute; border: 2px solid #f2705f; border-radius: 4px; background: rgba(250, 128, 114, 0.12); pointer-events: none; }
+.kmini-x { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; border: 0; padding: 0; line-height: 22px;
+  font-size: 15px; font-weight: 700; color: var(--muted); background: rgba(255, 255, 255, 0.9); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15); cursor: pointer; }
+.kmini-x:hover { color: var(--ink); }
+.kmini-show { position: absolute; right: 12px; bottom: 12px; border: 0; border-radius: 99px; padding: 7px 12px; font-size: 12.5px; font-weight: 650; cursor: pointer;
+  color: var(--ink); background: rgba(255, 255, 255, 0.85); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 4px 14px rgba(31, 52, 80, 0.15); }
+.kmini-show[hidden] { display: none; }
+#app[data-page="knowledge"] { padding-bottom: 30vh; }
