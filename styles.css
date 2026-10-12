@@ -872,10 +872,10 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .bcol-head span { font-size: 11px; color: var(--muted); font-weight: 650; }
 .bcol-head b { font-size: 15px; }
 .bcol.today .bcol-head b { color: var(--accent); }
-.board-empty { position: absolute; inset: 40% 0 auto; text-align: center; color: var(--muted); font: 19px/1.5 Noteworthy, "Bradley Hand", "Marker Felt", "Segoe Print", cursive; pointer-events: none; }
+.board-empty { position: absolute; inset: 40% 0 auto; text-align: center; color: var(--muted); font-size: 15px; line-height: 1.5; pointer-events: none; }
 .note { position: absolute; display: flex; flex-direction: column; width: 128px; min-height: 96px; padding: 16px 10px 6px; border-radius: 3px 3px 12px 3px; cursor: grab; touch-action: none; user-select: none;
   transform: rotate(var(--rot)); box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08), 0 8px 18px -8px rgba(40, 30, 0, 0.35);
-  font: 14.5px/1.28 Noteworthy, "Bradley Hand", "Marker Felt", "Segoe Print", cursive; color: #2b2a26; transition: box-shadow .15s, transform .15s; }
+  font-size: 13.5px; line-height: 1.3; font-weight: 500; color: #2b2a26; transition: box-shadow .15s, transform .15s; }
 .note.c-gold { background: linear-gradient(170deg, #fff6b8, #ffec8a); }
 .note.c-salmon { background: linear-gradient(170deg, #ffe0d8, #ffc7ba); }
 .note.c-sky { background: linear-gradient(170deg, #e3f3fb, #c6e5f5); }
@@ -913,11 +913,11 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .note:hover .note-resize { opacity: 1; }
 @media (hover: none) { .note-x { opacity: .6; } .note-resize { opacity: .9; } }
 @media (max-width: 699px) {
-  .note { font-size: 14px; }
+  .note { font-size: 13px; }
   .board-days { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 /* Pinned notes on the calendar and Today: a little sticky with a pin. */
-.dpill.notepill { position: relative; border: 0; border-radius: 3px 3px 10px 3px; box-shadow: 0 4px 10px -6px rgba(40, 30, 0, 0.45); font-family: Noteworthy, "Bradley Hand", "Marker Felt", cursive; font-weight: 500; }
+.dpill.notepill { position: relative; border: 0; border-radius: 3px 3px 10px 3px; box-shadow: 0 4px 10px -6px rgba(40, 30, 0, 0.45); }
 .dpill.notepill::before { content: ''; position: absolute; top: -5px; left: 50%; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ff9b8e, #e2483a 60%, #a92a1f); box-shadow: 2px 3px 0 -2px #9aa3ab; }
 .dpill.notepill.c-gold { background: #fff1a6; } .dpill.notepill.c-salmon { background: #ffd5cc; } .dpill.notepill.c-sky { background: #d3ecf8; }
 .dpill.notepill.c-mint { background: #d5f5d1; } .dpill.notepill.c-lilac { background: #e7ddfb; }
@@ -925,3 +925,22 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .dpill.notepill.done .dname { text-decoration: line-through; opacity: .6; }
 .today-notes { padding: 8px 2px 4px; }
 .board-range { font-size: 14.5px; padding: 0 4px; }
+
+/* Whiteboard calendar view: your schedule as a time grid under the notes. */
+.board.cal { min-height: 520px; }
+.bband { position: absolute; left: 0; right: 0; border-bottom: 2px dashed rgba(27, 31, 29, 0.16); pointer-events: none; }
+.bband span { position: absolute; left: calc(12.5% + 6px); top: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.bhours { position: absolute; left: 12.5%; right: 0; pointer-events: none; }
+.bhour { height: 52px; border-top: 1px solid rgba(27, 31, 29, 0.06); position: relative; }
+.bhour span { position: absolute; left: 4px; top: 2px; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bev { position: absolute; z-index: 1; border-radius: 8px; padding: 3px 6px 3px 7px; overflow: hidden; pointer-events: none; font-size: 11.5px; line-height: 1.25;
+  background: color-mix(in srgb, var(--ev, #add8e6) 26%, rgba(255, 255, 255, 0.55)); border-left: 3px solid color-mix(in srgb, var(--ev, #add8e6) 80%, #000 12%); opacity: .85; }
+.bev b { display: block; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bev span { color: var(--muted); font-size: 10.5px; }
+.bev.allday { height: auto; padding: 2px 6px; }
+.note.in-cal { z-index: 2; }
+.note.dragging[data-when]::after { content: attr(data-when); position: absolute; top: -26px; right: 0; padding: 2px 7px; border-radius: 99px; background: #2b2a26; color: #fff; font-size: 11.5px; font-weight: 700; }
+.note-task { border: 0; background: rgba(255, 255, 255, 0.55); border-radius: 99px; padding: 2px 7px; font-size: 11px; font-weight: 650; cursor: pointer; color: #2b2a26; opacity: 0; transition: opacity .15s; }
+.note:hover .note-task, .note.editing .note-task { opacity: 1; }
+@media (hover: none) { .note-task { opacity: .8; } }
+.sheet { background: rgba(255, 255, 255, 0.94); }

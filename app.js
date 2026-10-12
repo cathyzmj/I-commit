@@ -2400,6 +2400,7 @@ function noteInner(n) {
     <div class="note-foot">
       <button class="note-date ${n.date ? 'on' : ''}" data-act="note-date" data-id="${n.id}" title="Pin to calendar">${n.date ? noteDateLabel(n) : '📅'}</button>
       ${n.date ? `<button class="note-tick ${n.done ? 'on' : ''}" data-act="note-done" data-id="${n.id}" aria-label="Done" aria-pressed="${n.done}">${n.done ? CHECK : ''}</button>` : ''}
+      <button class="note-task" data-act="note-task" data-id="${n.id}" title="Turn into a task">→ Task</button>
       <button class="note-x" data-act="note-delete" data-id="${n.id}" aria-label="Delete note">×</button>
     </div>
     <span class="note-resize" data-resize="${n.id}" aria-hidden="true"></span>`;
@@ -2420,31 +2421,44 @@ function boardFreeHtml(notes) {
         style="left:${(n.x * 100).toFixed(2)}%;top:${n.y}px;width:${n.w || NOTE_W}px;${n.h ? `min-height:${n.h}px;` : ''}--rot:${n.rot}deg">${noteInner(n)}</div>`).join('')}
     </div>`;
 }
+// Calendar view: your week's schedule as a time grid (faint blocks), with notes on top. A note's
+// column is its date and its height on the grid is its time; notes in the "Anytime" band have no time.
+const B_HPX = 52;
 function boardCalHtml(notes) {
   const wk = boardWeek || currentWeekKey();
   const days = DAY_NAMES.map((_, i) => isoDate(dayDate(wk, i)));
   const first = days[0], last = days[6];
   const col = 100 / BOARD_COLS;
-  const colY = Array(BOARD_COLS).fill(10); // auto-stacking for notes without a set height on this view
+  const w = getWeek(wk);
+  const events = w ? itemsOf(w, 'once').filter(([, it]) => days.includes(it.date)) : [];
+  const timed = events.filter(([, it]) => it.time);
+  const allDay = events.filter(([, it]) => !it.time);
+  const mins = (t) => toMinutes(t);
+  const noteMins = notes.filter((n) => n.time).map((n) => mins(n.time));
+  const startHour = Math.min(8, ...timed.map(([, it]) => Math.floor(mins(it.time) / 60)), ...noteMins.map((m) => Math.floor(m / 60)));
+  const endHour = Math.max(22, ...timed.map(([, it]) => Math.ceil((it.endTime ? mins(it.endTime) : mins(it.time) + 60) / 60)), ...noteMins.map((m) => Math.ceil(m / 60) + 1));
   const placed = [];
   let elsewhere = 0;
-  for (const n of [...notes].sort((a, b) => (a.cy ?? 1e9) - (b.cy ?? 1e9))) {
+  for (const n of notes) {
     let c0 = 0, span = 1, cut = '';
     if (n.date) {
       const end = n.endDate || n.date;
       if (end < first || n.date > last) { elsewhere++; continue; }
-      const s = n.date < first ? first : n.date, e = end > last ? last : end;
-      c0 = 1 + dayIndexOf(s);
-      span = dayIndexOf(e) - dayIndexOf(s) + 1;
+      const st = n.date < first ? first : n.date, e = end > last ? last : end;
+      c0 = 1 + dayIndexOf(st);
+      span = dayIndexOf(e) - dayIndexOf(st) + 1;
       cut = `${n.date < first ? 'cut-l' : ''} ${end > last ? 'cut-r' : ''}`;
     }
-    const top = n.cy != null ? n.cy : Math.max(...colY.slice(c0, c0 + span));
-    const hgt = Math.max(NOTE_H, n.h || 0);
-    for (let c = c0; c < c0 + span; c++) colY[c] = Math.max(colY[c], top + hgt + 22);
-    placed.push({ n, c0, span, top, cut });
+    placed.push({ n, c0, span, cut, lane: !n.date ? 'unpinned' : n.time ? 'timed' : 'anytime' });
   }
-  const height = Math.max(520, BOARD_HEAD + Math.max(...colY) + 140);
+  placed.sort((x, y) => (x.n.time || '').localeCompare(y.n.time || ''));
   const isThis = wk === currentWeekKey();
+  const evHtml = timed.map(([id, it]) => {
+    const s0 = mins(it.time), e0 = it.endTime && mins(it.endTime) > s0 ? mins(it.endTime) : s0 + Math.max(30, Math.round((it.hours || 1) * 60));
+    return `<div class="bev ${it.schedule ? 'sched' : ''}" data-ev-min="${s0 - startHour * 60}" data-ev-len="${e0 - s0}" title="${escapeHtml(`${it.name} · ${it.time}${it.endTime ? '–' + it.endTime : ''}`)}"
+      style="--ev:${eventColor(id)};left:calc(${((1 + dayIndexOf(it.date)) * col).toFixed(3)}% + 3px);width:calc(${col.toFixed(3)}% - 6px)">
+      <b>${escapeHtml(it.name)}</b><span>${it.time}${it.endTime ? `–${it.endTime}` : ''}</span></div>`;
+  }).join('');
   return `
     <div class="board-week">
       <button class="icon-btn" data-act="board-prev" aria-label="Previous week">‹</button>
@@ -2452,11 +2466,15 @@ function boardCalHtml(notes) {
       <button class="icon-btn" data-act="board-next" aria-label="Next week">›</button>
       ${elsewhere ? `<span class="hint">${elsewhere} pinned in other weeks</span>` : ''}
     </div>
-    <div class="board-scroll"><div class="board cal" data-mode="cal" data-week="${wk}" style="height:${height}px">
+    <div class="board-scroll"><div class="board cal" data-mode="cal" data-week="${wk}" data-start-hour="${startHour}" data-end-hour="${endHour}">
       <div class="bcols">${['Not pinned', ...days].map((d, i) => `<div class="bcol ${i === 0 ? 'unpinned' : ''} ${d === todayISO() ? 'today' : ''}">
         <div class="bcol-head">${i === 0 ? '<span>Not pinned</span>' : `<span>${DAY_NAMES[i - 1].slice(0, 3)}</span><b>${parseISO(d).getDate()}</b>`}</div></div>`).join('')}</div>
-      ${placed.map(({ n, c0, span, top, cut }) => `<div class="${noteClass(n)} in-cal ${cut}" data-note="${n.id}" data-c0="${c0}" data-span="${span}" ${n.cy == null ? 'data-auto="1"' : ''}
-        style="left:calc(${(c0 * col).toFixed(3)}% + 5px);width:calc(${(span * col).toFixed(3)}% - 10px);top:${BOARD_HEAD + top}px;${n.h ? `min-height:${n.h}px;` : ''}--rot:0deg">${noteInner(n)}</div>`).join('')}
+      <div class="bband"><span>Anytime</span></div>
+      <div class="bhours">${Array.from({ length: endHour - startHour }, (_, i) => `<div class="bhour" data-h="${i}"><span>${pad(startHour + i)}:00</span></div>`).join('')}</div>
+      ${allDay.map(([id, it]) => `<div class="bev allday ${it.schedule ? 'sched' : ''}" data-allday="${1 + dayIndexOf(it.date)}" style="--ev:${eventColor(id)};left:calc(${((1 + dayIndexOf(it.date)) * col).toFixed(3)}% + 3px);width:calc(${col.toFixed(3)}% - 6px)"><b>${escapeHtml(it.name)}</b></div>`).join('')}
+      ${evHtml}
+      ${placed.map(({ n, c0, span, cut, lane }) => `<div class="${noteClass(n)} in-cal ${cut}" data-note="${n.id}" data-c0="${c0}" data-span="${span}" data-lane="${lane}" ${n.time ? `data-min="${mins(n.time) - startHour * 60}"` : ''}
+        style="left:calc(${(c0 * col).toFixed(3)}% + 5px);width:calc(${(span * col).toFixed(3)}% - 10px);${n.h ? `min-height:${Math.min(n.h, 160)}px;` : ''}--rot:0deg">${noteInner(n)}</div>`).join('')}
     </div></div>`;
 }
 function boardPageHtml() {
@@ -2516,6 +2534,7 @@ function openNoteDate(id) {
       <label class="f">Time (optional)<input type="time" name="time" value="${n.time || ''}"></label>
       <button class="btn primary" type="submit">Pin it</button>
       ${n.date ? '<button type="button" class="btn" data-act="note-unpin">Unpin from calendar</button>' : ''}
+      <button type="button" class="btn" data-act="note-task" data-id="${id}">Turn into a task</button>
     </form>`, { note: id });
 }
 function pinNote(id, date, time = null, endDate = undefined) {
@@ -2531,6 +2550,24 @@ function pinNote(id, date, time = null, endDate = undefined) {
   render();
   if (date) toast(`Pinned to ${noteDateLabel(n)}`);
 }
+// A note becomes a one-off task (Today only / the calendar) with the same date and time; the first
+// line is its name and the rest goes into "What to do". Without a date it becomes "Date to be confirmed".
+function noteToTask(id) {
+  const n = state.notes.find((x) => x.id === id);
+  if (!n || !n.text.trim()) { toast('Write something on the note first'); return; }
+  const [first, ...rest] = n.text.trim().split(/\n/);
+  const notes = [rest.join('\n').trim(), n.endDate ? `Until ${fmtShort(n.endDate)}` : ''].filter(Boolean).join('\n\n');
+  const c = newCommitment({ name: first.slice(0, 120), section: 'Notes', freq: 'once', kind: 'task', date: n.date, time: n.date ? n.time : null,
+    hours: 0.5, timeUnit: 'min', notes, order: nextOrder() });
+  state.commitments.push(normaliseCommitment(c));
+  state.notes = state.notes.filter((x) => x !== n);
+  if (editingNote === id) editingNote = null;
+  renumber();
+  save();
+  closeSheet();
+  render();
+  toast(n.date ? `Now a task on ${shortDay(n.date)}${n.time ? ` at ${n.time}` : ''}` : 'Now a task (date to be confirmed)');
+}
 // Notes pinned to a day, including ones lasting several days.
 const notesOn = (iso) => state.notes.filter((n) => n.date && n.date <= iso && iso <= (n.endDate || n.date))
   .sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
@@ -2543,19 +2580,54 @@ function notePillHtml(n, d) {
     <a class="dname" href="#/board">${n.time && d === n.date ? `<small class="dtime">${n.time}</small> ` : ''}${multi}${escapeHtml(n.text || 'Note')}</a></div>`;
 }
 
-// Calendar view: notes without a set position stack down their column by their real height.
+// Calendar view layout (after drawing, using real heights): unpinned notes stack in the first column,
+// untimed notes and all-day events stack in the Anytime band, and the time grid starts below it.
 function layoutBoard() {
   const board = $app.querySelector('.board.cal');
   if (!board) return;
-  const bottom = Array(BOARD_COLS).fill(BOARD_HEAD + 10);
-  for (const el of board.querySelectorAll('.note.in-cal')) {
-    const c0 = Number(el.dataset.c0), span = Number(el.dataset.span);
-    const cols = bottom.slice(c0, c0 + span);
-    let top = parseFloat(el.style.top);
-    if (el.dataset.auto) { top = Math.max(...cols); el.style.top = `${top}px`; }
-    for (let c = c0; c < c0 + span; c++) bottom[c] = Math.max(bottom[c], top + el.offsetHeight + 22);
+  const GAP = 10;
+  const band = Array(BOARD_COLS).fill(BOARD_HEAD + 30);
+  for (const el of board.querySelectorAll('.bev.allday')) {
+    const c = Number(el.dataset.allday);
+    el.style.top = `${band[c]}px`;
+    band[c] += el.offsetHeight + 6;
   }
-  board.style.height = `${Math.max(520, Math.max(...bottom) + 140)}px`;
+  for (const el of board.querySelectorAll('.note.in-cal[data-lane="anytime"]')) {
+    const c0 = Number(el.dataset.c0), span = Number(el.dataset.span);
+    const top = Math.max(...band.slice(c0, c0 + span));
+    el.style.top = `${top}px`;
+    for (let c = c0; c < c0 + span; c++) band[c] = top + el.offsetHeight + GAP + 8;
+  }
+  const gridTop = Math.max(BOARD_HEAD + 74, ...band.slice(1)) + 6;
+  board.dataset.gridTop = gridTop;
+  const bandEl = board.querySelector('.bband');
+  bandEl.style.top = `${BOARD_HEAD}px`;
+  bandEl.style.height = `${gridTop - BOARD_HEAD}px`;
+  const hours = board.querySelector('.bhours');
+  hours.style.top = `${gridTop}px`;
+  for (const el of board.querySelectorAll('.bev[data-ev-min]')) {
+    el.style.top = `${gridTop + (Number(el.dataset.evMin) / 60) * B_HPX}px`;
+    el.style.height = `${Math.max(20, (Number(el.dataset.evLen) / 60) * B_HPX - 3)}px`;
+  }
+  // Timed notes sit at their time; ones that would overlap in the same column step down.
+  const lastBottom = Array(BOARD_COLS).fill(0);
+  for (const el of board.querySelectorAll('.note.in-cal[data-lane="timed"]')) {
+    const c0 = Number(el.dataset.c0), span = Number(el.dataset.span);
+    let top = gridTop + (Number(el.dataset.min) / 60) * B_HPX;
+    top = Math.max(top, ...lastBottom.slice(c0, c0 + span));
+    el.style.top = `${top}px`;
+    for (let c = c0; c < c0 + span; c++) lastBottom[c] = top + el.offsetHeight + 4;
+  }
+  let un = BOARD_HEAD + 30;
+  for (const el of board.querySelectorAll('.note.in-cal[data-lane="unpinned"]')) { el.style.top = `${un}px`; un += el.offsetHeight + GAP + 8; }
+  const gridBottom = gridTop + hours.offsetHeight;
+  board.style.height = `${Math.max(gridBottom + 40, un + 40, ...lastBottom.map((b) => b + 40))}px`;
+}
+// While dragging in the calendar view, the note shows the time it would get.
+function whenAt(board, top) {
+  const gridTop = Number(board.dataset.gridTop);
+  if (top + 8 < gridTop) return 'Anytime';
+  return fmtTime(Number(board.dataset.startHour) * 60 + Math.round(((top - gridTop) / B_HPX) * 4) * 15);
 }
 // Dragging: move a note with the pointer (drop on a day or a calendar column to pin it), or drag
 // its corner / right edge to resize it. A tap without moving starts writing.
@@ -2584,7 +2656,8 @@ document.addEventListener('pointermove', (e) => {
     return;
   }
   d.el.style.left = `${Math.min(br.width - 40, Math.max(0, e.clientX - br.left - d.dx))}px`;
-  d.el.style.top = `${Math.max(d.cal ? BOARD_HEAD : 0, e.clientY - br.top - d.dy)}px`;
+  d.el.style.top = `${Math.max(d.cal ? BOARD_HEAD + 4 : 0, e.clientY - br.top - d.dy)}px`;
+  if (d.cal) d.el.dataset.when = whenAt(d.board, parseFloat(d.el.style.top));
   const over = document.elementsFromPoint(e.clientX, e.clientY).find((x) => x.dataset && x.dataset.dropDate);
   $app.querySelectorAll('.bday.over').forEach((x) => x !== over && x.classList.remove('over'));
   if (over) over.classList.add('over');
@@ -2614,12 +2687,17 @@ document.addEventListener('pointerup', (e) => {
     } else {
       const left = parseFloat(d.el.style.left);
       const c = Math.max(0, Math.min(BOARD_COLS - 1, Math.floor((left + colW * 0.4) / colW)));
-      n.cy = Math.max(0, Math.round(parseFloat(d.el.style.top) - BOARD_HEAD));
       if (c === 0) { n.date = null; n.endDate = null; n.time = null; }
       else {
         const days = noteDays(n);
         n.date = addDaysISO(wk, c - 1);
         n.endDate = days > 1 ? addDaysISO(n.date, days - 1) : null;
+        const gridTop = Number(d.board.dataset.gridTop), top = parseFloat(d.el.style.top);
+        if (top + 8 < gridTop) n.time = null;
+        else {
+          const m = Number(d.board.dataset.startHour) * 60 + Math.round(((top - gridTop) / B_HPX) * 4) * 15;
+          n.time = fmtTime(Math.min(23 * 60 + 45, Math.max(0, m)));
+        }
       }
     }
     save(); render();
@@ -2648,7 +2726,9 @@ document.addEventListener('dblclick', (e) => {
   const br = board.getBoundingClientRect();
   if (board.dataset.mode === 'cal') {
     const c = Math.floor((e.clientX - br.left) / (br.width / BOARD_COLS));
-    addNote({ date: c > 0 ? addDaysISO(board.dataset.week, c - 1) : null, cy: Math.max(0, Math.round(e.clientY - br.top - BOARD_HEAD - 20)) });
+    const y = e.clientY - br.top, gridTop = Number(board.dataset.gridTop);
+    const time = y < gridTop ? null : fmtTime(Number(board.dataset.startHour) * 60 + Math.floor(((y - gridTop) / B_HPX) * 4) * 15);
+    addNote({ date: c > 0 ? addDaysISO(board.dataset.week, c - 1) : null, time: c > 0 ? time : null });
   } else addNote({ x: Math.max(0, (e.clientX - br.left - 60) / br.width), y: Math.max(0, Math.round(e.clientY - br.top - 20)) });
 });
 
@@ -4030,6 +4110,7 @@ document.addEventListener('click', (e) => {
     case 'note-close': closeNote(); break;
     case 'note-color': { const n = state.notes.find((x) => x.id === btn.dataset.id); if (n) { n.color = btn.dataset.color; save(); render(); focusNote(); } break; }
     case 'note-date': openNoteDate(btn.dataset.id); break;
+    case 'note-task': noteToTask(btn.dataset.id); break;
     case 'note-quick': pinNote(sheetCtx && sheetCtx.note, btn.dataset.date, btn.closest('form').time.value); break;
     case 'note-unpin': pinNote(sheetCtx && sheetCtx.note, null); toast('Unpinned'); break;
     case 'note-done': { const n = state.notes.find((x) => x.id === btn.dataset.id); if (n) { n.done = !n.done; save(); render(); } break; }
