@@ -88,6 +88,11 @@ export async function handle(req, store) {
   const since = Number(body.since) || 0;
   const records = body.records && typeof body.records === 'object' ? body.records : {};
   const tombs = body.tombs && typeof body.tombs === 'object' ? body.tombs : {};
+  // A device on an older version doesn't know newer kinds of record and would "delete" them just by
+  // not having them. Only accept deletions of kinds the sending device says it understands
+  // (devices that don't say are the old ones, which only know c/ws/wp/f).
+  const kinds = new Set(Array.isArray(body.kinds) ? body.kinds.map(String) : ['c', 'ws', 'wp', 'f']);
+  for (const k of Object.keys(tombs)) if (!kinds.has(k.slice(0, k.indexOf(':')))) delete tombs[k];
   const joining = body.join === true;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {

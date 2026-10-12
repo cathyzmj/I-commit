@@ -305,6 +305,8 @@ function migrate(s) {
       color: /^#[0-9a-f]{6}$/i.test(f.color || '') ? f.color : null,
     })),
   };
+  // Old versions misfiled records they didn't know as "weeks"; real weeks are keyed by a date.
+  for (const key of Object.keys(s.weeks)) if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) delete s.weeks[key];
   for (const [key, w] of Object.entries(s.weeks)) {
     w.start = w.start || key;
     w.items = w.items || {};
@@ -3504,7 +3506,7 @@ function stampChanges() {
     changed = true;
   }
   for (const k of [...recordHashes.keys()]) {
-    if (current.has(k)) continue;
+    if (current.has(k) || !(splitKey(k)[0] in RECORD_ORDER)) continue;
     recordHashes.delete(k);
     S.tombs[k] = now;
     delete S.dirty[k];
@@ -3561,7 +3563,10 @@ function applyRemote({ records = {}, tombs = {} }) {
   const S = state.sync;
   stampChanges(); // anything edited while the request was in flight counts as a local change
   let applied = 0;
-  const keys = Object.keys(records).sort((x, y) => RECORD_ORDER[splitKey(x)[0]] - RECORD_ORDER[splitKey(y)[0]]);
+  // Records of a kind this version doesn't know (from a newer version on another device) are left
+  // alone: applying them would misfile them, and forgetting them later would delete them everywhere.
+  const known = (k) => splitKey(k)[0] in RECORD_ORDER;
+  const keys = Object.keys(records).filter(known).sort((x, y) => RECORD_ORDER[splitKey(x)[0]] - RECORD_ORDER[splitKey(y)[0]]);
   for (const k of keys) {
     const { p, m } = records[k];
     if (S.dirty[k] && (S.stamps[k] || 0) > m) continue;
@@ -3574,6 +3579,7 @@ function applyRemote({ records = {}, tombs = {} }) {
     applied++;
   }
   for (const [k, t] of Object.entries(tombs)) {
+    if (!known(k)) continue;
     if (S.dirty[k] && (S.stamps[k] || 0) > t) continue;
     removeRecord(k);
     delete S.stamps[k];
@@ -3611,7 +3617,8 @@ async function syncNow({ join = false } = {}) {
       res = await fetch('/api/sync', {
         method: 'POST',
         headers: { authorization: `Bearer ${S.key}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ since: S.version, join, records, tombs }),
+        // kinds: the record kinds this version understands (the server ignores deletions of other kinds).
+        body: JSON.stringify({ since: S.version, join, records, tombs, kinds: Object.keys(RECORD_ORDER) }),
       });
       body = await res.json().catch(() => ({}));
     } catch {

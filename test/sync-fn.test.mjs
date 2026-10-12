@@ -75,3 +75,17 @@ assert.deepEqual(Object.keys(raceRes.body.records).sort(), ['c:mac', 'c:phone'],
 await send(store, null, { method: 'DELETE' });
 assert.equal((await send(store, { since: 5, records: {} })).status, 410, 'device learns sync was turned off');
 console.log('ALL SYNC FUNCTION TESTS PASSED');
+
+// --- older devices can't delete kinds of record they don't know
+{
+  const { handle: h } = await import('../server/sync.mjs');
+  const { memoryStore: ms } = await import('./sync-fn-store.mjs');
+  const st = ms(), K = 'q'.repeat(43);
+  const call = (body) => h(new Request('https://x/api/sync', { method: 'POST', headers: { authorization: `Bearer ${K}` }, body: JSON.stringify(body) }), st).then((r) => r.json());
+  await call({ since: 0, records: { 'n:a': { p: { id: 'a', text: 'GONG' }, m: 1 } }, tombs: {}, kinds: ['c', 'ws', 'wp', 'f', 'n'] });
+  let r = await call({ since: 0, records: {}, tombs: { 'n:a': 5 } }); // an old device (no kinds)
+  if (!r.records['n:a']) throw new Error('old device deleted a note');
+  r = await call({ since: 0, records: {}, tombs: { 'n:a': 6 }, kinds: ['c', 'ws', 'wp', 'f', 'n'] });
+  if (r.records['n:a']) throw new Error('new device could not delete a note');
+  console.log('UNKNOWN-KIND DELETION GUARD PASSED');
+}
