@@ -549,6 +549,8 @@ function parseHash() {
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
   return { tab: ['today', 'routine', 'cal', 'buddy', 'commitments'].includes(a) ? a : 'today' };
 }
+// The app always opens on Today (an invite link still opens its page).
+if (!/^#\/join\//.test(location.hash) && location.hash && location.hash !== '#/today') history.replaceState(null, '', '#/today');
 let route = parseHash();
 window.addEventListener('hashchange', () => {
   route = parseHash();
@@ -4378,9 +4380,20 @@ document.addEventListener('keydown', (e) => {
 
 // Coming back to the app (e.g. next morning): refresh "today", and follow the week
 // rollover if you were looking at the old current week.
+// Coming back after a while (10 minutes) also starts again on Today, with every view back on today's date.
+const BACK_TO_TODAY_MS = 10 * 60e3;
+let hiddenAt = 0;
+function backToToday() {
+  viewKey = currentWeekKey();
+  calViewDay = todayISO();
+  boardWeek = null;
+  if (route.tab !== 'today' || route.id || route.page) location.hash = '#/today';
+}
 document.addEventListener('visibilitychange', () => {
   if (!state) return; // still loading saved data
+  if (document.visibilityState === 'visible' && hiddenAt && Date.now() - hiddenAt > BACK_TO_TODAY_MS && !route.edit && !sheetCtx && !editingNote) backToToday();
   if (document.visibilityState === 'hidden') {
+    hiddenAt = Date.now();
     flush();
     if (widgetTimer) pushWidget();
     if (state.sync.enabled && Object.keys(state.sync.dirty).length + Object.keys(state.sync.tombs).length) syncNow();
