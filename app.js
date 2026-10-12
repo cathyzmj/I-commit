@@ -549,8 +549,9 @@ function parseHash() {
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
   return { tab: ['today', 'routine', 'cal', 'buddy', 'commitments'].includes(a) ? a : 'today' };
 }
-// The app always opens on Today (an invite link still opens its page).
-if (!/^#\/join\//.test(location.hash) && location.hash && location.hash !== '#/today') history.replaceState(null, '', '#/today');
+// The app always opens on Today (an invite link still opens its page). A refresh stays where you were.
+const isReload = (() => { try { return performance.getEntriesByType('navigation')[0].type === 'reload'; } catch { return false; } })();
+if (!isReload && !/^#\/join\//.test(location.hash) && location.hash && location.hash !== '#/today') history.replaceState(null, '', '#/today');
 let route = parseHash();
 window.addEventListener('hashchange', () => {
   route = parseHash();
