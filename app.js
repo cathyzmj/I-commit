@@ -219,7 +219,7 @@ function defaultState() {
     widget: { enabled: false, token: null, lastPush: null, lastError: null },
     sync: freshSync(),
     apps: { items: [], fetchedAt: null, error: null, setup: false },
-    trees: [], tests: [], buddy: null, testRoutine: null,
+    trees: [], tests: [], notes: [], buddy: null, testRoutine: null,
     lastBackup: null,
   };
 }
@@ -294,6 +294,7 @@ function migrate(s) {
   if (!s.sync.enabled) s.sync = freshSync();
   s.trees = (Array.isArray(s.trees) ? s.trees : []).map(normaliseTree);
   s.tests = (Array.isArray(s.tests) ? s.tests : []).map(normaliseTest);
+  s.notes = (Array.isArray(s.notes) ? s.notes : []).map(normaliseNote);
   s.buddy = s.buddy && /^[A-Za-z0-9_-]{32,128}$/.test(s.buddy.token || '') ? { token: s.buddy.token, pactId: String(s.buddy.pactId || ''), commitmentId: s.buddy.commitmentId || null } : null;
   s.calendars = {
     feeds: feeds.filter((f) => f && f.url).map((f) => ({
@@ -542,6 +543,7 @@ function parseHash() {
   if (a === 'week') return { tab: 'routine' };
   if (a === 'knowledge') return b === 'new' || c === 'edit' ? { tab: 'routine', page: 'tree-edit', treeId: b } : { tab: 'routine', page: 'knowledge', focus: b || null };
   if (a === 'tests') return { tab: 'routine', page: 'tests', testId: b || null };
+  if (a === 'board') return { tab: 'cal', page: 'board' };
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
   return { tab: ['today', 'routine', 'cal', 'buddy', 'commitments'].includes(a) ? a : 'today' };
 }
@@ -577,6 +579,7 @@ function render() {
   else if (route.page === 'knowledge') html = knowledgePageHtml();
   else if (route.page === 'tree-edit') html = treeEditHtml();
   else if (route.page === 'tests') html = testsPageHtml();
+  else if (route.page === 'board') html = boardPageHtml();
   else if (route.id && route.edit) html = editPageHtml();
   else if (route.id) html = detailPageHtml(route.id);
   else if (route.tab === 'routine') html = weekTabHtml();
@@ -805,7 +808,8 @@ function todayTabHtml() {
     </section>
     <section class="card" data-section="Today only">
       <div class="card-head"><h2>Today only</h2><a class="txt-btn" href="#/new/once">+ Add</a></div>
-      ${onceToday.length ? onceToday.map(([id, it]) => periodRowHtml(wk, id, it)).join('') : '<p class="muted pad small">No one-off tasks today.</p>'}
+      ${onceToday.length ? onceToday.map(([id, it]) => periodRowHtml(wk, id, it)).join('') : notesOn(iso).length ? '' : '<p class="muted pad small">No one-off tasks today.</p>'}
+      ${notesOn(iso).length ? `<div class="dpills today-notes">${notesOn(iso).map((n) => notePillHtml(n, iso)).join('')}</div>` : ''}
     </section>
     ${appsTodayCardHtml()}
     ${tbcTodayHtml()}
@@ -951,10 +955,12 @@ function calendarTabHtml() {
         <a class="dname" href="#/c/${id}">${it.time ? `<small class="dtime">${escapeHtml(it.time)}</small> ` : ''}${escapeHtml(it.name)}</a></div>`;
     }).join('');
     const apps = (appsByDay[d] || []).map((e) => `<a class="chip-app k-${e.kind}" href="#/apps/${d}" title="${escapeHtml(`${e.a.company} ${APP_EVENT_LABEL[e.kind]}`)}">${escapeHtml(e.a.company)} ${e.kind === 'open' ? 'opens' : e.kind === 'close' ? 'closes' : 'due'}</a>`).join('');
-    const body = routine + ones + apps;
+    const notes = notesOn(d).map((n) => notePillHtml(n, d)).join('');
+    const body = routine + ones + notes + apps;
     return `<div class="pcol ${d === calViewDay ? 'sel' : ''} ${d === today ? 'today' : ''}">
       ${routine ? `<div class="dpills">${routine}</div>` : ''}
       ${ones ? `<div class="dpills">${ones}</div>` : ''}
+      ${notes ? `<div class="dpills">${notes}</div>` : ''}
       ${apps ? `<div class="papps">${apps}</div>` : ''}
       ${body ? '' : '<p class="muted small">Nothing planned.</p>'}</div>`;
   };
@@ -1026,10 +1032,11 @@ function calendarTabHtml() {
         titleAct: `data-act="cal-today" ${isThisWeek && calViewDay === today ? 'disabled' : ''}`,
         right: '<button class="icon-btn" data-act="cal-next" aria-label="Next week">›</button>' + menuBtn,
       })}
+      ${calNav('cal')}
       <div class="cstrip">${strip}</div>
     </header>
     <section class="card cal" data-section="My plan">
-      <div class="card-head"><h2>My plan</h2><span class="hint"><span class="phone-only">${dayName} · </span>routines, your own tasks, applications</span></div>
+      <div class="card-head"><h2>My plan</h2><span class="hint"><span class="phone-only">${dayName} · </span>routines, your tasks, pinned notes, applications</span></div>
       <div class="pgrid-head">${heads('')}</div>
       <div class="pcols">${days.map(planCol).join('')}</div>
     </section>
@@ -2338,6 +2345,171 @@ function buddyTabHtml() {
     </section>`;
 }
 
+// ---------- Whiteboard ----------
+// Sticky notes for things that pop into your head ("order pizza for Aurum"). Drag them anywhere on
+// the board; drop one on a day (or pick a date) to pin it to your calendar, where it shows in My plan
+// and on Today with a tick box. Note: { id, text, color, x (0–1 of board width), y (px), rot, date, time, done }.
+const NOTE_COLORS = { gold: '#fff1a6', salmon: '#ffd5cc', sky: '#d3ecf8', mint: '#d5f5d1', lilac: '#e7ddfb' };
+let editingNote = null; // note being written in
+function normaliseNote(n) {
+  return {
+    id: String(n.id || uid()), text: String(n.text || '').slice(0, 400), color: NOTE_COLORS[n.color] ? n.color : 'gold',
+    x: Math.min(0.92, Math.max(0, Number(n.x) || 0)), y: Math.max(0, Math.round(Number(n.y) || 0)),
+    rot: Math.max(-4, Math.min(4, Number(n.rot) || 0)),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(n.date || '') ? n.date : null, time: validTime(n.time), done: !!n.done, created: n.created || todayISO(),
+  };
+}
+function calNav(on) {
+  const a = (href, key, label) => `<a href="${href}" class="${on === key ? 'on' : ''}" ${on === key ? 'aria-current="page"' : ''}>${label}</a>`;
+  return `<nav class="subnav">${a('#/cal', 'cal', 'Calendar')}${a('#/board', 'board', 'Whiteboard')}</nav>`;
+}
+const noteDateLabel = (n) => (n.date ? `${n.date === todayISO() ? 'Today' : daysUntil(n.date) === 1 ? 'Tomorrow'
+  : fmtDay(parseISO(n.date), { weekday: 'short', day: 'numeric', ...(Math.abs(daysUntil(n.date)) > 6 ? { month: 'short' } : {}) })}${n.time ? ` ${n.time}` : ''}` : '');
+function noteHtml(n) {
+  const editing = editingNote === n.id;
+  return `<div class="note c-${n.color} ${n.done ? 'done' : ''} ${editing ? 'editing' : ''}" data-note="${n.id}"
+      style="left:${(n.x * 100).toFixed(2)}%;top:${n.y}px;--rot:${n.rot}deg">
+    <span class="pin" aria-hidden="true"></span>
+    ${editing
+      ? `<textarea class="note-text" data-note-text="${n.id}" maxlength="400" placeholder="What's on your mind?">${escapeHtml(n.text)}</textarea>
+         <div class="note-colors">${Object.keys(NOTE_COLORS).map((c) => `<button class="nc c-${c} ${c === n.color ? 'on' : ''}" data-act="note-color" data-id="${n.id}" data-color="${c}" aria-label="${c}"></button>`).join('')}
+           <button class="note-ok" data-act="note-close">Done</button></div>`
+      : `<div class="note-body">${n.text ? linkify(escapeHtml(n.text)) : '<span class="muted">Empty note</span>'}</div>`}
+    <div class="note-foot">
+      <button class="note-date ${n.date ? 'on' : ''}" data-act="note-date" data-id="${n.id}">${n.date ? `📌 ${noteDateLabel(n)}` : '📅'}</button>
+      ${n.date ? `<button class="note-tick ${n.done ? 'on' : ''}" data-act="note-done" data-id="${n.id}" aria-label="Done" aria-pressed="${n.done}">${n.done ? CHECK : ''}</button>` : ''}
+      <button class="note-x" data-act="note-delete" data-id="${n.id}" aria-label="Delete note">×</button>
+    </div>
+  </div>`;
+}
+function boardPageHtml() {
+  const notes = state.notes;
+  const height = Math.max(520, ...notes.map((n) => n.y + 240));
+  const days = Array.from({ length: 7 }, (_, i) => addDaysISO(todayISO(), i));
+  const pinned = notes.filter((n) => n.date && !n.done).length;
+  const doneCount = notes.filter((n) => n.done).length;
+  return `
+    <header class="top">${topBar({ label: 'Calendar', title: 'Whiteboard', right: menuBtn })}${calNav('board')}</header>
+    <section class="card board-card" data-section="Whiteboard">
+      <div class="board-tools">
+        <button class="btn primary" data-act="note-new">+ Note</button>
+        <span class="hint">${notes.length ? `${notes.length} note${notes.length === 1 ? '' : 's'}${pinned ? ` · ${pinned} pinned to your calendar` : ''}` : 'Double-click the board or tap + Note'}</span>
+        ${doneCount ? `<button class="txt-btn" data-act="note-clear">Clear ${doneCount} done</button>` : ''}
+      </div>
+      <div class="board-days" aria-label="Drop a note on a day to pin it">
+        ${days.map((d) => `<div class="bday ${d === todayISO() ? 'today' : ''}" data-drop-date="${d}"><span>${d === todayISO() ? 'Today' : DAY_NAMES[dayIndexOf(d)].slice(0, 3)}</span><b>${parseISO(d).getDate()}</b></div>`).join('')}
+        <div class="bday pick" data-drop-date="pick"><span>Other</span><b>…</b></div>
+      </div>
+      <div class="board" style="height:${height}px">
+        ${notes.length ? '' : '<p class="board-empty">Jot down anything that pops into your head.<br>Drag a note onto a day above to pin it to your calendar.</p>'}
+        ${notes.map(noteHtml).join('')}
+      </div>
+    </section>`;
+}
+function addNote(x, y, extra = {}) {
+  const n = normaliseNote({ text: '', color: Object.keys(NOTE_COLORS)[state.notes.length % 5], x, y, rot: Math.round((Math.random() * 6 - 3) * 10) / 10, ...extra });
+  state.notes.push(n);
+  editingNote = n.id;
+  save();
+  render();
+  focusNote();
+  return n;
+}
+function focusNote() {
+  const ta = editingNote && $app.querySelector(`[data-note-text="${CSS.escape(editingNote)}"]`);
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+function closeNote() {
+  const n = state.notes.find((x) => x.id === editingNote);
+  editingNote = null;
+  if (n && !n.text.trim() && !n.date) state.notes = state.notes.filter((x) => x !== n); // drop empty notes
+  save();
+  render();
+}
+function openNoteDate(id) {
+  const n = state.notes.find((x) => x.id === id);
+  if (!n) return;
+  const quick = [[todayISO(), 'Today'], [addDaysISO(todayISO(), 1), 'Tomorrow'], [addDaysISO(todayISO(), 7 - dayIndexOf(todayISO())), 'Next Monday']];
+  openSheet(`
+    <div class="sheet-head"><h3>Pin to calendar</h3></div>
+    <form class="form flat" data-form="note-date" data-id="${id}">
+      <p class="small muted">${escapeHtml(clip(n.text || 'Empty note', 80))}</p>
+      <div class="btn-row">${quick.map(([d, l]) => `<button type="button" class="btn" data-act="note-quick" data-date="${d}">${l}</button>`).join('')}</div>
+      <div class="f2"><label class="f">Date<input type="date" name="date" value="${n.date || todayISO()}"></label>
+        <label class="f">Time (optional)<input type="time" name="time" value="${n.time || ''}"></label></div>
+      <button class="btn primary" type="submit">Pin it</button>
+      ${n.date ? '<button type="button" class="btn" data-act="note-unpin">Unpin from calendar</button>' : ''}
+    </form>`, { note: id });
+}
+function pinNote(id, date, time = null) {
+  const n = state.notes.find((x) => x.id === id);
+  if (!n) return;
+  n.date = date; n.time = validTime(time); n.done = false;
+  save();
+  closeSheet();
+  render();
+  if (date) toast(`Pinned to ${noteDateLabel(n)}`);
+}
+const notesOn = (iso) => state.notes.filter((n) => n.date === iso).sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+// A pinned note as a small sticky in My plan / Today.
+function notePillHtml(n, d) {
+  const st = n.done ? 'done' : d < todayISO() ? 'missed' : 'pending';
+  return `<div class="dpill notepill c-${n.color} ${st}">
+    <button class="dbox" data-act="note-done" data-id="${n.id}" aria-label="Done" aria-pressed="${n.done}">${n.done ? CHECK : ''}</button>
+    <a class="dname" href="#/board">${n.time ? `<small class="dtime">${n.time}</small> ` : ''}${escapeHtml(n.text || 'Note')}</a></div>`;
+}
+
+// Dragging notes: move with the pointer, drop on a day to pin. A tap without moving starts writing.
+let noteDrag = null, noteTapAt = 0;
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest('.note');
+  if (!el || e.button > 0 || e.target.closest('button, textarea, a')) return;
+  const board = el.closest('.board');
+  const r = el.getBoundingClientRect(), br = board.getBoundingClientRect();
+  noteDrag = { el, id: el.dataset.note, board, dx: e.clientX - r.left, dy: e.clientY - r.top, br, sx: e.clientX, sy: e.clientY, moved: false };
+  el.setPointerCapture(e.pointerId);
+});
+document.addEventListener('pointermove', (e) => {
+  const d = noteDrag;
+  if (!d) return;
+  if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 6) return;
+  if (!d.moved) { d.moved = true; d.el.classList.add('dragging'); }
+  const br = d.board.getBoundingClientRect();
+  const left = Math.min(br.width - 40, Math.max(0, e.clientX - br.left - d.dx));
+  const top = Math.max(0, e.clientY - br.top - d.dy);
+  d.el.style.left = `${left}px`;
+  d.el.style.top = `${top}px`;
+  const over = document.elementsFromPoint(e.clientX, e.clientY).find((x) => x.dataset && x.dataset.dropDate);
+  $app.querySelectorAll('.bday.over').forEach((x) => x !== over && x.classList.remove('over'));
+  if (over) over.classList.add('over');
+});
+document.addEventListener('pointerup', (e) => {
+  const d = noteDrag;
+  noteDrag = null;
+  if (!d) return;
+  const n = state.notes.find((x) => x.id === d.id);
+  if (!n) return;
+  if (!d.moved) { if (editingNote !== n.id) { noteTapAt = Date.now(); editingNote = n.id; render(); focusNote(); } return; }
+  const over = document.elementsFromPoint(e.clientX, e.clientY).find((x) => x.dataset && x.dataset.dropDate);
+  const br = d.board.getBoundingClientRect();
+  if (over) {
+    // Put the note back where it was picked up from, then pin it.
+    if (over.dataset.dropDate === 'pick') { render(); openNoteDate(n.id); } else pinNote(n.id, over.dataset.dropDate, n.time);
+    return;
+  }
+  n.x = Math.min(0.92, Math.max(0, parseFloat(d.el.style.left) / br.width));
+  n.y = Math.max(0, Math.round(parseFloat(d.el.style.top)));
+  save();
+  render();
+});
+document.addEventListener('pointercancel', () => { if (noteDrag) { noteDrag = null; render(); } });
+document.addEventListener('dblclick', (e) => {
+  const board = e.target.closest('.board');
+  if (!board || e.target.closest('.note')) return;
+  const br = board.getBoundingClientRect();
+  addNote(Math.max(0, (e.clientX - br.left - 70) / br.width), Math.max(0, Math.round(e.clientY - br.top - 20)));
+});
+
 // ---------- Commitment detail page ----------
 function weekKeyFor(c) { return c.freq === 'once' && c.date ? weekOf(c.date) : currentWeekKey(); }
 
@@ -3109,7 +3281,7 @@ const PROGRESS_FIELDS = ['ticks', 'counts', 'mins', 'count', 'done'];
 const FEED_FIELDS = ['id', 'name', 'url', 'section', 'decisions', 'skipped', 'ask', 'allSchedule', 'color'];
 // Calendar colours (the theme's light blue, salmon, gold and light green, plus a few more).
 const CAL_COLORS = ['#add8e6', '#fa8072', '#ffd700', '#90ee90', '#c7b8f5', '#f7a8c8', '#9fe3d6', '#c9c9c9'];
-const RECORD_ORDER = { c: 0, f: 1, ws: 2, wp: 3, t: 4, x: 5, b: 6 };
+const RECORD_ORDER = { c: 0, f: 1, ws: 2, wp: 3, t: 4, x: 5, b: 6, n: 7 };
 let recordHashes = null; // record key -> JSON of the record as last stamped or received
 let syncTimer = null;
 let syncInFlight = null;
@@ -3146,6 +3318,7 @@ function recordPayloads() {
   for (const f of state.calendars.feeds) out.set(`f:${f.id}`, pick(f, FEED_FIELDS));
   for (const t of state.trees) out.set(`t:${t.id}`, t);
   for (const x of state.tests) out.set(`x:${x.id}`, x);
+  for (const n of state.notes) out.set(`n:${n.id}`, n);
   if (state.buddy) out.set('b:pact', state.buddy);
   return out;
 }
@@ -3155,6 +3328,7 @@ function payloadFor(k) {
   if (type === 'f') { const f = state.calendars.feeds.find((x) => x.id === a); return f && pick(f, FEED_FIELDS); }
   if (type === 't') return state.trees.find((x) => x.id === a);
   if (type === 'x') return state.tests.find((x) => x.id === a);
+  if (type === 'n') return state.notes.find((x) => x.id === a);
   if (type === 'b') return state.buddy || undefined;
   const it = state.weeks[a] && state.weeks[a].items[b];
   if (!it) return undefined;
@@ -3206,9 +3380,9 @@ function applyRecord(k, p) {
     const c = normaliseCommitment(p);
     const i = state.commitments.findIndex((x) => x.id === c.id);
     if (i >= 0) state.commitments[i] = c; else state.commitments.push(c);
-  } else if (type === 't' || type === 'x') {
-    const list = type === 't' ? state.trees : state.tests;
-    const v = type === 't' ? normaliseTree(p) : normaliseTest(p);
+  } else if (type === 't' || type === 'x' || type === 'n') {
+    const list = type === 't' ? state.trees : type === 'x' ? state.tests : state.notes;
+    const v = type === 't' ? normaliseTree(p) : type === 'x' ? normaliseTest(p) : normaliseNote(p);
     const i = list.findIndex((x) => x.id === v.id);
     if (i >= 0) list[i] = v; else list.push(v);
   } else if (type === 'b') {
@@ -3237,6 +3411,7 @@ function removeRecord(k) {
   else if (type === 'f') state.calendars.feeds = state.calendars.feeds.filter((x) => x.id !== a);
   else if (type === 't') state.trees = state.trees.filter((x) => x.id !== a);
   else if (type === 'x') state.tests = state.tests.filter((x) => x.id !== a);
+  else if (type === 'n') state.notes = state.notes.filter((x) => x.id !== a);
   else if (type === 'b') { state.buddy = null; buddyView = null; }
   else if (state.weeks[a]) delete state.weeks[a].items[b];
 }
@@ -3319,7 +3494,7 @@ async function syncNow({ join = false } = {}) {
     writeState().catch(() => {});
     if (applied > 0) {
       scheduleWidgetPush();
-      if (!route.edit && !sheetCtx) render();
+      if (!route.edit && !sheetCtx && !typing()) render();
     } else if (route.page === 'sync') {
       render();
     }
@@ -3689,6 +3864,7 @@ document.addEventListener('click', (e) => {
     jumpHoldUntil = Date.now() + 900;
     return;
   }
+  if (editingNote && Date.now() - noteTapAt > 400 && !e.target.closest('.note.editing') && !e.target.closest('#sheet')) closeNote();
   const btn = e.target.closest('[data-act]');
   if (!btn) {
     const open = e.target.closest('[data-open]');
@@ -3699,6 +3875,23 @@ document.addEventListener('click', (e) => {
   const periodItem = () => state.weeks[btn.dataset.wk]?.items[btn.dataset.id];
   switch (act) {
     case 'apps-refresh': refreshApps({ force: true }); break;
+    case 'note-new': {
+      const k = state.notes.length;
+      addNote(0.04 + (k % 4) * 0.23, 14 + Math.floor(k / 4) * 190 + (k % 2) * 16);
+      break;
+    }
+    case 'note-close': closeNote(); break;
+    case 'note-color': { const n = state.notes.find((x) => x.id === btn.dataset.id); if (n) { n.color = btn.dataset.color; save(); render(); focusNote(); } break; }
+    case 'note-date': openNoteDate(btn.dataset.id); break;
+    case 'note-quick': pinNote(sheetCtx && sheetCtx.note, btn.dataset.date, btn.closest('form').time.value); break;
+    case 'note-unpin': pinNote(sheetCtx && sheetCtx.note, null); toast('Unpinned'); break;
+    case 'note-done': { const n = state.notes.find((x) => x.id === btn.dataset.id); if (n) { n.done = !n.done; save(); render(); } break; }
+    case 'note-delete': {
+      const n = state.notes.find((x) => x.id === btn.dataset.id);
+      if (n && (!n.text.trim() || confirm('Delete this note?'))) { state.notes = state.notes.filter((x) => x !== n); if (editingNote === n.id) editingNote = null; save(); render(); }
+      break;
+    }
+    case 'note-clear': state.notes = state.notes.filter((n) => !n.done); save(); render(); break;
     case 'tree-lit': toggleLeaf(btn.dataset.tree, btn.dataset.node, btn.dataset.map === '1'); break;
     case 'tree-cover': toggleCover(btn.dataset.tree, btn.dataset.node); break;
     case 'map-prompt': { const f = btn.closest('form'); copyText(mapPrompt(f.name.value.trim(), f.outline.value)); break; }
@@ -3875,6 +4068,11 @@ function syncFormVisibility(form) {
   form.dataset.tbc = String(fd.get('tbc') === 'on');
 }
 document.addEventListener('input', (e) => {
+  if (e.target.dataset && e.target.dataset.noteText) {
+    const n = state.notes.find((x) => x.id === e.target.dataset.noteText);
+    if (n) { n.text = e.target.value.slice(0, 400); save(); }
+    return;
+  }
   const tform = e.target.closest('form[data-form="tree"]');
   if (tform && ['outline', 'mapOutline', 'name'].includes(e.target.name)) {
     treeDraft = { outline: tform.outline.value, map: tform.mapOutline.value };
@@ -3928,6 +4126,7 @@ document.addEventListener('submit', (e) => {
   else if (form === 'sync-join') joinSync(e.target);
   else if (form === 'followup') saveFollowup(e.target);
   else if (form === 'tree') saveTreeForm(e.target);
+  else if (form === 'note-date') { const f = new FormData(e.target); pinNote(e.target.dataset.id, f.get('date') || todayISO(), f.get('time')); }
   else if (form === 'test') saveTestForm(e.target);
   else if (form === 'buddy-create') createPact(e.target);
   else if (form === 'buddy-join') joinPact(e.target);
@@ -3944,7 +4143,10 @@ document.addEventListener('submit', (e) => {
   }
 });
 
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$sheet.hidden) closeSheet(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$sheet.hidden) closeSheet();
+  else if (e.key === 'Escape' && editingNote) closeNote();
+});
 
 // Coming back to the app (e.g. next morning): refresh "today", and follow the week
 // rollover if you were looking at the old current week.

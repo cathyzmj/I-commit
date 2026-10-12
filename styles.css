@@ -839,3 +839,66 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
   color: var(--ink); background: rgba(255, 255, 255, 0.85); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 4px 14px rgba(31, 52, 80, 0.15); }
 .kmini-show[hidden] { display: none; }
 #app[data-page="knowledge"] { padding-bottom: 30vh; }
+
+/* ---------- Whiteboard ---------- */
+#app[data-page="board"] { max-width: 1400px; }
+.board-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 0 2px 10px; }
+.board-tools .btn { min-height: 38px; padding: 8px 14px; }
+.board-tools .hint { flex: 1; }
+.board-days { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+.bday { display: flex; flex-direction: column; align-items: center; padding: 6px 2px; border-radius: 12px; border: 1.5px dashed rgba(27, 31, 29, 0.18);
+  background: rgba(255, 255, 255, 0.5); transition: transform .12s, background .12s, border-color .12s; }
+.bday span { font-size: 11px; color: var(--muted); }
+.bday b { font-size: 15px; }
+.bday.today { border-color: rgba(242, 169, 0, 0.6); }
+.bday.over { background: rgba(255, 215, 0, 0.35); border-style: solid; border-color: #f2a900; transform: scale(1.06); }
+.board { position: relative; border-radius: 18px; overflow: hidden; touch-action: pan-y;
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0.2) 38%, rgba(255, 255, 255, 0.55) 60%, rgba(255, 255, 255, 0.15) 100%),
+    radial-gradient(circle, rgba(27, 31, 29, 0.07) 1px, transparent 1.4px) 0 0 / 22px 22px,
+    #f7f9fb;
+  border: 6px solid #e4e8ec; box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.06), 0 1px 0 #fff; }
+.board-empty { position: absolute; inset: 40% 0 auto; text-align: center; color: var(--muted); font: 20px/1.5 Noteworthy, "Bradley Hand", "Marker Felt", "Segoe Print", cursive; pointer-events: none; }
+.note { position: absolute; display: flex; flex-direction: column; width: 168px; min-height: 150px; padding: 22px 14px 8px; border-radius: 3px 3px 16px 3px; cursor: grab; touch-action: none; user-select: none;
+  transform: rotate(var(--rot)); box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08), 0 10px 22px -8px rgba(40, 30, 0, 0.35);
+  font: 17px/1.3 Noteworthy, "Bradley Hand", "Marker Felt", "Segoe Print", cursive; color: #2b2a26; transition: box-shadow .15s, transform .15s; }
+.note.c-gold { background: linear-gradient(170deg, #fff6b8, #ffec8a); }
+.note.c-salmon { background: linear-gradient(170deg, #ffe0d8, #ffc7ba); }
+.note.c-sky { background: linear-gradient(170deg, #e3f3fb, #c6e5f5); }
+.note.c-mint { background: linear-gradient(170deg, #e4f9e1, #c7efc1); }
+.note.c-lilac { background: linear-gradient(170deg, #f0e9fd, #ddd0fa); }
+.note.dragging { cursor: grabbing; z-index: 5; transform: rotate(0deg) scale(1.06); box-shadow: 0 22px 40px -12px rgba(40, 30, 0, 0.45); transition: none; }
+.note.editing { z-index: 4; transform: rotate(0deg); cursor: default; }
+.note.done .note-body { text-decoration: line-through; opacity: .55; }
+.pin { position: absolute; top: -6px; left: 50%; width: 18px; height: 18px; margin-left: -9px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ff9b8e, #e2483a 55%, #a92a1f); box-shadow: 0 3px 4px rgba(0, 0, 0, 0.35); }
+.pin::after { content: ''; position: absolute; left: 7px; top: 15px; width: 3px; height: 8px; border-radius: 2px; background: rgba(0, 0, 0, 0.18); filter: blur(1px); }
+.note-body { white-space: pre-wrap; word-break: break-word; min-height: 60px; flex: 1; }
+.note-body a { color: #1e5fa8; }
+.note-text { width: 100%; min-height: 96px; border: 0; background: transparent; resize: none; padding: 0; font: inherit; color: inherit; outline: none; }
+.note-colors { display: flex; align-items: center; gap: 5px; margin-top: 4px; }
+.nc { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid rgba(0, 0, 0, 0.15); padding: 0; cursor: pointer; }
+.nc.c-gold { background: #ffec8a; } .nc.c-salmon { background: #ffc7ba; } .nc.c-sky { background: #c6e5f5; } .nc.c-mint { background: #c7efc1; } .nc.c-lilac { background: #ddd0fa; }
+.nc.on { outline: 2px solid #2b2a26; outline-offset: 1px; }
+.note-ok { margin-left: auto; border: 0; background: rgba(255, 255, 255, 0.7); border-radius: 8px; padding: 3px 8px; font: 600 12px -apple-system, system-ui, sans-serif; cursor: pointer; }
+.note-foot { margin-top: auto; padding-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-family: -apple-system, system-ui, sans-serif; }
+.note-date { border: 0; background: rgba(255, 255, 255, 0.55); border-radius: 99px; padding: 3px 8px; font-size: 12px; font-weight: 650; cursor: pointer; color: #2b2a26; }
+.note-date.on { background: rgba(226, 72, 58, 0.14); color: #a92a1f; }
+.note-tick { width: 22px; height: 22px; border-radius: 6px; border: 2px solid rgba(0, 0, 0, 0.25); background: rgba(255, 255, 255, 0.7); padding: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.note-tick.on { background: #90ee90; border-color: #2f8f5b; }
+.note-tick svg { width: 14px; height: 14px; }
+.note-x { margin-left: auto; border: 0; background: none; font-size: 18px; color: rgba(0, 0, 0, 0.35); cursor: pointer; padding: 0 2px; opacity: 0; transition: opacity .15s; }
+.note:hover .note-x, .note.editing .note-x { opacity: 1; }
+@media (hover: none) { .note-x { opacity: .6; } }
+@media (max-width: 699px) {
+  .note { width: 140px; min-height: 128px; font-size: 15.5px; padding: 20px 11px 8px; }
+  .board-days { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+/* Pinned notes on the calendar and Today: a little sticky with a pin. */
+.dpill.notepill { position: relative; border: 0; border-radius: 3px 3px 10px 3px; box-shadow: 0 4px 10px -6px rgba(40, 30, 0, 0.45); font-family: Noteworthy, "Bradley Hand", "Marker Felt", cursive; font-weight: 500; }
+.dpill.notepill::before { content: ''; position: absolute; top: -4px; left: 50%; width: 9px; height: 9px; margin-left: -4px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ff9b8e, #e2483a 60%, #a92a1f); }
+.dpill.notepill.c-gold { background: #fff1a6; } .dpill.notepill.c-salmon { background: #ffd5cc; } .dpill.notepill.c-sky { background: #d3ecf8; }
+.dpill.notepill.c-mint { background: #d5f5d1; } .dpill.notepill.c-lilac { background: #e7ddfb; }
+.dpill.notepill .dbox { border-color: rgba(0, 0, 0, 0.25); }
+.dpill.notepill.done .dname { text-decoration: line-through; opacity: .6; }
+.today-notes { padding: 8px 2px 4px; }

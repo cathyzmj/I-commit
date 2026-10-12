@@ -4,7 +4,7 @@
 //
 // The app's data is split into small records ("c:<id>" commitment, "ws:<week>:<id>" week item
 // details, "wp:<week>:<id>" week item progress, "f:<id>" calendar feed, "t:<id>" knowledge tree,
-// "x:<id>" test result, "b:<id>" Work Buddy membership). Each record carries the
+// "x:<id>" test result, "b:<id>" Work Buddy membership, "n:<id>" whiteboard note). Each record carries the
 // time it was last changed on a device (m). Deletions are kept as tombstones for a while.
 //
 //   POST   { since, records: { key: { p, m } }, tombs: { key: t } }
@@ -17,7 +17,7 @@
 // syncing at the same moment can't overwrite each other.
 
 const KEY_RE = /^[A-Za-z0-9_-]{32,128}$/;
-const RECORD_KEY_RE = /^(c|ws|wp|f|t|x|b):[A-Za-z0-9_.:-]{1,160}$/;
+const RECORD_KEY_RE = /^(c|ws|wp|f|t|x|b|n):[A-Za-z0-9_.:-]{1,160}$/;
 const MAX_BYTES = 5 * 1024 * 1024;
 const TOMBSTONE_DAYS = 180;
 const MAX_ATTEMPTS = 6;
