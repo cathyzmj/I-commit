@@ -2282,6 +2282,12 @@ function pactStreak(p) {
   return n;
 }
 const inviteUrl = (p) => `${location.origin}${location.pathname}#/join/${p.invite}`;
+// Invite codes are 10 letters/digits; shown as ABCDE-FGHJK, accepted in any case, with or without the dash.
+const fmtCode = (c) => String(c || '').toUpperCase().replace(/^(.{5})(.{5})$/, '$1-$2');
+const readCode = (v) => { const t = String(v || '').toLowerCase().replace(/[^a-z0-9]/g, ''); return t.length >= 10 ? t.slice(-10) : ''; };
+// The home-screen app (or the Mac app) rather than a browser tab: their data is kept apart from the browser's.
+const inBrowserTab = () => !(navigator.standalone || matchMedia('(display-mode: standalone)').matches || window.webkit?.messageHandlers?.native);
+const inviteText = (p) => `Join my "${p.name}" pact on I Commit! We each tick our own day and keep a streak together.\n\nIn the app: Buddy → Got an invite? → enter ${fmtCode(p.invite)}\nOr open this link:`;
 async function shareText(text, url) {
   if (navigator.share) { try { await navigator.share({ text, url }); return; } catch (e) { if (e.name === 'AbortError') return; } }
   copyText(`${text} ${url}`);
@@ -2297,6 +2303,10 @@ function buddyTabHtml() {
   if (!state.buddy) {
     const invite = route.invite || '';
     return head('Work Buddy', invite ? 'Join a pact' : 'Partner up') + `
+      ${invite && inBrowserTab() ? `<section class="card banner-card"><b>Using I Commit! from your home screen?</b>
+        <p class="small">The home-screen app keeps its own data, separate from this browser tab. Open the app there instead: <b>Buddy → Got an invite?</b> and enter</p>
+        <div class="bcode big"><b>${fmtCode(invite)}</b><button class="mini-btn" data-act="copy-invite-code" data-code="${invite}">Copy</button></div>
+        <p class="small muted">Or join here if you use I Commit! in this browser.</p></section>` : ''}
       <form class="card form" data-form="${invite ? 'buddy-join' : 'buddy-create'}" data-section="${invite ? 'Join' : 'Start a pact'}">
         <div class="card-head"><h2>${invite ? 'You’ve been invited' : 'Start a pact'}</h2></div>
         <p class="small muted">${invite ? 'Do the same routine together. Each of you ticks your own day; the streak grows on days you both finish.'
@@ -2307,7 +2317,7 @@ function buddyTabHtml() {
         <button class="btn primary" type="submit">${invite ? 'Join' : 'Start and get an invite link'}</button>
       </form>
       ${invite ? '' : `<form class="card form" data-form="buddy-code"><div class="card-head"><h2>Got an invite?</h2></div>
-        <label class="f">Invite link or code<input name="code" placeholder="Paste it here" autocapitalize="off" autocorrect="off"></label>
+        <label class="f">Invite code or link<input name="code" placeholder="e.g. ABCDE-FGHJK" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
         <button class="btn" type="submit">Continue</button></form>`}`;
   }
   if (!buddyView) {
@@ -2345,7 +2355,9 @@ function buddyTabHtml() {
     </section>
     <section class="card" data-section="Settings">
       <div class="card-head"><h2>Invite & settings</h2></div>
-      <div class="btn-row"><button class="btn" data-act="buddy-invite">Share invite link</button><button class="btn" data-act="buddy-copy">Copy link</button></div>
+      <div class="bcode"><span>Invite code</span><b>${fmtCode(p.invite)}</b><button class="mini-btn" data-act="buddy-copy-code">Copy</button></div>
+      <p class="help">Your buddy can enter it in their app: Buddy → Got an invite?</p>
+      <div class="btn-row"><button class="btn" data-act="buddy-invite">Share invite</button><button class="btn" data-act="buddy-copy">Copy link</button></div>
       <form class="form flat" data-form="buddy-routine"><label class="f">Tick me automatically when I finish${routineSelect('routine', state.buddy.commitmentId, 'Nothing, I’ll tick here')}</label></form>
       <div class="danger"><button class="btn warn" data-act="buddy-leave">Leave pact</button></div>
     </section>`;
@@ -4150,9 +4162,11 @@ document.addEventListener('click', (e) => {
       const names = buddyView.members.filter((m) => !m.me && !m.days[todayISO()]).map((m) => m.name).join(' & ');
       shareText(`${names}, haven't seen your ${buddyView.name.toLowerCase()} today 👀 Let's keep the streak going!`, `${location.origin}${location.pathname}#/buddy`); break;
     }
-    case 'buddy-invite': shareText(`Join my "${buddyView.name}" pact on I Commit! We each tick our own day and keep a streak together.`, inviteUrl(buddyView)); break;
+    case 'buddy-invite': shareText(inviteText(buddyView), inviteUrl(buddyView)); break;
     case 'buddy-copy': copyText(inviteUrl(buddyView)); break;
+    case 'buddy-copy-code': copyText(fmtCode(buddyView.invite)); break;
     case 'buddy-leave': leavePact(); break;
+    case 'copy-invite-code': copyText(fmtCode(btn.dataset.code)); break;
     case 'buddy-refresh': buddyError = null; render(); refreshBuddy(); break;
     case 'apps-more': {
       const k = btn.dataset.key;
@@ -4363,8 +4377,8 @@ document.addEventListener('submit', (e) => {
   else if (form === 'buddy-join') joinPact(e.target);
   else if (form === 'buddy-note') buddyTick(true, String(new FormData(e.target).get('note') || '').trim());
   else if (form === 'buddy-code') {
-    const m = String(new FormData(e.target).get('code') || '').match(/([a-z0-9]{10})\s*$/i);
-    if (m) location.hash = `#/join/${m[1].toLowerCase()}`; else toast('Paste the whole invite link');
+    const code = readCode(new FormData(e.target).get('code'));
+    if (code) location.hash = `#/join/${code}`; else toast('Enter the 10-character code (e.g. ABCDE-FGHJK) or paste the link');
   }
   else if (form === 'stage-link') {
     const c = state.commitments.find((x) => x.id === e.target.dataset.id);

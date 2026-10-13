@@ -942,3 +942,11 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .note:hover .note-task, .note.editing .note-task { opacity: 1; }
 @media (hover: none) { .note-task { opacity: .8; } }
 .sheet { background: rgba(255, 255, 255, 0.94); }
+
+/* Work Buddy invite code */
+.bcode { display: flex; align-items: center; gap: 10px; padding: 8px 4px; }
+.bcode span { font-size: 13px; color: var(--muted); }
+.bcode b { font: 700 18px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .08em; }
+.bcode.big b { font-size: 24px; }
+.banner-card { border: 1.5px solid rgba(242, 169, 0, 0.55); background: rgba(255, 215, 0, 0.14); }
+.banner-card p { margin: 6px 4px; }
