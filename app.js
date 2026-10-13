@@ -540,6 +540,7 @@ function parseHash() {
   if (a === 'apps') return { tab: 'apps', day: /^\d{4}-\d{2}-\d{2}$/.test(b || '') ? b : null };
   if (a === 'widget') return { tab: 'commitments', page: 'widget' };
   if (a === 'sync') return { tab: 'commitments', page: 'sync' };
+  if (a === 'account') return { tab: 'commitments', page: 'account' };
   if (a === 'calendar') return { tab: 'commitments', page: b === 'review' ? 'review' : 'calendar' };
   if (a === 'new') return { tab: 'commitments', id: 'new', edit: true, freq: FREQS.includes(b) ? b : 'daily' };
   if (a === 'week') return { tab: 'routine' };
@@ -557,6 +558,7 @@ window.addEventListener('hashchange', () => {
   route = parseHash();
   treeDraft = null;
   if (route.tab === 'buddy') refreshBuddy();
+  if (route.page === 'account') { accountInfo = null; refreshAccount(); }
   if (route.page === 'knowledge' && route.focus) focusTree(route.focus);
   if (route.tab === 'apps') {
     if (route.day) { appsDay = route.day; appsMonth = route.day.slice(0, 7); }
@@ -578,6 +580,7 @@ function render() {
   if (!state) return; // still loading saved data
   let html;
   if (route.page === 'sync') html = syncPageHtml();
+  else if (route.page === 'account') html = accountPageHtml();
   else if (route.page === 'widget') html = widgetPageHtml();
   else if (route.page === 'calendar') html = calendarPageHtml();
   else if (route.page === 'review') html = reviewPageHtml();
@@ -608,7 +611,7 @@ function render() {
 const NAV_PAGES = [['today', 'Today', 'Today'], ['cal', 'Calendar', 'Calendar'], ['routine', 'Routine', 'Routine'],
   ['apps', 'Applications', 'Apps'], ['buddy', 'Work Buddy', 'Buddy'], ['commitments', 'All commitments', 'All']];
 function sideNavHtml() {
-  const extra = [['#/calendar', 'Calendars'], ['#/sync', `Sync${state.sync.enabled ? ' · on' : ''}`], ['#/widget', 'Phone widget']];
+  const extra = [['#/calendar', 'Calendars'], ['#/account', 'Account'], ['#/sync', `Sync${state.sync.enabled ? ' · on' : ''}`], ['#/widget', 'Phone widget']];
   return `<aside class="sidenav" aria-label="Navigation">
     <div class="sn-brand"><img src="icons/icon-192.png" alt=""><b>I Commit!</b></div>
     <nav class="sn-main">${NAV_PAGES.map(([t, label]) => `
@@ -742,6 +745,15 @@ function statsHtml(s, { showPace }) {
     ${showPace && s.pace > 0 ? `<div class="pace">Pace for end of today: ${fmtH(s.pace)} · ${s.actual >= s.pace - 1e-9 ? 'on track' : fmtH(s.pace - s.actual) + ' behind'}</div>` : ''}`;
 }
 
+// On a device that isn't synced (e.g. the website in a new browser), offer to sign in.
+function signInHintHtml() {
+  let off = false;
+  try { off = localStorage.getItem('signinHint') === 'off'; } catch {}
+  if (state.sync.enabled || off || !passkeysOk()) return '';
+  return `<section class="card banner-card signin-hint"><b>Use I Commit! on another device too?</b>
+    <p class="small">Sign in with your passkey to bring your data here, or create an account to keep this device's data online.</p>
+    <div class="btn-row"><a class="btn primary" href="#/account">Sign in</a><button class="btn" data-act="signin-hide">Not now</button></div></section>`;
+}
 // ---------- Today tab ----------
 // Routine (daily, weekly, periodically), then Today only (one-off tasks).
 function todayDailyRow(wk, ti, id, it, sub) {
@@ -808,6 +820,7 @@ function todayTabHtml() {
       ${buddyTodayLine()}
     </header>
     ${reviewBannerHtml()}
+    ${signInHintHtml()}
     <section class="card" data-section="Routine">
       <div class="card-head"><h2>Routine</h2><a class="txt-btn" href="#/routine">Record ›</a></div>
       ${routine}
@@ -2306,7 +2319,7 @@ function buddyTabHtml() {
       ${invite && inBrowserTab() ? `<section class="card banner-card"><b>Using I Commit! from your home screen?</b>
         <p class="small">The home-screen app keeps its own data, separate from this browser tab. Open the app there instead: <b>Buddy → Got an invite?</b> and enter</p>
         <div class="bcode big"><b>${fmtCode(invite)}</b><button class="mini-btn" data-act="copy-invite-code" data-code="${invite}">Copy</button></div>
-        <p class="small muted">Or join here if you use I Commit! in this browser.</p></section>` : ''}
+        <p class="small muted">Or join here if you use I Commit! in this browser${passkeysOk() && !state.sync.enabled ? ', or <a href="#/account">sign in</a> first so this browser has your data' : ''}.</p></section>` : ''}
       <form class="card form" data-form="${invite ? 'buddy-join' : 'buddy-create'}" data-section="${invite ? 'Join' : 'Start a pact'}">
         <div class="card-head"><h2>${invite ? 'You’ve been invited' : 'Start a pact'}</h2></div>
         <p class="small muted">${invite ? 'Do the same routine together. Each of you ticks your own day; the streak grows on days you both finish.'
@@ -3769,12 +3782,17 @@ async function startSync() {
 async function joinSync(form) {
   const key = String(new FormData(form).get('key') || '').trim();
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(key)) { toast('That doesn’t look like a sync key. Copy it again from your other device.'); return; }
-  const hasProgress = Object.values(state.weeks).some((w) => Object.values(w.items).some(hasData));
-  if (hasProgress && !confirm('Replace everything on this device with the data from your other device?')) return;
+  return joinWithKey(key);
+}
+// Replaces this device's data with the synced data behind `key` (from the sync form or a passkey sign-in).
+async function joinWithKey(key, { done = 'Synced with your other device' } = {}) {
+  const hasProgress = Object.values(state.weeks).some((w) => Object.values(w.items).some(hasData)) || state.notes.length || state.tests.length || state.trees.length;
+  if (hasProgress && !confirm('Replace everything on this device with your synced data?')) return;
   const before = JSON.parse(JSON.stringify(state));
   state.commitments = [];
   state.weeks = {};
   state.calendars.feeds = [];
+  state.trees = []; state.tests = []; state.notes = []; state.buddy = null; buddyView = null;
   state.sync = { ...freshSync(), enabled: true, key };
   recordHashes = new Map();
   toast('Joining…');
@@ -3788,8 +3806,9 @@ async function joinSync(form) {
     return;
   }
   save();
-  toast('Synced with your other device');
+  toast(done);
   location.hash = '#/today';
+  refreshBuddy();
 }
 
 async function syncAction(act) {
@@ -3825,6 +3844,7 @@ function syncPageHtml() {
       <section class="card">
         <div class="card-head"><h2>Use the app on all your devices</h2></div>
         <p class="pad">Keep your commitments, ticks and calendars the same on your iPhone and Mac. No account needed: your data is copied to your own site under a private key.</p>
+        ${passkeysOk() ? '<p class="small pad">Easier: <a href="#/account">sign in with a passkey</a> instead of copying a key.</p>' : ''}
       </section>
       <section class="card">
         <div class="card-head"><h2>1 · On the device with your data</h2></div>
@@ -3861,6 +3881,98 @@ function syncPageHtml() {
     <section class="card">
       <div class="btn-row"><button class="btn" data-act="sync-off">Turn off on this device</button></div>
       <button class="btn warn full" data-act="sync-delete">Delete synced copy</button>
+    </section>`;
+}
+
+// ---------- Account (passkeys) ----------
+// A passkey (Face ID / Touch ID, kept in iCloud Keychain or your password manager) signs you in on
+// any browser, the home-screen app or a new phone: the server hands back your sync key and
+// everything syncs in. Creating one needs a device that already has your data (sync on).
+// The Mac app's built-in browser can't use passkeys (that needs extra Apple setup), so it points to Safari.
+const passkeysOk = () => !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create) && !window.webkit?.messageHandlers?.native;
+const toB64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const fromB64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+const deviceName = () => (/iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Mac/.test(navigator.userAgent) ? 'Mac' : 'This device');
+let accountInfo = null, accountBusy = false;
+async function authApi(body, key) {
+  const headers = { 'content-type': 'application/json' };
+  if (key) headers.authorization = `Bearer ${key}`;
+  const r = await fetch('/api/auth', { method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `Something went wrong (${r.status}).`);
+  return data;
+}
+async function refreshAccount() {
+  if (!state.sync.enabled) { accountInfo = null; return; }
+  try { accountInfo = await authApi(null, state.sync.key); } catch (e) { accountInfo = { error: e.message }; }
+  if (route.page === 'account') render();
+}
+const passkeyError = (e) => (e && e.name === 'NotAllowedError' ? 'Cancelled.' : e && e.name === 'InvalidStateError' ? 'This device already has a passkey for your account.' : (e && e.message) || 'Passkey failed.');
+async function addPasskey(label) {
+  if (accountBusy) return;
+  accountBusy = true;
+  try {
+    if (!state.sync.enabled) { await startSync(); if (!state.sync.enabled || state.sync.lastError) throw new Error(state.sync.lastError || 'Could not turn on sync.'); }
+    const o = await authApi({ action: 'register-options' }, state.sync.key);
+    const cred = await navigator.credentials.create({ publicKey: {
+      challenge: fromB64u(o.challenge), rp: o.rp,
+      user: { id: fromB64u(o.user.id), name: 'I Commit!', displayName: 'I Commit!' },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+      authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'preferred' },
+      excludeCredentials: o.exclude.map((id) => ({ type: 'public-key', id: fromB64u(id) })),
+      attestation: 'none', timeout: 120000 } });
+    if (!cred.response.getPublicKey) throw new Error('Update your browser to use passkeys.');
+    await authApi({ action: 'register', challenge: o.challenge, id: toB64u(cred.rawId), publicKey: toB64u(cred.response.getPublicKey()),
+      alg: cred.response.getPublicKeyAlgorithm(), clientDataJSON: toB64u(cred.response.clientDataJSON), name: label || deviceName() }, state.sync.key);
+    toast('Passkey saved. Sign in with it on any other browser or phone.');
+  } catch (e) { toast(passkeyError(e)); }
+  accountBusy = false;
+  refreshAccount();
+}
+async function signInWithPasskey() {
+  if (accountBusy) return;
+  accountBusy = true;
+  try {
+    const o = await authApi({ action: 'login-options' });
+    const cred = await navigator.credentials.get({ publicKey: { challenge: fromB64u(o.challenge), rpId: o.rpId, userVerification: 'preferred', timeout: 120000 } });
+    const r = await authApi({ action: 'login', challenge: o.challenge, id: toB64u(cred.rawId), authenticatorData: toB64u(cred.response.authenticatorData),
+      clientDataJSON: toB64u(cred.response.clientDataJSON), signature: toB64u(cred.response.signature) });
+    accountBusy = false;
+    await joinWithKey(r.syncKey, { done: 'Signed in. Your data is here.' });
+    refreshAccount();
+    return;
+  } catch (e) { toast(passkeyError(e)); }
+  accountBusy = false;
+}
+function accountPageHtml() {
+  const back = '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>';
+  const head = `<header class="top">${topBar({ left: back, label: 'Sign-in', title: 'Account' })}</header>`;
+  if (!passkeysOk()) {
+    return head + `<section class="card"><p class="pad">Passkeys aren't available here${window.webkit?.messageHandlers?.native ? ' in the Mac app' : ''}. Open <b>${escapeHtml(location.host)}</b> in Safari to sign in or add a passkey.</p></section>`;
+  }
+  if (!state.sync.enabled) {
+    return head + `
+      <section class="card" data-section="Sign in">
+        <div class="card-head"><h2>Already use I Commit?</h2></div>
+        <p class="small pad">Sign in with the passkey you made on your other device. Your data comes here, and it stays in sync.</p>
+        <button class="btn primary full" data-act="passkey-signin">Sign in with passkey</button>
+      </section>
+      <section class="card" data-section="New account">
+        <div class="card-head"><h2>New here?</h2></div>
+        <p class="small pad">Create an account with a passkey: your data is kept online, and you sign in with Face ID or Touch ID on any browser or phone. No password, no email.</p>
+        <button class="btn full" data-act="passkey-add">Create account with a passkey</button>
+      </section>`;
+  }
+  const info = accountInfo;
+  const keys = info && info.passkeys || [];
+  return head + `
+    <section class="card" data-section="Passkeys">
+      <div class="card-head"><h2>${keys.length ? 'Signed in' : 'Add a passkey'}</h2></div>
+      ${!info ? '<p class="muted pad small">Checking…</p>' : info.error ? `<p class="err pad small">${escapeHtml(info.error)}</p>`
+        : keys.length ? keys.map((k) => `<div class="crow"><div class="ctext"><div class="n">🔑 ${escapeHtml(k.name)}</div><div class="sub">added ${fmtShort(k.created.slice(0, 10))}</div></div></div>`).join('')
+        : '<p class="small pad">This device has your data. Add a passkey so you can sign in on any other browser, the home-screen app or a new phone.</p>'}
+      <button class="btn ${keys.length ? '' : 'primary'} full" data-act="passkey-add">${keys.length ? 'Add another passkey' : 'Add a passkey'}</button>
+      <p class="help">Then on the other browser or phone: open I Commit! → ⋯ → <b>Account</b> → <b>Sign in with passkey</b>.</p>
     </section>`;
 }
 
@@ -3943,6 +4055,7 @@ function openMenu() {
   openSheet(`
     <div class="sheet-head"><h3>Menu</h3></div>
     <div class="menu">
+      <a class="btn" href="#/account">Account &amp; sign-in${state.sync.enabled ? '' : ' · sign in'}</a>
       <a class="btn" href="#/sync">Sync with Mac / other devices${state.sync.enabled ? ' · on' : ''}</a>
       <a class="btn" href="#/widget">Phone widget</a>
       <button class="btn" data-act="bg-sheet">Background picture…</button>
@@ -4167,6 +4280,9 @@ document.addEventListener('click', (e) => {
     case 'buddy-copy-code': copyText(fmtCode(buddyView.invite)); break;
     case 'buddy-leave': leavePact(); break;
     case 'copy-invite-code': copyText(fmtCode(btn.dataset.code)); break;
+    case 'passkey-add': addPasskey(); break;
+    case 'passkey-signin': signInWithPasskey(); break;
+    case 'signin-hide': try { localStorage.setItem('signinHint', 'off'); } catch {} render(); break;
     case 'buddy-refresh': buddyError = null; render(); refreshBuddy(); break;
     case 'apps-more': {
       const k = btn.dataset.key;
@@ -4461,6 +4577,7 @@ let reloadingForUpdate = false;
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, SYNC_POLL_MS);
   refreshBuddy();
   setInterval(() => { if (document.visibilityState === 'visible') refreshBuddy(); }, BUDDY_POLL_MS);
+  if (route.page === 'account') refreshAccount();
   setInterval(() => { if (document.visibilityState === 'visible') { syncAll({ quiet: true }); refreshApps(); } }, 5 * 60e3);
   scheduleWidgetPush(1000);
   navigator.storage?.persist?.();
