@@ -4,3 +4,4 @@ dist/
 .wrangler/
 .dev.vars
 NOTES.md
+ops/
