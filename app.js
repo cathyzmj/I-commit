@@ -541,6 +541,7 @@ function parseHash() {
   if (a === 'widget') return { tab: 'commitments', page: 'widget' };
   if (a === 'sync') return { tab: 'commitments', page: 'sync' };
   if (a === 'account') return { tab: 'commitments', page: 'account' };
+  if (a === 'passkey') return { tab: 'commitments', page: 'passkey-bridge', mode: b === 'add' ? 'add' : 'signin', key: /^[A-Za-z0-9_-]{32,128}$/.test(c || '') ? c : '' };
   if (a === 'calendar') return { tab: 'commitments', page: b === 'review' ? 'review' : 'calendar' };
   if (a === 'new') return { tab: 'commitments', id: 'new', edit: true, freq: FREQS.includes(b) ? b : 'daily' };
   if (a === 'week') return { tab: 'routine' };
@@ -552,7 +553,7 @@ function parseHash() {
 }
 // The app always opens on Today (an invite link still opens its page). A refresh stays where you were.
 const isReload = (() => { try { return performance.getEntriesByType('navigation')[0].type === 'reload'; } catch { return false; } })();
-if (!isReload && !/^#\/join\//.test(location.hash) && location.hash && location.hash !== '#/today') history.replaceState(null, '', '#/today');
+if (!isReload && !/^#\/(join|passkey)\//.test(location.hash) && location.hash && location.hash !== '#/today') history.replaceState(null, '', '#/today');
 let route = parseHash();
 window.addEventListener('hashchange', () => {
   route = parseHash();
@@ -596,6 +597,7 @@ function render() {
   else if (route.tab === 'apps') html = appsTabHtml();
   else if (route.tab === 'commitments') html = commitmentsTabHtml();
   else html = todayTabHtml();
+  if (route.page === 'passkey-bridge') { $app.dataset.tab = 'page'; $app.dataset.page = 'bridge'; $app.innerHTML = passkeyBridgeHtml(); return; }
   $app.dataset.tab = route.id || route.page ? 'page' : route.tab;
   $app.dataset.page = route.page || '';
   $app.innerHTML = html + tabBarHtml() + sideNavHtml();
@@ -3888,8 +3890,8 @@ function syncPageHtml() {
 // A passkey (Face ID / Touch ID, kept in iCloud Keychain or your password manager) signs you in on
 // any browser, the home-screen app or a new phone: the server hands back your sync key and
 // everything syncs in. Creating one needs a device that already has your data (sync on).
-// The Mac app's built-in browser can't use passkeys (that needs extra Apple setup), so it points to Safari.
-const passkeysOk = () => !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create) && !window.webkit?.messageHandlers?.native;
+// Passkeys work here directly, or (in the Mac app) through Apple's sign-in window.
+const passkeysOk = () => !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create) || !!window.webkit?.messageHandlers?.native;
 const toB64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const fromB64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 const deviceName = () => (/iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Mac/.test(navigator.userAgent) ? 'Mac' : 'This device');
@@ -3908,46 +3910,83 @@ async function refreshAccount() {
   if (route.page === 'account') render();
 }
 const passkeyError = (e) => (e && e.name === 'NotAllowedError' ? 'Cancelled.' : e && e.name === 'InvalidStateError' ? 'This device already has a passkey for your account.' : (e && e.message) || 'Passkey failed.');
+async function registerPasskey(key, label) {
+  const o = await authApi({ action: 'register-options' }, key);
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge: fromB64u(o.challenge), rp: o.rp,
+    user: { id: fromB64u(o.user.id), name: 'I Commit!', displayName: 'I Commit!' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+    authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'preferred' },
+    excludeCredentials: o.exclude.map((id) => ({ type: 'public-key', id: fromB64u(id) })),
+    attestation: 'none', timeout: 120000 } });
+  if (!cred.response.getPublicKey) throw new Error('Update your browser to use passkeys.');
+  await authApi({ action: 'register', challenge: o.challenge, id: toB64u(cred.rawId), publicKey: toB64u(cred.response.getPublicKey()),
+    alg: cred.response.getPublicKeyAlgorithm(), clientDataJSON: toB64u(cred.response.clientDataJSON), name: label || deviceName() }, key);
+}
+async function passkeySyncKey() {
+  const o = await authApi({ action: 'login-options' });
+  const cred = await navigator.credentials.get({ publicKey: { challenge: fromB64u(o.challenge), rpId: o.rpId, userVerification: 'preferred', timeout: 120000 } });
+  const r = await authApi({ action: 'login', challenge: o.challenge, id: toB64u(cred.rawId), authenticatorData: toB64u(cred.response.authenticatorData),
+    clientDataJSON: toB64u(cred.response.clientDataJSON), signature: toB64u(cred.response.signature) });
+  return r.syncKey;
+}
+// The Mac app can't run passkeys in its own web view, so it opens Apple's sign-in window (Safari) on
+// #/passkey/…, which does the passkey step and hands the result back to the app.
+const inMacApp = () => !!window.webkit?.messageHandlers?.native;
+const nativePasskey = (mode, key) => window.webkit.messageHandlers.native.postMessage({ type: 'passkey', mode, key: key || '' });
+window.nativePasskeyDone = async (r) => {
+  if (r.error) { toast(r.error); return; }
+  if (r.key) { await joinWithKey(r.key, { done: 'Signed in. Your data is here.' }); refreshAccount(); return; }
+  if (r.added) { toast('Passkey saved. Sign in with it on any other browser or phone.'); refreshAccount(); }
+};
 async function addPasskey(label) {
   if (accountBusy) return;
   accountBusy = true;
   try {
     if (!state.sync.enabled) { await startSync(); if (!state.sync.enabled || state.sync.lastError) throw new Error(state.sync.lastError || 'Could not turn on sync.'); }
-    const o = await authApi({ action: 'register-options' }, state.sync.key);
-    const cred = await navigator.credentials.create({ publicKey: {
-      challenge: fromB64u(o.challenge), rp: o.rp,
-      user: { id: fromB64u(o.user.id), name: 'I Commit!', displayName: 'I Commit!' },
-      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-      authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'preferred' },
-      excludeCredentials: o.exclude.map((id) => ({ type: 'public-key', id: fromB64u(id) })),
-      attestation: 'none', timeout: 120000 } });
-    if (!cred.response.getPublicKey) throw new Error('Update your browser to use passkeys.');
-    await authApi({ action: 'register', challenge: o.challenge, id: toB64u(cred.rawId), publicKey: toB64u(cred.response.getPublicKey()),
-      alg: cred.response.getPublicKeyAlgorithm(), clientDataJSON: toB64u(cred.response.clientDataJSON), name: label || deviceName() }, state.sync.key);
-    toast('Passkey saved. Sign in with it on any other browser or phone.');
+    if (inMacApp()) nativePasskey('add', state.sync.key);
+    else { await registerPasskey(state.sync.key, label); toast('Passkey saved. Sign in with it on any other browser or phone.'); }
   } catch (e) { toast(passkeyError(e)); }
   accountBusy = false;
   refreshAccount();
 }
 async function signInWithPasskey() {
+  if (inMacApp()) { nativePasskey('signin'); return; }
   if (accountBusy) return;
   accountBusy = true;
   try {
-    const o = await authApi({ action: 'login-options' });
-    const cred = await navigator.credentials.get({ publicKey: { challenge: fromB64u(o.challenge), rpId: o.rpId, userVerification: 'preferred', timeout: 120000 } });
-    const r = await authApi({ action: 'login', challenge: o.challenge, id: toB64u(cred.rawId), authenticatorData: toB64u(cred.response.authenticatorData),
-      clientDataJSON: toB64u(cred.response.clientDataJSON), signature: toB64u(cred.response.signature) });
+    const key = await passkeySyncKey();
     accountBusy = false;
-    await joinWithKey(r.syncKey, { done: 'Signed in. Your data is here.' });
+    await joinWithKey(key, { done: 'Signed in. Your data is here.' });
     refreshAccount();
     return;
   } catch (e) { toast(passkeyError(e)); }
   accountBusy = false;
 }
+function passkeyBridgeHtml() {
+  const adding = route.mode === 'add';
+  return `<section class="card bridge">
+    <img src="icons/icon-192.png" alt="" class="bridge-icon">
+    <h2>${adding ? 'Add a passkey for the Mac app' : 'Sign in to I Commit!'}</h2>
+    <p class="small muted">${adding ? 'Saves a passkey so you can sign in anywhere with Touch ID.' : 'Use the passkey you saved on your iPhone or Mac.'}</p>
+    <button class="btn primary full" data-act="bridge-go">${adding ? 'Create passkey' : 'Continue with passkey'}</button>
+    <p class="small muted" id="bridgeMsg"></p></section>`;
+}
+async function bridgeGo() {
+  const back = (params) => { location.href = `commitments://passkey#${new URLSearchParams(params)}`; };
+  const msg = document.getElementById('bridgeMsg');
+  try {
+    if (route.mode === 'add') { await registerPasskey(route.key, 'Mac'); back({ added: '1' }); }
+    else back({ key: await passkeySyncKey() });
+  } catch (e) {
+    if (msg) msg.textContent = passkeyError(e);
+    if (!(e && e.name === 'NotAllowedError')) back({ error: passkeyError(e) });
+  }
+}
 function accountPageHtml() {
   const back = '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>';
   const head = `<header class="top">${topBar({ left: back, label: 'Sign-in', title: 'Account' })}</header>`;
-  if (!passkeysOk()) {
+  if (!passkeysOk() && !inMacApp()) {
     return head + `<section class="card"><p class="pad">Passkeys aren't available here${window.webkit?.messageHandlers?.native ? ' in the Mac app' : ''}. Open <b>${escapeHtml(location.host)}</b> in Safari to sign in or add a passkey.</p></section>`;
   }
   if (!state.sync.enabled) {
@@ -4282,6 +4321,7 @@ document.addEventListener('click', (e) => {
     case 'copy-invite-code': copyText(fmtCode(btn.dataset.code)); break;
     case 'passkey-add': addPasskey(); break;
     case 'passkey-signin': signInWithPasskey(); break;
+    case 'bridge-go': bridgeGo(); break;
     case 'signin-hide': try { localStorage.setItem('signinHint', 'off'); } catch {} render(); break;
     case 'buddy-refresh': buddyError = null; render(); refreshBuddy(); break;
     case 'apps-more': {

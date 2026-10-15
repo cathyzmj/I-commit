@@ -950,3 +950,11 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .bcode.big b { font-size: 24px; }
 .banner-card { border: 1.5px solid rgba(242, 169, 0, 0.55); background: rgba(255, 215, 0, 0.14); }
 .banner-card p { margin: 6px 4px; }
+
+/* Passkey page inside the Mac app's sign-in window */
+#app[data-page="bridge"] { max-width: 420px; padding-top: 10vh; }
+.bridge { text-align: center; padding: 28px 22px; }
+.bridge h2 { margin: 12px 0 6px; }
+.bridge-icon { width: 64px; height: 64px; border-radius: 15px; }
+.bridge .btn { margin-top: 14px; }
+body:has(#app[data-page="bridge"]) { padding-left: max(12px, env(safe-area-inset-left)); }
