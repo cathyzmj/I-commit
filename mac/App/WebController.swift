@@ -1,11 +1,10 @@
 import AppKit
-import AuthenticationServices
 import WebKit
 import WidgetKit
 
 /// Hosts the web app (at AppHost from Info.plist, set in Local.xcconfig) in a WKWebView and bridges it to the Mac:
-/// widget updates, Save/Open panels, alerts, opening outside links in their own apps, and passkeys
-/// (through Apple's sign-in window, since a web view inside an app can't use them on its own).
+/// widget updates, Save/Open panels, alerts and opening outside links in their own apps (Google
+/// sign-in opens in your browser; the page notices when it's done).
 @MainActor
 final class WebController: NSObject, ObservableObject {
     static let home: URL = {
@@ -13,7 +12,6 @@ final class WebController: NSObject, ObservableObject {
         return URL(string: "https://\(host)/")!
     }()
     let webView: WKWebView
-    private var authSession: ASWebAuthenticationSession?
 
     /// Injected into the page: whenever the app's data changes, send the widget summary to Swift.
     /// widgetSnapshot() and state are globals defined by the page's app.js.
@@ -76,46 +74,9 @@ final class WebController: NSObject, ObservableObject {
             guard let json = body["json"] as? String, let data = json.data(using: .utf8) else { return }
             if let error = SnapshotStore.save(data) { NSLog("Commitments: couldn't save widget data: \(error)") }
             WidgetCenter.shared.reloadAllTimelines()
-        case "passkey":
-            startPasskey(mode: body["mode"] as? String ?? "signin", key: body["key"] as? String ?? "")
         default:
             break
         }
-    }
-
-    /// Opens the site's passkey page in Apple's sign-in window (Safari underneath, so Touch ID and
-    /// iCloud Keychain passkeys work). The page finishes on commitments://passkey#…, which only this
-    /// session receives, and the result goes back to the page as window.nativePasskeyDone(…).
-    private func startPasskey(mode: String, key: String) {
-        let safeKey = key.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
-        let path = mode == "add" ? "#/passkey/add/\(safeKey)" : "#/passkey/signin"
-        guard let url = URL(string: path, relativeTo: Self.home)?.absoluteURL else { return }
-        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "commitments") { [weak self] callback, error in
-            Task { @MainActor in
-                guard let self else { return }
-                self.authSession = nil
-                var result: [String: String] = [:]
-                if let callback, let fragment = callback.fragment,
-                   let items = URLComponents(string: "?" + fragment)?.queryItems {
-                    for item in items { result[item.name] = item.value ?? "" }
-                } else if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
-                    return // closed the window: nothing to report
-                } else if let error {
-                    result["error"] = error.localizedDescription
-                }
-                self.finishPasskey(result)
-            }
-        }
-        session.presentationContextProvider = self
-        session.prefersEphemeralWebBrowserSession = true
-        authSession = session
-        if !session.start() { finishPasskey(["error": "Couldn't open the sign-in window."]) }
-    }
-
-    private func finishPasskey(_ result: [String: String]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: result),
-              let json = String(data: data, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.nativePasskeyDone && window.nativePasskeyDone(\(json))")
     }
 
     private func showOffline() {
@@ -193,13 +154,6 @@ extension WebController: WKUIDelegate {
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url { NSWorkspace.shared.open(url) }
         return nil
-    }
-}
-
-// MARK: - Apple's sign-in window sits over the app's window.
-extension WebController: ASWebAuthenticationPresentationContextProviding {
-    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        MainActor.assumeIsolated { NSApp.keyWindow ?? NSApp.windows.first ?? ASPresentationAnchor() }
     }
 }
 

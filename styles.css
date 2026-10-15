@@ -951,13 +951,6 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .banner-card { border: 1.5px solid rgba(242, 169, 0, 0.55); background: rgba(255, 215, 0, 0.14); }
 .banner-card p { margin: 6px 4px; }
 
-/* Passkey page inside the Mac app's sign-in window */
-#app[data-page="bridge"] { max-width: 420px; padding-top: 10vh; }
-.bridge { text-align: center; padding: 28px 22px; }
-.bridge h2 { margin: 12px 0 6px; }
-.bridge-icon { width: 64px; height: 64px; border-radius: 15px; }
-.bridge .btn { margin-top: 14px; }
-body:has(#app[data-page="bridge"]) { padding-left: max(12px, env(safe-area-inset-left)); }
 
 /* A buddy's shared calendar: lilac, striped, with their initial */
 .cev.buddy, .cuntimed.buddy { cursor: default; border-left: 3px solid #8f7ad6;
@@ -966,3 +959,14 @@ body:has(#app[data-page="bridge"]) { padding-left: max(12px, env(safe-area-inset
   background: #8f7ad6; color: #fff; font-size: 9.5px; font-weight: 800; vertical-align: 1px; }
 .calwho { margin-left: auto; margin-right: 8px; }
 .bswitch { margin: 10px 2px 4px; } .bswitch input { font-size: 14px; }
+
+/* Sign in with Google */
+.signin-card { text-align: center; padding: 26px 20px; }
+.signin-card h2 { margin: 0 0 6px; }
+.gbtn { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; background: #fff; border: 1px solid #dadce0; color: #1f1f1f; font-weight: 600; }
+.glogo, .acct-g { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; font-weight: 800; font-size: 14px; color: #fff;
+  background: conic-gradient(#ea4335 0 25%, #fbbc05 0 50%, #34a853 0 75%, #4285f4 0); }
+.acct { display: flex; align-items: center; gap: 12px; padding: 4px 4px 8px; }
+.acct-g { width: 40px; height: 40px; font-size: 20px; }
+.acct div { display: flex; flex-direction: column; }
+.acct span { color: var(--muted); font-size: 13px; }
