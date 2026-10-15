@@ -53,6 +53,19 @@ await Promise.all([
 const both = await call(null, a.body.token);
 assert(both.body.pact.members.every((m) => m.days[today]), 'both ticks kept');
 
+// --- calendar sharing
+const ev = [{ d: today, s: '10:00', e: '12:00', n: 'Microeconomics lecture' }, { d: today, s: '25:00', n: 'bad time' }, { d: 'x', n: 'bad date' }];
+let shared = await call({ action: 'calendar', events: ev, detail: 'names' }, a.body.token);
+let mine = shared.body.pact.members.find((m) => m.me);
+assert.equal(mine.cal.events.length, 2, 'bad dates dropped');
+assert.equal(mine.cal.events[1].s, null, 'bad times dropped');
+assert.equal((await call(null, b.body.token)).body.pact.members.find((m) => m.name === 'Cathy').cal.events[0].n, 'Microeconomics lecture', 'the buddy sees it');
+shared = await call({ action: 'calendar', events: ev, detail: 'busy' }, a.body.token);
+assert.equal(shared.body.pact.members.find((m) => m.me).cal.events[0].n, '', 'busy-only hides names');
+shared = await call({ action: 'calendar', events: null }, a.body.token);
+assert.equal(shared.body.pact.members.find((m) => m.me).cal, undefined, 'sharing can be turned off');
+assert.equal((await call(null, b.body.token)).body.pact.members.find((m) => m.name === 'Alex').cal, undefined, 'nothing shared unless turned on');
+
 // --- leave
 assert.equal((await call({ action: 'leave' }, b.body.token)).status, 200);
 assert.equal((await call(null, b.body.token)).status, 401, 'left members lose access');

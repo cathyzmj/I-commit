@@ -5,6 +5,9 @@
 //   GET                                    reads the pact       -> { pact }
 //   POST { action: 'tick', date, done, note }                   -> { pact }
 //   POST { action: 'leave' }               leaves (the pact is deleted when the last person leaves)
+//   POST { action: 'calendar', events, detail }   shares (or, with events: null, stops sharing) your
+//                                          calendar with the pact: [{ d, s, e, n }] for the next few weeks;
+//                                          detail 'busy' drops the names so only the times are shared
 //
 // Everything except create/join carries "Authorization: Bearer <token>". Each member has their
 // own random token; only its SHA-256 hash is stored. Invite codes are short and only let someone
@@ -15,6 +18,8 @@ const INVITE_RE = /^[a-z0-9]{10}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_MEMBERS = 6;
 const KEEP_DAYS = 120;
+const MAX_EVENTS = 600;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const MAX_ATTEMPTS = 6;
 
 const json = (status, body) => Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -36,7 +41,7 @@ const dayDiff = (a, b) => Math.round((Date.parse(a) - Date.parse(b)) / 864e5);
 function view(pact, memberId) {
   return {
     id: pact.id, name: pact.name, invite: pact.invite, created: pact.created,
-    members: Object.entries(pact.members).map(([id, m]) => ({ id, name: m.name, me: id === memberId, joined: m.joined, days: m.days })),
+    members: Object.entries(pact.members).map(([id, m]) => ({ id, name: m.name, me: id === memberId, joined: m.joined, days: m.days, ...(m.cal ? { cal: m.cal } : {}) })),
   };
 }
 
@@ -129,6 +134,24 @@ export async function handle(req, store) {
       if (body.done) me.days[date] = { d: 1, n: text(body.note, 140), at: new Date().toISOString() };
       else delete me.days[date];
       for (const d of Object.keys(me.days)) if (dayDiff(today, d) > KEEP_DAYS) delete me.days[d];
+    });
+    if (!pact || !pact.members[m.memberId]) return json(404, { error: 'This pact no longer exists.' });
+    return json(200, { pact: view(pact, m.memberId) });
+  }
+
+  if (body.action === 'calendar') {
+    let cal = null;
+    if (Array.isArray(body.events)) {
+      const busy = body.detail !== 'names';
+      const events = body.events.slice(0, MAX_EVENTS).filter((x) => x && DATE_RE.test(x.d)).map((x) => ({
+        d: x.d, s: TIME_RE.test(x.s) ? x.s : null, e: TIME_RE.test(x.e) ? x.e : null, n: busy ? '' : text(x.n, 80),
+      }));
+      cal = { detail: busy ? 'busy' : 'names', updated: new Date().toISOString(), events };
+    }
+    const pact = await update(store, m.pactId, (p) => {
+      const me = p.members[m.memberId];
+      if (!me) return false;
+      if (cal) me.cal = cal; else delete me.cal;
     });
     if (!pact || !pact.members[m.memberId]) return json(404, { error: 'This pact no longer exists.' });
     return json(200, { pact: view(pact, m.memberId) });

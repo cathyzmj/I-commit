@@ -193,6 +193,7 @@ function flush() {
   writeState().catch((e) => toast('Could not save: ' + e.message));
   scheduleWidgetPush();
   buddyAutoTick();
+  if (state.buddy && state.buddy.share !== 'off') scheduleShare();
   if (changed) scheduleSync();
 }
 
@@ -295,7 +296,7 @@ function migrate(s) {
   s.trees = (Array.isArray(s.trees) ? s.trees : []).map(normaliseTree);
   s.tests = (Array.isArray(s.tests) ? s.tests : []).map(normaliseTest);
   s.notes = (Array.isArray(s.notes) ? s.notes : []).map(normaliseNote);
-  s.buddy = s.buddy && /^[A-Za-z0-9_-]{32,128}$/.test(s.buddy.token || '') ? { token: s.buddy.token, pactId: String(s.buddy.pactId || ''), commitmentId: s.buddy.commitmentId || null } : null;
+  s.buddy = s.buddy && /^[A-Za-z0-9_-]{32,128}$/.test(s.buddy.token || '') ? { token: s.buddy.token, pactId: String(s.buddy.pactId || ''), commitmentId: s.buddy.commitmentId || null, share: ['busy', 'names'].includes(s.buddy.share) ? s.buddy.share : 'off' } : null;
   s.calendars = {
     feeds: feeds.filter((f) => f && f.url).map((f) => ({
       id: f.id || uid(), name: String(f.name || 'Calendar'), url: String(f.url), section: String(f.section || 'Calendar'),
@@ -923,6 +924,9 @@ function weekTabHtml() {
 // with a day strip to switch; wide screens show the whole week (CSS hides the other days on phones).
 const HOUR_PX = 52;
 let calViewDay = todayISO(); // selected day (phone view)
+// Whose calendar the grid shows when a buddy shares theirs: 'me', 'buddy' or 'both' (kept on this device).
+let calWho = 'me';
+try { calWho = ['me', 'buddy', 'both'].includes(localStorage.getItem('calWho')) ? localStorage.getItem('calWho') : 'me'; } catch {}
 
 const toMinutes = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 const fmtTime = (mins) => `${pad(Math.floor(mins / 60) % 24)}:${pad(mins % 60)}`;
@@ -986,10 +990,23 @@ function calendarTabHtml() {
       ${body ? '' : '<p class="muted small">Nothing planned.</p>'}</div>`;
   };
 
-  // --- 2. Synced calendars: a time grid of events imported from your calendars.
+  // --- 2. Synced calendars: a time grid of events imported from your calendars, and (when they
+  // share theirs) your buddy's, shown on their own or together with yours.
   const timed = {}, untimed = {};
   for (const d of days) { timed[d] = []; untimed[d] = []; }
-  for (const [id, it] of fromCal) {
+  const buddies = sharingBuddies();
+  const who = buddies.length ? calWho : 'me';
+  for (const b of who === 'me' ? [] : buddies) {
+    for (const x of b.cal.events) {
+      if (!timed[x.d]) continue;
+      const label = x.n || 'Busy';
+      if (x.s) {
+        const start = toMinutes(x.s), end = x.e && toMinutes(x.e) > start ? toMinutes(x.e) : start + 60;
+        timed[x.d].push({ buddy: b, label, start, end });
+      } else untimed[x.d].push({ buddy: b, label });
+    }
+  }
+  for (const [id, it] of who === 'buddy' ? [] : fromCal) {
     if (!timed[it.date]) continue;
     if (it.time) {
       const start = toMinutes(it.time);
@@ -1016,6 +1033,12 @@ function calendarTabHtml() {
 
   const cols = days.map((d) => {
     const evs = layoutDay(timed[d]).map((e) => {
+      if (e.buddy) {
+        const top = ((e.start - startHour * 60) / 60) * HOUR_PX, height = Math.max(22, ((e.end - e.start) / 60) * HOUR_PX - 2);
+        return `<div class="cev buddy ${height < 40 ? 'short' : ''}" title="${escapeHtml(`${e.buddy.name}: ${e.label} · ${fmtTime(e.start)}–${fmtTime(e.end)}`)}"
+          style="top:${top}px;height:${height}px;left:calc(${(e.lane / e.lanes) * 100}% + 2px);width:calc(${100 / e.lanes}% - 4px)">
+          <div class="cev-body"><b><span class="who">${escapeHtml(e.buddy.name.slice(0, 1).toUpperCase())}</span>${escapeHtml(e.label)}</b></div></div>`;
+      }
       const sched = !!e.it.schedule;
       const done = !sched && periodDone(e.it);
       const top = ((e.start - startHour * 60) / 60) * HOUR_PX;
@@ -1035,7 +1058,8 @@ function calendarTabHtml() {
 
   const hasAllDay = days.some((d) => untimed[d].length);
   const allDay = days.map((d) => `<div class="call ${d === calViewDay ? 'sel' : ''}">
-      ${untimed[d].map(([id, it]) => { const sched = !!it.schedule; const done = !sched && periodDone(it); return `<div class="cuntimed ${sched ? 'sched' : ''} ${done ? 'done' : ''}" data-open="#/c/${id}" style="--ev:${eventColor(id)}">
+      ${untimed[d].map((x) => { if (x.buddy) return `<div class="cuntimed buddy" title="${escapeHtml(`${x.buddy.name}: ${x.label}`)}"><span><span class="who">${escapeHtml(x.buddy.name.slice(0, 1).toUpperCase())}</span>${escapeHtml(x.label)}</span></div>`;
+        const [id, it] = x; const sched = !!it.schedule; const done = !sched && periodDone(it); return `<div class="cuntimed ${sched ? 'sched' : ''} ${done ? 'done' : ''}" data-open="#/c/${id}" style="--ev:${eventColor(id)}">
         ${sched ? '' : `<button class="cev-chk" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-label="${escapeHtml(it.name)} done">${done ? CHECK : ''}</button>`}
         <span>${escapeHtml(it.name)}</span></div>`; }).join('')}
     </div>`).join('');
@@ -1062,7 +1086,10 @@ function calendarTabHtml() {
       <div class="pcols">${days.map(planCol).join('')}</div>
     </section>
     <section class="card cal" data-section="Synced calendars">
-      <div class="card-head"><h2>Synced calendars</h2><a class="txt-btn" href="#/calendar">Calendars ›</a></div>
+      <div class="card-head"><h2>${who === 'buddy' ? `${escapeHtml(buddies.map((b) => b.name).join(' & '))}'s calendar` : who === 'both' ? 'Our calendars' : 'Synced calendars'}</h2>
+        ${buddies.length ? `<div class="seg-mini calwho">${[['me', 'Mine'], ['buddy', buddies.length > 1 ? 'Buddies' : escapeHtml(buddies[0].name)], ['both', 'Together']]
+          .map(([v, l]) => `<button data-act="cal-who" data-v="${v}" class="${who === v ? 'on' : ''}">${l}</button>`).join('')}</div>` : ''}
+        <a class="txt-btn" href="#/calendar">Calendars ›</a></div>
       <div class="cgrid-head"><div class="ctimes-gap"></div>${heads('')}</div>
       ${hasAllDay ? `<div class="call-row"><div class="ctimes-gap small muted">all day</div>${allDay}</div>` : ''}
       <div class="cgrid">
@@ -2233,12 +2260,12 @@ async function buddyApi(body) {
 const typing = () => { const a = document.activeElement; return a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
 async function refreshBuddy() {
   if (!state.buddy || buddyBusy) return;
-  try { buddyView = (await buddyApi()).pact; buddyError = null; buddyAutoTick(); }
+  try { buddyView = (await buddyApi()).pact; buddyError = null; buddyAutoTick(); scheduleShare(500); }
   catch (e) { buddyError = e.status === 401 || e.status === 404 ? 'gone' : e.message; }
   if ((route.tab === 'buddy' || route.tab === 'today') && !route.id && !typing()) render();
 }
 function joinedPact(data, form) {
-  state.buddy = { token: data.token, pactId: data.pact.id, commitmentId: new FormData(form).get('routine') || null };
+  state.buddy = { token: data.token, pactId: data.pact.id, commitmentId: new FormData(form).get('routine') || null, share: 'off' };
   buddyView = data.pact; buddyError = null;
   save();
   location.hash = '#/buddy';
@@ -2287,6 +2314,35 @@ function buddyAutoTick() {
   if (done && !has) { buddyAutoDate = todayISO(); buddyTick(true, ''); }
   else if (!done && has && buddyAutoDate === todayISO()) { buddyAutoDate = null; buddyTick(false); }
 }
+// Sharing your calendar (only when you turn it on): your one-off events and synced calendar for this
+// week and the next three, as busy times or with names. Sent again whenever it changes.
+let shareSig = null, shareTimer = null;
+function calendarShare() {
+  const from = currentWeekKey(), to = addDaysISO(from, 27);
+  return state.commitments.filter((c) => c.freq === 'once' && !c.archived && c.date && c.date >= from && c.date <= to)
+    .map((c) => {
+      const s0 = c.time ? toMinutes(c.time) : null;
+      const e0 = c.time ? (c.endTime && toMinutes(c.endTime) > s0 ? toMinutes(c.endTime) : s0 + Math.max(30, Math.round((c.hours || 1) * 60))) : null;
+      return { d: c.date, s: c.time || null, e: e0 != null ? fmtTime(Math.min(e0, 23 * 60 + 59)) : null, n: c.name };
+    }).sort((a, b) => `${a.d}${a.s}`.localeCompare(`${b.d}${b.s}`));
+}
+function scheduleShare(delay = 3000) {
+  clearTimeout(shareTimer);
+  shareTimer = setTimeout(shareCalendar, delay);
+}
+async function shareCalendar() {
+  if (!state.buddy || !buddyView) return;
+  const share = state.buddy.share || 'off';
+  const mine = buddyView.members.find((m) => m.me);
+  const events = share === 'off' ? null : calendarShare();
+  const sig = JSON.stringify([share, events]);
+  if (sig === shareSig || (share === 'off' && !(mine && mine.cal))) { shareSig = sig; return; }
+  try { buddyView = (await buddyApi({ action: 'calendar', events, detail: share })).pact; shareSig = sig; }
+  catch { /* tries again next time */ }
+}
+// Buddies who share their calendar with you.
+const sharingBuddies = () => (buddyView ? buddyView.members.filter((m) => !m.me && m.cal) : []);
+
 function pactStreak(p) {
   if (p.members.length < 2) return 0;
   const all = (d) => p.members.every((m) => m.days[d]);
@@ -2373,7 +2429,12 @@ function buddyTabHtml() {
       <div class="bcode"><span>Invite code</span><b>${fmtCode(p.invite)}</b><button class="mini-btn" data-act="buddy-copy-code">Copy</button></div>
       <p class="help">Your buddy can enter it in their app: Buddy → Got an invite?</p>
       <div class="btn-row"><button class="btn" data-act="buddy-invite">Share invite</button><button class="btn" data-act="buddy-copy">Copy link</button></div>
-      <form class="form flat" data-form="buddy-routine"><label class="f">Tick me automatically when I finish${routineSelect('routine', state.buddy.commitmentId, 'Nothing, I’ll tick here')}</label></form>
+      <form class="form flat" data-form="buddy-routine"><label class="f">Tick me automatically when I finish${routineSelect('routine', state.buddy.commitmentId, 'Nothing, I’ll tick here')}</label>
+        <label class="f">Share my calendar with my buddy<select name="share">
+          <option value="off" ${state.buddy.share === 'off' ? 'selected' : ''}>Off</option>
+          <option value="busy" ${state.buddy.share === 'busy' ? 'selected' : ''}>Busy times only</option>
+          <option value="names" ${state.buddy.share === 'names' ? 'selected' : ''}>With event names</option></select>
+          <span class="help">Your timetable and one-off events for the next four weeks. You see theirs only if they share too.</span></label></form>
       <div class="danger"><button class="btn warn" data-act="buddy-leave">Leave pact</button></div>
     </section>`;
 }
@@ -3639,7 +3700,7 @@ function applyRecord(k, p) {
     if (i >= 0) list[i] = v; else list.push(v);
   } else if (type === 'b') {
     const had = state.buddy && state.buddy.token;
-    state.buddy = { token: p.token, pactId: p.pactId, commitmentId: p.commitmentId || null };
+    state.buddy = { token: p.token, pactId: p.pactId, commitmentId: p.commitmentId || null, share: ['busy', 'names'].includes(p.share) ? p.share : 'off' };
     if (had !== p.token) { buddyView = null; setTimeout(refreshBuddy, 0); }
   } else if (type === 'f') {
     const f = state.calendars.feeds.find((x) => x.id === p.id);
@@ -4351,6 +4412,7 @@ document.addEventListener('click', (e) => {
       appsMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; appsDay = null; render(); break;
     }
     case 'cal-day': calViewDay = btn.dataset.date; render(); break;
+    case 'cal-who': calWho = btn.dataset.v; try { localStorage.setItem('calWho', calWho); } catch {} render(); break;
     case 'cal-prev': case 'cal-next': calViewDay = isoDate(addDays(parseISO(calViewDay), act === 'cal-prev' ? -7 : 7)); render(); break;
     case 'cal-today': calViewDay = todayISO(); render(); break;
     case 'prev': viewKey = shiftWeek(viewKey, -1); render(); break;
@@ -4496,6 +4558,7 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('change', (e) => {
   if (e.target.closest('form[data-form="buddy-routine"]') && state.buddy) {
+    if (e.target.name === 'share') { state.buddy.share = e.target.value; save(); render(); scheduleShare(0); toast(e.target.value === 'off' ? 'Stopped sharing your calendar' : 'Your calendar is shared with your buddy'); return; }
     state.buddy.commitmentId = e.target.value || null; buddyAutoDate = null; save(); render(); return;
   }
   if (e.target.id === 'bgFile') {
