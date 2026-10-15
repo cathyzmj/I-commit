@@ -965,3 +965,4 @@ body:has(#app[data-page="bridge"]) { padding-left: max(12px, env(safe-area-inset
 .cev .who, .cuntimed .who { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-right: 4px; border-radius: 50%;
   background: #8f7ad6; color: #fff; font-size: 9.5px; font-weight: 800; vertical-align: 1px; }
 .calwho { margin-left: auto; margin-right: 8px; }
+.bswitch { margin: 10px 2px 4px; } .bswitch input { font-size: 14px; }

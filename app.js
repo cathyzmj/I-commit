@@ -2290,6 +2290,23 @@ async function buddyTick(done, note = '') {
   buddyBusy = false;
   if (!typing()) render();
 }
+// Leaves the current pact and joins the one from the invite being shown, keeping your name and settings.
+async function switchPact() {
+  const invite = route.invite, me = buddyView && buddyView.members.find((m) => m.me);
+  if (!invite || !me) return;
+  const keep = { commitmentId: state.buddy.commitmentId, share: state.buddy.share };
+  try {
+    const joined = await buddyApi({ action: 'join', invite, me: me.name });
+    try { await buddyApi({ action: 'leave' }); } catch { /* the old pact may already be gone */ }
+    state.buddy = { token: joined.token, pactId: joined.pact.id, ...keep };
+    buddyView = joined.pact; buddyError = null; shareSig = null;
+    save();
+    location.hash = '#/buddy';
+    render();
+    toast(`You're in “${joined.pact.name}” now`);
+    scheduleShare(0);
+  } catch (e) { toast(e.message); }
+}
 async function leavePact() {
   if (!confirm('Leave this pact? Your ticks in it are removed. If you are the last person, the pact is deleted.')) return;
   try { if (buddyError !== 'gone') await buddyApi({ action: 'leave' }); } catch (e) { if (e.status !== 401 && e.status !== 404) { toast(e.message); return; } }
@@ -2398,6 +2415,13 @@ function buddyTabHtml() {
   }
   const p = buddyView, today = todayISO();
   const me = p.members.find((m) => m.me) || { days: {} };
+  // An invite to a different pact (e.g. a new one your buddy started): offer to move over.
+  const switchCard = route.invite && route.invite !== p.invite ? `
+    <section class="card banner-card" data-section="Invite">
+      <b>Join the pact from this invite?</b>
+      <p class="small">You're in “${escapeHtml(p.name)}”${p.members.length > 1 ? ` with ${escapeHtml(p.members.filter((m) => !m.me).map((m) => m.name).join(' & '))}` : ', on your own'}. Joining the new one (code ${fmtCode(route.invite)}) leaves this one.</p>
+      <div class="btn-row"><button class="btn primary" data-act="buddy-switch">Join the new pact</button><a class="btn" href="#/buddy">Stay here</a></div>
+    </section>` : '';
   const others = p.members.filter((m) => !m.me);
   const streak = pactStreak(p);
   const mineToday = me.days[today];
@@ -2407,7 +2431,7 @@ function buddyTabHtml() {
   const days = Array.from({ length: 14 }, (_, i) => addDaysISO(today, i - 13));
   const row = (m) => `<div class="bgrid-row"><span class="bname">${m.me ? 'You' : escapeHtml(m.name)}</span>${days.map((d) =>
     `<i class="${m.days[d] ? 'on' : ''} ${d === today ? 'today' : ''}" title="${fmtShort(d)}"></i>`).join('')}</div>`;
-  return head('Work Buddy', escapeHtml(p.name)) + `
+  return head('Work Buddy', escapeHtml(p.name)) + switchCard + `
     <section class="card" data-section="Today">
       <div class="bstreak"><b>${streak ? `🔥 ${streak}` : '🌱 0'}</b><span>${others.length ? `day streak · grows on days you all finish` : 'Waiting for your buddy to join'}</span></div>
       <div class="bmember me ${mineToday ? 'done' : ''}">
@@ -2435,6 +2459,7 @@ function buddyTabHtml() {
           <option value="busy" ${state.buddy.share === 'busy' ? 'selected' : ''}>Busy times only</option>
           <option value="names" ${state.buddy.share === 'names' ? 'selected' : ''}>With event names</option></select>
           <span class="help">Your timetable and one-off events for the next four weeks. You see theirs only if they share too.</span></label></form>
+      <form class="inline bswitch" data-form="buddy-code"><input name="code" placeholder="Got a different invite? Enter its code" autocapitalize="characters" autocorrect="off" spellcheck="false"><button class="mini-btn" type="submit">Go</button></form>
       <div class="danger"><button class="btn warn" data-act="buddy-leave">Leave pact</button></div>
     </section>`;
 }
@@ -4379,6 +4404,7 @@ document.addEventListener('click', (e) => {
     case 'buddy-copy': copyText(inviteUrl(buddyView)); break;
     case 'buddy-copy-code': copyText(fmtCode(buddyView.invite)); break;
     case 'buddy-leave': leavePact(); break;
+    case 'buddy-switch': switchPact(); break;
     case 'copy-invite-code': copyText(fmtCode(btn.dataset.code)); break;
     case 'passkey-add': addPasskey(); break;
     case 'passkey-signin': signInWithPasskey(); break;
