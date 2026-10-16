@@ -26,7 +26,7 @@ export default {
         case '/api/ics': return await ics(req);
         case '/api/sync': return await sync(req, d1Store(env.DB, 'sync'));
         case '/api/widget': return await widget(req, d1Store(env.DB, 'widget'));
-        case '/api/buddy': return await buddy(req, d1Store(env.DB, 'buddy'));
+        case '/api/buddy': return await buddy(req, d1Store(env.DB, 'buddy'), d1Store(env.DB, 'login'));
         case '/api/apps': return await apps(req, {
           syncStore: d1Store(env.DB, 'sync'),
           env: { NOTION_TOKEN: env.NOTION_TOKEN, NOTION_APPS_DATABASE: env.NOTION_APPS_DATABASE },

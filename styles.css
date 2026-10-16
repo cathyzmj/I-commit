@@ -970,3 +970,10 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .acct-g { width: 40px; height: 40px; font-size: 20px; }
 .acct div { display: flex; flex-direction: column; }
 .acct span { color: var(--muted); font-size: 13px; }
+
+/* Work Buddy: invite by Gmail */
+.binvite { margin: 4px 2px 8px; }
+.binvite input { font-size: 14px; }
+.binv { display: flex; align-items: center; gap: 8px; padding: 6px 4px; font-size: 13.5px; }
+.binv span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.binv a.mini-btn { text-decoration: none; color: var(--ink); }

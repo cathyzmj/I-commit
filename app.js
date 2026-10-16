@@ -2251,13 +2251,61 @@ let buddyView = null, buddyError = null, buddyBusy = false, buddyAutoDate = null
 async function buddyApi(body) {
   const headers = { 'content-type': 'application/json' };
   if (state.buddy && state.buddy.token) headers.authorization = `Bearer ${state.buddy.token}`;
+  if (state.account && state.sync.enabled) headers['x-data-key'] = state.sync.key;
   const r = await fetch('/api/buddy', { method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(data.error || `Something went wrong (${r.status}).`); e.status = r.status; throw e; }
   return data;
 }
 const typing = () => { const a = document.activeElement; return a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
+// Invites sent to your Gmail (when signed in with Google), shown on Buddy and Today.
+let myInvites = [];
+async function refreshInvites() {
+  if (!state.account || !state.sync.enabled) { myInvites = []; return; }
+  try { myInvites = (await buddyApi({ action: 'invites' })).invites || []; } catch { return; }
+  if ((route.tab === 'buddy' || route.tab === 'today') && !route.id && !typing()) render();
+}
+async function acceptInvite(pactId) {
+  const old = state.buddy;
+  try {
+    const r = await buddyApi({ action: 'accept', pactId });
+    if (old) { try { await buddyApi({ action: 'leave' }); } catch { /* old pact may be gone */ } }
+    state.buddy = { token: r.token, pactId: r.pact.id, commitmentId: old ? old.commitmentId : (routineChoices().find((c) => /test/i.test(c.name)) || {}).id || null, share: old ? old.share : 'off' };
+    buddyView = r.pact; buddyError = null; shareSig = null;
+    myInvites = myInvites.filter((x) => x.pactId !== pactId);
+    save();
+    location.hash = '#/buddy';
+    render();
+    toast(`You're in “${r.pact.name}”`);
+    buddyAutoTick();
+    scheduleShare(0);
+  } catch (e) { toast(e.message); refreshInvites(); }
+}
+async function declineInvite(pactId) {
+  try { await buddyApi({ action: 'decline', pactId }); } catch (e) { toast(e.message); }
+  myInvites = myInvites.filter((x) => x.pactId !== pactId);
+  render();
+}
+async function inviteByEmail(email) {
+  email = String(email || '').trim();
+  if (!email) return;
+  try { buddyView = (await buddyApi({ action: 'invite-email', email })).pact; render(); toast(`Invited ${email}. They'll see it when they sign in with Google.`); }
+  catch (e) { toast(e.message); }
+}
+const inviteMail = (email) => `mailto:${encodeURIComponent(email)}?${new URLSearchParams({
+  subject: 'Join me on I Commit!',
+  body: `Hi! I've invited you (${email}) to our "${buddyView ? buddyView.name : 'Work Buddy'}" pact on I Commit!, so we can keep each other on track.\n\n1. Open ${location.origin}\n2. Sign in with Google using this Gmail\n3. Go to Buddy and tap Accept\n`,
+}).toString().replace(/\+/g, '%20')}`;
+function invitesHtml(inPact) {
+  if (!myInvites.length) return '';
+  return myInvites.map((x) => `<section class="card banner-card" data-section="Invite">
+    <b>${escapeHtml(x.from.join(' & ') || 'Someone')} invited you to “${escapeHtml(x.name)}”</b>
+    <p class="small">${inPact ? 'Accepting moves you out of your current pact.' : 'Do it together: each of you ticks your own day, and the streak grows on days you both finish.'}</p>
+    <div class="btn-row"><button class="btn primary" data-act="invite-accept" data-id="${x.pactId}">Accept</button><button class="btn" data-act="invite-decline" data-id="${x.pactId}">Decline</button></div></section>`).join('');
+}
+
 async function refreshBuddy() {
+  refreshInvites();
   if (!state.buddy || buddyBusy) return;
   try { buddyView = (await buddyApi()).pact; buddyError = null; buddyAutoTick(); scheduleShare(500); }
   catch (e) { buddyError = e.status === 401 || e.status === 404 ? 'gone' : e.message; }
@@ -2273,8 +2321,11 @@ function joinedPact(data, form) {
 }
 async function createPact(form) {
   const f = new FormData(form);
-  try { joinedPact(await buddyApi({ action: 'create', me: f.get('me'), name: f.get('name') }), form); toast('Pact started. Send your buddy the invite link.'); }
-  catch (e) { toast(e.message); }
+  const email = String(f.get('email') || '').trim();
+  try {
+    joinedPact(await buddyApi({ action: 'create', me: f.get('me'), name: f.get('name') }), form);
+    if (email) await inviteByEmail(email); else toast('Pact started. Invite your buddy by Gmail below.');
+  } catch (e) { toast(e.message); }
 }
 async function joinPact(form) {
   const f = new FormData(form);
@@ -2380,6 +2431,7 @@ async function shareText(text, url) {
   copyText(`${text} ${url}`);
 }
 function buddyTodayLine() {
+  if (myInvites.length) return `<div class="pace"><a href="#/buddy">✉️ ${escapeHtml(myInvites[0].from.join(' & ') || 'Someone')} invited you to Work Buddy · open ›</a></div>`;
   if (!state.buddy || !buddyView) return '';
   const others = buddyView.members.filter((m) => !m.me);
   const s = pactStreak(buddyView);
@@ -2390,6 +2442,10 @@ function buddyTabHtml() {
   if (!state.buddy) {
     const invite = route.invite || '';
     return head('Work Buddy', invite ? 'Join a pact' : 'Partner up') + `
+      ${invitesHtml(false)}
+      ${!state.account ? `<section class="card banner-card"><b>Sign in with Google to pair up by Gmail</b>
+        <p class="small">Then you invite your buddy by their Gmail, or see their invite and tap Accept.</p>
+        <div class="btn-row"><a class="btn primary" href="#/account">Sign in with Google</a></div></section>` : ''}
       ${invite && inBrowserTab() ? `<section class="card banner-card"><b>Using I Commit! from your home screen?</b>
         <p class="small">The home-screen app keeps its own data, separate from this browser tab. Open the app there instead: <b>Buddy → Got an invite?</b> and enter</p>
         <div class="bcode big"><b>${fmtCode(invite)}</b><button class="mini-btn" data-act="copy-invite-code" data-code="${invite}">Copy</button></div>
@@ -2398,12 +2454,13 @@ function buddyTabHtml() {
         <div class="card-head"><h2>${invite ? 'You’ve been invited' : 'Start a pact'}</h2></div>
         <p class="small muted">${invite ? 'Do the same routine together. Each of you ticks your own day; the streak grows on days you both finish.'
           : 'Do a routine together with a real person, e.g. an online test every day. Each of you ticks your own day; the streak grows only on days you both finish.'}</p>
-        <label class="f">Your name<input name="me" required maxlength="40" placeholder="What your buddy sees"></label>
+        <label class="f">Your name<input name="me" required maxlength="40" placeholder="What your buddy sees" value="${escapeHtml(state.account ? (state.account.name || '') : '')}"></label>
+        ${invite || !state.account ? '' : '<label class="f">Your buddy’s Gmail<input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="e.g. han@gmail.com"><span class="help">They see your invite when they open I Commit! signed in with that Gmail.</span></label>'}
         ${invite ? `<input type="hidden" name="invite" value="${escapeHtml(invite)}">` : '<label class="f">What you’re doing together<input name="name" maxlength="60" value="Daily online test"></label>'}
         <label class="f">Tick me automatically when I finish<span class="help">Optional. Or tick by hand on this page.</span>${routineSelect('routine', (routineChoices().find((c) => /test/i.test(c.name)) || {}).id, 'Nothing, I’ll tick here')}</label>
-        <button class="btn primary" type="submit">${invite ? 'Join' : 'Start and get an invite link'}</button>
+        <button class="btn primary" type="submit">${invite ? 'Join' : state.account ? 'Start and invite' : 'Start and get an invite code'}</button>
       </form>
-      ${invite ? '' : `<form class="card form" data-form="buddy-code"><div class="card-head"><h2>Got an invite?</h2></div>
+      ${invite ? '' : `<form class="card form" data-form="buddy-code"><div class="card-head"><h2>Got an invite code?</h2></div>
         <label class="f">Invite code or link<input name="code" placeholder="e.g. ABCDE-FGHJK" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
         <button class="btn" type="submit">Continue</button></form>`}`;
   }
@@ -2430,7 +2487,7 @@ function buddyTabHtml() {
   const days = Array.from({ length: 14 }, (_, i) => addDaysISO(today, i - 13));
   const row = (m) => `<div class="bgrid-row"><span class="bname">${m.me ? 'You' : escapeHtml(m.name)}</span>${days.map((d) =>
     `<i class="${m.days[d] ? 'on' : ''} ${d === today ? 'today' : ''}" title="${fmtShort(d)}"></i>`).join('')}</div>`;
-  return head('Work Buddy', escapeHtml(p.name)) + switchCard + `
+  return head('Work Buddy', escapeHtml(p.name)) + switchCard + invitesHtml(true) + `
     <section class="card" data-section="Today">
       <div class="bstreak"><b>${streak ? `🔥 ${streak}` : '🌱 0'}</b><span>${others.length ? `day streak · grows on days you all finish` : 'Waiting for your buddy to join'}</span></div>
       <div class="bmember me ${mineToday ? 'done' : ''}">
@@ -2449,8 +2506,12 @@ function buddyTabHtml() {
     </section>
     <section class="card" data-section="Settings">
       <div class="card-head"><h2>Invite & settings</h2></div>
-      <div class="bcode"><span>Invite code</span><b>${fmtCode(p.invite)}</b><button class="mini-btn" data-act="buddy-copy-code">Copy</button></div>
-      <p class="help">Your buddy can enter it in their app: Buddy → Got an invite?</p>
+      ${state.account ? `<form class="inline binvite" data-form="buddy-email"><input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="Invite by Gmail, e.g. han@gmail.com"><button class="btn primary" type="submit">Invite</button></form>
+        ${(p.invited || []).map((e) => `<div class="binv"><span>✉️ ${escapeHtml(e)} · invited</span><a class="mini-btn" href="${escapeHtml(inviteMail(e))}">Email them</a><button class="mini-btn" data-act="invite-takeback" data-email="${escapeHtml(e)}">Take back</button></div>`).join('')}
+        <p class="help">They see the invite when they open I Commit! signed in with that Gmail. “Email them” opens a ready-made email in your Mail app.</p>`
+        : '<p class="help"><a href="#/account">Sign in with Google</a> to invite by Gmail.</p>'}
+      <div class="bcode"><span>Or a code</span><b>${fmtCode(p.invite)}</b><button class="mini-btn" data-act="buddy-copy-code">Copy</button></div>
+      <p class="help">Your buddy can enter it in their app: Buddy → Got an invite code?</p>
       <div class="btn-row"><button class="btn" data-act="buddy-invite">Share invite</button><button class="btn" data-act="buddy-copy">Copy link</button></div>
       <form class="form flat" data-form="buddy-routine"><label class="f">Tick me automatically when I finish${routineSelect('routine', state.buddy.commitmentId, 'Nothing, I’ll tick here')}</label>
         <label class="f">Share my calendar with my buddy<select name="share">
@@ -4368,6 +4429,9 @@ document.addEventListener('click', (e) => {
     case 'buddy-copy-code': copyText(fmtCode(buddyView.invite)); break;
     case 'buddy-leave': leavePact(); break;
     case 'buddy-switch': switchPact(); break;
+    case 'invite-accept': acceptInvite(btn.dataset.id); break;
+    case 'invite-decline': declineInvite(btn.dataset.id); break;
+    case 'invite-takeback': buddyApi({ action: 'uninvite', email: btn.dataset.email }).then((r) => { buddyView = r.pact; render(); }).catch((e) => toast(e.message)); break;
     case 'copy-invite-code': copyText(fmtCode(btn.dataset.code)); break;
     case 'google-signin': startGoogleSignIn(); break;
     case 'google-cancel': stopGoogleWait(); render(); break;
@@ -4583,6 +4647,7 @@ document.addEventListener('submit', (e) => {
   else if (form === 'test') saveTestForm(e.target);
   else if (form === 'buddy-create') createPact(e.target);
   else if (form === 'buddy-join') joinPact(e.target);
+  else if (form === 'buddy-email') { inviteByEmail(new FormData(e.target).get('email')); e.target.reset(); }
   else if (form === 'buddy-note') buddyTick(true, String(new FormData(e.target).get('note') || '').trim());
   else if (form === 'buddy-code') {
     const code = readCode(new FormData(e.target).get('code'));

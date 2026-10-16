@@ -40,7 +40,7 @@ http.createServer(async (req, res) => {
     let response;
     if (url.pathname === '/api/sync') response = await syncHandle(await toRequest(req), syncStore);
     else if (url.pathname === '/api/widget') response = await widgetHandle(await toRequest(req), widgetStore);
-    else if (url.pathname === '/api/buddy') response = await buddyHandle(await toRequest(req), buddyStore);
+    else if (url.pathname === '/api/buddy') response = await buddyHandle(await toRequest(req), buddyStore, loginStore);
     else if (url.pathname === '/api/login/dev') {
       response = new Response(`<form action="/api/login/callback"><input type="hidden" name="state" value="${url.searchParams.get('state')}"><p>Pretend Google sign-in</p><input name="code" value="cathy@example.com"><button>Continue</button></form>`, { headers: { 'content-type': 'text/html' } });
     } else if (url.pathname.startsWith('/api/login')) response = await loginHandle(await toRequest(req), { store: loginStore, syncStore, env: loginEnv, fetchImpl: devGoogle });

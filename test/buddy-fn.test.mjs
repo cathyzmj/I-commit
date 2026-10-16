@@ -3,12 +3,18 @@ import assert from 'node:assert';
 import { handle } from '../server/buddy.mjs';
 import { memoryStore } from './sync-fn-store.mjs';
 
-const store = memoryStore();
-const call = (body, token) => handle(new Request('https://x/api/buddy', {
+const store = memoryStore(), loginStore = memoryStore();
+const call = (body, token, dataKey) => handle(new Request('https://x/api/buddy', {
   method: body ? 'POST' : 'GET',
-  headers: token ? { authorization: `Bearer ${token}` } : {},
+  headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(dataKey ? { 'x-data-key': dataKey } : {}) },
   body: body ? JSON.stringify(body) : undefined,
-}), store).then(async (r) => ({ status: r.status, body: await r.json() }));
+}), store, loginStore).then(async (r) => ({ status: r.status, body: await r.json() }));
+// Google accounts as /api/login stores them: key:<sha256(data key)> -> sub, user:<sub> -> email.
+const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+const account = async (sub, email, name, key) => {
+  await loginStore.setJSON(`user:${sub}`, { sub, email, name, syncKey: key });
+  await loginStore.setJSON(`key:${await sha(key)}`, { sub });
+};
 const today = new Date().toISOString().slice(0, 10);
 
 // --- create
@@ -65,6 +71,33 @@ assert.equal(shared.body.pact.members.find((m) => m.me).cal.events[0].n, '', 'bu
 shared = await call({ action: 'calendar', events: null }, a.body.token);
 assert.equal(shared.body.pact.members.find((m) => m.me).cal, undefined, 'sharing can be turned off');
 assert.equal((await call(null, b.body.token)).body.pact.members.find((m) => m.name === 'Alex').cal, undefined, 'nothing shared unless turned on');
+
+// --- invite by Gmail
+const HAN = 'h'.repeat(43), EVE = 'e'.repeat(43);
+await account('g-han', 'han@gmail.com', 'Han', HAN);
+await account('g-eve', 'eve@gmail.com', 'Eve', EVE);
+assert.equal((await call({ action: 'invite-email', email: 'not an email' }, a.body.token)).status, 400);
+const inv = await call({ action: 'invite-email', email: ' Han@Gmail.com ' }, a.body.token);
+assert.deepEqual(inv.body.pact.invited, ['han@gmail.com'], 'members see who is invited');
+assert.equal((await call({ action: 'invites' })).status, 401, 'invites need a Google sign-in');
+const seen2 = await call({ action: 'invites' }, null, HAN);
+assert.equal(seen2.body.invites.length, 1);
+assert.deepEqual(seen2.body.invites[0].from.sort(), ['Alex', 'Cathy']);
+assert.equal((await call({ action: 'invites' }, null, EVE)).body.invites.length, 0, 'only the invited email sees it');
+assert.equal((await call({ action: 'accept', pactId: seen2.body.invites[0].pactId }, null, EVE)).status, 409, 'someone else can\'t accept it');
+const acc = await call({ action: 'accept', pactId: seen2.body.invites[0].pactId }, null, HAN);
+assert.equal(acc.status, 200);
+assert.match(acc.body.token, /^[A-Za-z0-9_-]{43}$/);
+assert(acc.body.pact.members.some((x) => x.name === 'Han' && x.me));
+assert.deepEqual(acc.body.pact.invited, [], 'the invite is used up');
+assert.equal((await call({ action: 'invites' }, null, HAN)).body.invites.length, 0);
+await call({ action: 'invite-email', email: 'eve@gmail.com' }, a.body.token);
+await call({ action: 'decline', pactId: seen2.body.invites[0].pactId }, null, EVE);
+assert.deepEqual((await call(null, a.body.token)).body.pact.invited, [], 'declining removes the invite');
+await call({ action: 'invite-email', email: 'eve@gmail.com' }, a.body.token);
+await call({ action: 'uninvite', email: 'eve@gmail.com' }, a.body.token);
+assert.equal((await call({ action: 'invites' }, null, EVE)).body.invites.length, 0, 'taken back');
+await call({ action: 'leave' }, acc.body.token);
 
 // --- leave
 assert.equal((await call({ action: 'leave' }, b.body.token)).status, 200);
