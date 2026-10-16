@@ -20,9 +20,9 @@ const loginStore = memoryStore();
 const devGoogle = async (url, opts) => {
   const email = new URLSearchParams(opts.body).get('code');
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  return new Response(JSON.stringify({ id_token: `${b64({})}.${b64({ iss: 'https://accounts.google.com', aud: 'dev-client', sub: `dev-${email}`, email, name: email.split('@')[0], email_verified: true })}.x` }));
+  return new Response(JSON.stringify({ id_token: `${b64({})}.${b64({ iss: 'https://accounts.google.com', aud: 'dev-client.apps.googleusercontent.com', sub: `dev-${email}`, email, name: email.split('@')[0], email_verified: true })}.x` }));
 };
-const loginEnv = { GOOGLE_CLIENT_ID: 'dev-client', GOOGLE_CLIENT_SECRET: 'dev', DEV_AUTH_URL: '/api/login/dev' };
+const loginEnv = { GOOGLE_CLIENT_ID: 'dev-client.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'dev', DEV_AUTH_URL: '/api/login/dev' };
 const widgetMem = new Map();
 const widgetStore = { get: async (k) => widgetMem.get(k) ?? null, set: async (k, v) => { widgetMem.set(k, v); }, delete: async (k) => { widgetMem.delete(k); } };
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.ics': 'text/calendar' };

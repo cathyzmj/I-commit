@@ -20,7 +20,7 @@ export default {
     try {
       if (pathname === '/api/login' || pathname.startsWith('/api/login/')) {
         return await login(req, { store: d1Store(env.DB, 'login'), syncStore: d1Store(env.DB, 'sync'),
-          env: { GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET } });
+          env: { GOOGLE_CLIENT_ID: (env.GOOGLE_CLIENT_ID || '').trim(), GOOGLE_CLIENT_SECRET: (env.GOOGLE_CLIENT_SECRET || '').trim() } });
       }
       switch (pathname) {
         case '/api/ics': return await ics(req);

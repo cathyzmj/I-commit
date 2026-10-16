@@ -45,6 +45,7 @@ export async function handle(req, { store, syncStore, env, fetchImpl = fetch }) 
   const url = new URL(req.url);
   const clientId = env.GOOGLE_CLIENT_ID, secret = env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !secret) return json(503, { error: 'Google sign-in isn’t set up on the server yet.', setup: true });
+  if (!/\.apps\.googleusercontent\.com$/.test(clientId)) return json(503, { error: 'The Google Client ID on the server looks wrong (it should end in .apps.googleusercontent.com). Set GOOGLE_CLIENT_ID again.', setup: true });
 
   // devAuthUrl: only on the local test server, which stands in for Google's sign-in page.
   if (url.pathname.endsWith('/config')) return json(200, { clientId, redirectUri: redirectUri(req), ...(env.DEV_AUTH_URL ? { devAuthUrl: env.DEV_AUTH_URL } : {}) });
@@ -59,7 +60,11 @@ export async function handle(req, { store, syncStore, env, fetchImpl = fetch }) 
     });
     const tok = await r.json().catch(() => ({}));
     const who = r.ok && claims(tok.id_token, clientId);
-    if (!who) return page('Google sign-in failed', 'Close this window and try again in I Commit!.');
+    if (!who) {
+      const why = tok.error === 'invalid_client' ? 'The server\'s Google Client secret doesn\'t match. Set GOOGLE_CLIENT_SECRET again.'
+        : tok.error === 'redirect_uri_mismatch' ? 'The redirect address in Google Cloud doesn\'t match.' : 'Close this window and try again in I Commit!.';
+      return page('Google sign-in failed', esc(why));
+    }
     await store.setJSON(`state:${state}`, { ...who, at: Date.now() });
     return page(`You're signed in as ${who.email}`, 'Go back to I Commit! — it will open your data in a moment. You can close this window.');
   }

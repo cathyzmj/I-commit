@@ -19,6 +19,7 @@ const S = (n) => String(n).repeat(43).slice(0, 43);
 
 // --- setup
 assert.equal((await handle(new Request(`${ORIGIN}/api/login/config`), ctx({}))).status, 503, 'not set up yet');
+assert.match((await (await handle(new Request(`${ORIGIN}/api/login/config`), ctx({ GOOGLE_CLIENT_ID: '5027', GOOGLE_CLIENT_SECRET: 'x' }))).json()).error, /looks wrong/, 'a cut-off client ID is caught');
 const cfg = await (await get('/api/login/config')).json();
 assert.equal(cfg.clientId, env.GOOGLE_CLIENT_ID);
 assert.equal(cfg.redirectUri, `${ORIGIN}/api/login/callback`);
