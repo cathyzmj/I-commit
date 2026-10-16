@@ -4038,8 +4038,9 @@ function syncPageHtml() {
 // to see it finish (/api/login), then loads your data and keeps it in sync. The first sign-in on a
 // device that already syncs keeps that device's data.
 let loginCfg = null, loginWait = null; // loginWait = { state, timer, until }
+// A "not set up" answer is never kept: the next look (or tap) asks the server again.
 async function loadLoginConfig() {
-  if (loginCfg) return loginCfg;
+  if (loginCfg && !loginCfg.error) return loginCfg;
   try { const r = await fetch('/api/login/config', { cache: 'no-store' }); loginCfg = await r.json(); if (!r.ok) loginCfg = { error: loginCfg.error || 'Sign-in is unavailable.' }; }
   catch { loginCfg = null; }
   if (route.page === 'account') render();
@@ -4047,7 +4048,13 @@ async function loadLoginConfig() {
 }
 function startGoogleSignIn() {
   const cfg = loginCfg;
-  if (!cfg || cfg.error) { toast(cfg ? cfg.error : 'Connecting… try again in a moment.'); loadLoginConfig(); return; }
+  if (!cfg || cfg.error) {
+    // Ask again; if the server is ready now, the button works on the next tap.
+    toast('Connecting to Google… tap again in a moment.');
+    loginCfg = null;
+    loadLoginConfig().then((c) => { if (c && c.error) toast(c.error); });
+    return;
+  }
   const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const url = cfg.devAuthUrl ? `${cfg.devAuthUrl}?state=${nonce}` : `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({
     client_id: cfg.clientId, redirect_uri: cfg.redirectUri, response_type: 'code', scope: 'openid email profile', state: nonce, prompt: 'select_account' })}`;
@@ -4693,6 +4700,7 @@ document.addEventListener('visibilitychange', () => {
   syncThenCalendars();
   refreshBuddy();
   if (loginWait) pollGoogle();
+  if (!state.account && loginCfg && loginCfg.error) { loginCfg = null; loadLoginConfig(); }
   if (swRegistration) swRegistration.update().catch(() => {});
 });
 window.addEventListener('pagehide', flush);
