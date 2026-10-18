@@ -121,4 +121,15 @@ assert.deepEqual(patched.properties, { 'My Status': { select: { name: 'Video int
 await post({ id: PAGE, next: null }, notionFor(DB));
 assert.deepEqual(patched.properties, { 'Next ddl': { date: null } }, 'next deadline can be cleared');
 assert.equal((await post({ id: PAGE, next: '10/10/2026' }, notionFor(DB))).status, 400, 'bad dates are ignored');
+// --- only the owner's Google account may use the tracker
+const loginStore = memoryStore();
+const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+await loginStore.setJSON(`key:${await sha(KEY)}`, { sub: 'g1' });
+await loginStore.setJSON('user:g1', { email: 'owner@gmail.com' });
+const asOwner = (email) => handle(new Request('https://x/api/apps', { headers: { authorization: `Bearer ${KEY}` } }),
+  { syncStore, loginStore, env: { NOTION_TOKEN: 't', NOTION_APPS_DATABASE: DB, APPS_OWNER_EMAIL: email }, fetchImpl: fakeNotion([{ body: { results: [], has_more: false } }]) });
+assert.equal((await asOwner('owner@gmail.com')).status, 200, 'the owner sees it');
+const other = await asOwner('someone-else@gmail.com');
+assert.equal(other.status, 403, 'anyone else is refused');
+assert.equal((await other.json()).notOwner, true);
 console.log('ALL APPS FUNCTION TESTS PASSED');

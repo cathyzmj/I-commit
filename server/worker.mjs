@@ -26,8 +26,8 @@ export default {
         case '/api/sync': return await sync(req, d1Store(env.DB, 'sync'));
         case '/api/widget': return await widget(req, d1Store(env.DB, 'widget'));
         case '/api/apps': return await apps(req, {
-          syncStore: d1Store(env.DB, 'sync'),
-          env: { NOTION_TOKEN: env.NOTION_TOKEN, NOTION_APPS_DATABASE: env.NOTION_APPS_DATABASE },
+          syncStore: d1Store(env.DB, 'sync'), loginStore: d1Store(env.DB, 'login'),
+          env: { NOTION_TOKEN: env.NOTION_TOKEN, NOTION_APPS_DATABASE: env.NOTION_APPS_DATABASE, APPS_OWNER_EMAIL: env.APPS_OWNER_EMAIL },
         });
       }
     } catch (e) {

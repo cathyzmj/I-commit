@@ -155,12 +155,26 @@ async function updateApplication(req, { token, database, fetchImpl }) {
   return json(200, { app: toApplication(upd.body) });
 }
 
-export async function handle(req, { syncStore, env, fetchImpl = fetch }) {
+// The tracker is one person's Notion database, so only that person's Google account (APPS_OWNER_EMAIL)
+// may read or change it. A data key maps to its Google account through /api/login's store.
+async function accountEmail(loginStore, key) {
+  if (!loginStore) return null;
+  const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const link = await loginStore.getWithMetadata(`key:${hash}`);
+  const user = link && await loginStore.getWithMetadata(`user:${link.data.sub}`);
+  return user ? user.data.email : null;
+}
+
+export async function handle(req, { syncStore, loginStore = null, env, fetchImpl = fetch }) {
   if (req.method !== 'GET' && req.method !== 'POST') return json(405, { error: 'Use GET or POST' });
   const key = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!KEY_RE.test(key)) return json(401, { error: 'Turn on sync to see your applications.' });
   if (!(await syncStore.getWithMetadata(await syncStorageName(key), { type: 'json' }))) {
     return json(403, { error: 'Turn on sync to see your applications.' });
+  }
+  const owner = String(env.APPS_OWNER_EMAIL || '').trim().toLowerCase();
+  if (owner && (await accountEmail(loginStore, key)) !== owner) {
+    return json(403, { error: 'Applications shows the owner’s own Notion tracker, so it isn’t available on your account yet.', notOwner: true });
   }
   const token = env.NOTION_TOKEN;
   if (!token) return json(503, { error: 'Notion isn’t connected yet (see Applications → Set up).', setup: true });

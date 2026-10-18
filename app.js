@@ -1162,6 +1162,7 @@ async function refreshApps({ force = false } = {}) {
     } else {
       state.apps.error = body.error || `Couldn’t load applications (${res.status})`;
       state.apps.setup = !!body.setup;
+      if (body.notOwner) { state.apps.items = []; state.apps.fetchedAt = null; }
     }
   } catch {
     state.apps.error = 'Offline. Showing the last copy from Notion.';
@@ -4015,6 +4016,7 @@ async function joinWithKey(key, { done = 'Synced with your other device' } = {})
   state.weeks = {};
   state.calendars.feeds = [];
   state.trees = []; state.tests = []; state.notes = []; state.buddy = null; buddyView = null;
+  state.apps = { items: [], fetchedAt: null, error: null, setup: false };
   state.sync = { ...freshSync(), enabled: true, key };
   recordHashes = new Map();
   toast('Joining…');
