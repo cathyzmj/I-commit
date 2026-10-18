@@ -32,7 +32,8 @@ function todayIndex(key) {
 }
 function weekRange(key) {
   const a = parseISO(key), b = addDays(a, 6);
-  return `${fmtDay(a, { day: 'numeric', month: 'short' })} – ${fmtDay(b, { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  const start = a.getMonth() === b.getMonth() ? fmtDay(a, { day: 'numeric' }) : fmtDay(a, { day: 'numeric', month: 'short' });
+  return `${start} to ${fmtDay(b, { day: 'numeric', month: 'short', year: 'numeric' })}`;
 }
 
 // ---------- Formatting ----------
@@ -182,7 +183,7 @@ function flush() {
   writeState().catch((e) => toast('Could not save: ' + e.message));
   scheduleWidgetPush();
   buddyAutoTick();
-  if (myProfile && myProfile.share_calendar !== 'off') scheduleShare();
+  if (myProfile && (myProfile.share_calendar !== 'off' || calPeople.length)) scheduleShare();
   if (changed) scheduleSync();
 }
 
@@ -913,7 +914,7 @@ const HOUR_PX = 52;
 let calViewDay = todayISO(); // selected day (phone view)
 // Whose calendar the grid shows when a buddy shares theirs: 'me', 'buddy' or 'both' (kept on this device).
 let calWho = 'me';
-try { calWho = ['me', 'buddy', 'both'].includes(localStorage.getItem('calWho')) ? localStorage.getItem('calWho') : 'me'; } catch {}
+try { const v = localStorage.getItem('calWho'); calWho = v === 'both' ? 'ours' : v && v !== 'buddy' ? v : 'me'; } catch {}
 
 const toMinutes = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 const fmtTime = (mins) => `${pad(Math.floor(mins / 60) % 24)}:${pad(mins % 60)}`;
@@ -981,9 +982,10 @@ function calendarTabHtml() {
   // share theirs) your buddy's, shown on their own or together with yours.
   const timed = {}, untimed = {};
   for (const d of days) { timed[d] = []; untimed[d] = []; }
-  const buddies = sharingBuddies(wk);
-  const who = buddies.length ? calWho : 'me';
-  for (const b of who === 'me' ? [] : buddies) {
+  const people = sharedPeople(wk);
+  const who = calWho === 'ours' ? (people.length ? 'ours' : 'me') : people.some((p) => p.id === calWho) ? calWho : 'me';
+  const person = people.find((p) => p.id === who);
+  for (const b of who === 'me' ? [] : who === 'ours' ? people : [person]) {
     for (const x of b.cal.events) {
       if (!timed[x.d]) continue;
       const label = x.n || 'Busy';
@@ -993,7 +995,7 @@ function calendarTabHtml() {
       } else untimed[x.d].push({ buddy: b, label });
     }
   }
-  for (const [id, it] of who === 'buddy' ? [] : fromCal) {
+  for (const [id, it] of person ? [] : fromCal) {
     if (!timed[it.date]) continue;
     if (it.time) {
       const start = toMinutes(it.time);
@@ -1065,17 +1067,17 @@ function calendarTabHtml() {
         right: '<button class="icon-btn" data-act="cal-next" aria-label="Next week">›</button>' + menuBtn,
       })}
       ${calNav('cal')}
+      ${calBarHtml(people, who)}
       <div class="cstrip">${strip}</div>
     </header>
-    <section class="card cal" data-section="My plan">
+    ${calInvitesHtml()}
+    ${person ? '' : `<section class="card cal" data-section="My plan">
       <div class="card-head"><h2>My plan</h2><span class="hint"><span class="phone-only">${dayName} · </span>routines, your tasks, pinned notes, applications</span></div>
       <div class="pgrid-head">${heads('')}</div>
       <div class="pcols">${days.map(planCol).join('')}</div>
-    </section>
-    <section class="card cal" data-section="Synced calendars">
-      <div class="card-head"><h2>${who === 'buddy' ? `${escapeHtml(buddies.map((b) => b.name).join(' & '))}'s calendar` : who === 'both' ? 'Our calendars' : 'Synced calendars'}</h2>
-        ${buddies.length ? `<div class="seg-mini calwho">${[['me', 'Mine'], ['buddy', buddies.length > 1 ? 'Buddies' : escapeHtml(buddies[0].name)], ['both', 'Together']]
-          .map(([v, l]) => `<button data-act="cal-who" data-v="${v}" class="${who === v ? 'on' : ''}">${l}</button>`).join('')}</div>` : ''}
+    </section>`}
+    <section class="card cal" data-section="${person ? 'Their calendar' : 'Synced calendars'}">
+      <div class="card-head"><h2>${person ? `${escapeHtml(person.name)}'s calendar` : who === 'ours' ? 'Our calendars' : 'Synced calendars'}</h2>
         <a class="txt-btn" href="#/calendar">Calendars ›</a></div>
       <div class="cgrid-head"><div class="ctimes-gap"></div>${heads('')}</div>
       ${hasAllDay ? `<div class="call-row"><div class="ctimes-gap small muted">all day</div>${allDay}</div>` : ''}
@@ -2241,6 +2243,7 @@ const BUDDY_POLL_MS = 2 * 60e3;
 let sb = null, sbUser = null, myProfile = null, sbLastError = '';
 let buddyView = null, buddyError = null, buddyBusy = false, buddyAutoDate = null;
 let myInvites = [];
+let calPeople = []; // calendar_people(): link_id, user_id, name, email, accepted, incoming, my_level, their_level
 const typing = () => { const a = document.activeElement; return a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
 const rerenderBuddy = () => { if (['buddy', 'today', 'cal'].includes(route.tab) && !route.id && !typing()) render(); };
 
@@ -2270,7 +2273,7 @@ async function sbSignIn(idToken) {
 }
 async function sbSignOut() {
   if (sb) { try { await sb.auth.signOut(); } catch { /* offline */ } }
-  sbUser = null; myProfile = null; buddyView = null; myInvites = []; buddyEvents.clear(); unsubscribeBuddy();
+  sbUser = null; myProfile = null; buddyView = null; myInvites = []; calPeople = []; sharedCache.clear(); unsubscribeBuddy();
 }
 const sbErr = (error) => (error && error.message ? error.message.replace(/^.*?exception:\s*/i, '') : 'Something went wrong.');
 
@@ -2281,13 +2284,16 @@ async function refreshBuddy() {
   if (!sbUser) { const { data } = await db.auth.getSession(); sbUser = data.session ? data.session.user : null; }
   if (!sbUser) { buddyView = null; myInvites = []; myProfile = null; rerenderBuddy(); return; }
   try {
-    const [prof, inv, mem] = await Promise.all([
+    const [prof, inv, mem, people] = await Promise.all([
       db.from('profiles').select('*').eq('id', sbUser.id).maybeSingle(),
       db.rpc('my_invites'),
       db.from('pact_members').select('pact_id, joined_at').eq('user_id', sbUser.id).order('joined_at'),
+      db.rpc('calendar_people'),
     ]);
     if (prof.error || inv.error || mem.error) throw prof.error || inv.error || mem.error;
     myProfile = prof.data;
+    calPeople = people.error ? [] : people.data || [];
+    refreshCalSheet();
     myInvites = (inv.data || []).map((x) => ({ pactId: x.pact_id, name: x.pact_name, from: x.from_names || [] }));
     const pactId = mem.data[0] && mem.data[0].pact_id;
     if (!pactId) { buddyView = null; unsubscribeBuddy(); subscribeInvites(); }
@@ -2328,14 +2334,16 @@ function subscribeBuddy(pactId) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pact_days', filter: f }, refreshSoon)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pact_members', filter: f }, refreshSoon)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pact_invites' }, refreshSoon)
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, () => { buddyEvents.clear(); refreshSoon(); })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, () => { sharedCache.clear(); refreshSoon(); })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_links' }, () => { sharedCache.clear(); refreshSoon(); })
     .subscribe();
 }
 function subscribeInvites() {
   if (rtKey === 'invites' || !sb) return;
   unsubscribeBuddy();
   rtKey = 'invites';
-  rtChannel = sb.channel('my-invites').on('postgres_changes', { event: '*', schema: 'public', table: 'pact_invites' }, refreshSoon).subscribe();
+  rtChannel = sb.channel('my-invites').on('postgres_changes', { event: '*', schema: 'public', table: 'pact_invites' }, refreshSoon)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_links' }, () => { sharedCache.clear(); refreshSoon(); }).subscribe();
 }
 function unsubscribeBuddy() {
   if (rtChannel && sb) sb.removeChannel(rtChannel);
@@ -2447,7 +2455,7 @@ function scheduleShare(delay = 3000) {
 }
 async function shareCalendar() {
   if (!sbUser || !myProfile) return;
-  const on = myProfile.share_calendar !== 'off';
+  const on = myProfile.share_calendar !== 'off' || calPeople.length > 0;
   const rows = on ? myEventRows() : [];
   const sig = JSON.stringify([on, rows]);
   if (sig === shareSig) return;
@@ -2464,27 +2472,104 @@ async function shareCalendar() {
     shareSig = sig;
   } catch { /* tries again next time */ }
 }
-// Your buddies' shared events for one week (Monday key), fetched when the calendar shows that week.
-const buddyEvents = new Map(); // week -> { at, list }
-async function loadBuddyWeek(wk) {
+// Calendars shared with you, one week at a time (Monday key): people you share calendars with,
+// plus Work Buddy members who share theirs. Fetched when the calendar shows that week.
+const sharedCache = new Map(); // week -> { at, list }
+async function loadSharedWeek(wk) {
   if (!sb || !sbUser) return;
-  const { data, error } = await sb.rpc('buddy_events', { day_from: wk, day_to: addDaysISO(wk, 6) });
+  const { data, error } = await sb.rpc('shared_events', { day_from: wk, day_to: addDaysISO(wk, 6) });
   if (error) return;
-  buddyEvents.set(wk, { at: Date.now(), list: data || [] });
+  sharedCache.set(wk, { at: Date.now(), list: data || [] });
   if (route.tab === 'cal' && !typing()) render();
 }
-// Buddies who share their calendar, with their events for the week shown (fetched if needed).
-function sharingBuddies(wk) {
-  if (!buddyView) return [];
-  const sharers = buddyView.members.filter((m) => !m.me && m.share !== 'off');
-  if (!sharers.length) return [];
-  const cached = buddyEvents.get(wk);
-  if (!cached || Date.now() - cached.at > 60e3) loadBuddyWeek(wk);
+// Everyone whose calendar you can see.
+function calendarPeople() {
+  const map = new Map();
+  for (const p of calPeople) if (p.accepted && p.user_id) map.set(p.user_id, { id: p.user_id, name: p.name || p.email });
+  if (buddyView) for (const m of buddyView.members) if (!m.me && m.share !== 'off' && !map.has(m.id)) map.set(m.id, { id: m.id, name: m.name });
+  return [...map.values()];
+}
+// Those people with their events for the week shown.
+function sharedPeople(wk) {
+  const people = calendarPeople();
+  if (!people.length) return [];
+  const cached = sharedCache.get(wk);
+  if (!cached || Date.now() - cached.at > 60e3) loadSharedWeek(wk);
   const list = cached ? cached.list : [];
-  return sharers.map((m) => ({
-    name: m.name,
-    cal: { events: list.filter((x) => x.user_id === m.id).map((x) => ({ d: x.day, s: x.starts ? x.starts.slice(0, 5) : null, e: x.ends ? x.ends.slice(0, 5) : null, n: x.title || '' })) },
+  return people.map((p) => ({
+    ...p,
+    cal: { events: list.filter((x) => x.user_id === p.id).map((x) => ({ d: x.day, s: x.starts ? x.starts.slice(0, 5) : null, e: x.ends ? x.ends.slice(0, 5) : null, n: x.title || '' })) },
   }));
+}
+// The switch in the calendar bar: Only me · each person · Ours, and the Share button.
+function calBarHtml(people, who) {
+  if (!state.account) return '';
+  const opts = [['me', 'Only me'], ...people.map((p) => [p.id, p.name]), ...(people.length ? [['ours', 'Ours']] : [])];
+  const pending = calPeople.filter((p) => !p.accepted && !p.incoming).length;
+  return `<div class="calbar"><div class="seg-mini">${opts.map(([v, l]) => `<button data-act="cal-who" data-v="${escapeHtml(v)}" class="${who === v ? 'on' : ''}">${escapeHtml(l)}</button>`).join('')}</div>
+    <button class="mini-btn" data-act="cal-share">${people.length || pending ? `Sharing${pending ? ` · ${pending} waiting` : ''}` : '＋ Share my calendar'}</button></div>`;
+}
+function calInvitesHtml() {
+  return calPeople.filter((p) => p.incoming && !p.accepted).map((p) => `<section class="card banner-card">
+    <b>📅 ${escapeHtml(p.name || p.email)} wants to share calendars with you</b>
+    <p class="small">You'll each see the other's calendar. ${escapeHtml(p.name || 'They')} shares ${p.their_level === 'busy' ? 'busy times only' : 'event names and times'}; you choose how much of yours they see.</p>
+    <div class="btn-row"><button class="btn primary" data-act="cal-accept" data-id="${p.link_id}">Accept</button><button class="btn" data-act="cal-remove" data-id="${p.link_id}">Decline</button></div></section>`).join('');
+}
+const calInviteMail = (email) => `mailto:${encodeURIComponent(email)}?${new URLSearchParams({
+  subject: 'Share calendars with me on I Commit!',
+  body: `Hi! I've invited you (${email}) to share calendars on I Commit!, so we can see when we're both free.\n\n1. Open ${location.origin}\n2. Sign in with Google using this Gmail\n3. Go to Calendar and tap Accept\n`,
+}).toString().replace(/\+/g, '%20')}`;
+function calShareHtml() {
+  const lvl = (id, cur) => `<select data-cal-level="${id}"><option value="names" ${cur === 'names' ? 'selected' : ''}>Names and times</option><option value="busy" ${cur === 'busy' ? 'selected' : ''}>Busy times only</option></select>`;
+  return `<div class="sheet-head"><h3>Share your calendar</h3></div>
+    <form class="form flat" data-form="cal-invite">
+      <p class="small muted">Invite someone by Gmail. When they accept, you'll each see the other's calendar: “Only me”, theirs, or “Ours” in the calendar bar.</p>
+      <label class="f">Their Gmail<input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" required placeholder="e.g. han@gmail.com"></label>
+      <label class="f">What they see of yours<select name="level"><option value="names">Event names and times</option><option value="busy">Busy times only</option></select></label>
+      <button class="btn primary" type="submit">Invite</button>
+    </form>
+    ${calPeople.length ? `<div class="label" style="margin-top:14px">Sharing with</div>${calPeople.map((p) => `<div class="cpeople">
+      <div class="cp-who"><b>${escapeHtml(p.name || p.email)}</b><span>${p.accepted ? `sees your ${p.my_level === 'busy' ? 'busy times' : 'events'} · shares ${p.their_level === 'busy' ? 'busy times' : 'events'}` : p.incoming ? 'wants to share with you' : `${escapeHtml(p.email)} · waiting to accept`}</span></div>
+      ${p.incoming && !p.accepted ? `<button class="mini-btn" data-act="cal-accept" data-id="${p.link_id}">Accept</button>` : lvl(p.link_id, p.my_level)}
+      ${!p.accepted && !p.incoming ? `<a class="mini-btn" href="${escapeHtml(calInviteMail(p.email))}">Email</a>` : ''}
+      <button class="mini-btn" data-act="cal-remove" data-id="${p.link_id}">${p.accepted ? 'Stop' : p.incoming ? 'Decline' : 'Take back'}</button></div>`).join('')}` : ''}
+    <button class="btn full" data-act="close" style="margin-top:14px">Done</button>`;
+}
+function openCalShare() {
+  if (!sbUser) { location.hash = '#/buddy'; toast('Sign in with Google once more to share calendars.'); return; }
+  openSheet(calShareHtml(), { calShare: true });
+}
+function refreshCalSheet() { if (sheetCtx && sheetCtx.calShare) openSheet(calShareHtml(), { calShare: true }); }
+async function calInvite(form) {
+  const f = new FormData(form);
+  const email = String(f.get('email') || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(email)) { toast('That doesn’t look like an email address.'); return; }
+  if (myProfile && email === myProfile.email) { toast('That’s your own Gmail.'); return; }
+  const { error } = await sb.from('calendar_links').insert({ to_email: email, from_level: f.get('level') === 'busy' ? 'busy' : 'names' });
+  if (error) { toast(error.code === '23505' ? 'You already invited them.' : sbErr(error)); return; }
+  toast(`Invited ${email}. They'll see it when they sign in with Google.`);
+  await refreshBuddy();
+  scheduleShare(0);
+}
+async function calAccept(id) {
+  const { error } = await sb.rpc('accept_calendar_link', { l: id });
+  if (error) { toast(sbErr(error)); return; }
+  sharedCache.clear();
+  await refreshBuddy();
+  scheduleShare(0);
+  toast('Calendars shared. Use the calendar bar to see theirs or ours.');
+}
+async function calRemove(id) {
+  const { error } = await sb.from('calendar_links').delete().eq('id', id);
+  if (error) { toast(sbErr(error)); return; }
+  sharedCache.clear();
+  if (calWho !== 'me' && calWho !== 'ours') calWho = 'me';
+  await refreshBuddy();
+}
+async function calSetLevel(id, level) {
+  const { error } = await sb.rpc('set_calendar_level', { l: id, level });
+  if (error) toast(sbErr(error)); else toast(level === 'busy' ? 'They now see busy times only' : 'They now see your event names');
+  refreshBuddy();
 }
 
 function pactStreak(p) {
@@ -2512,6 +2597,8 @@ function invitesHtml(inPact) {
     <div class="btn-row"><button class="btn primary" data-act="invite-accept" data-id="${x.pactId}">Accept</button><button class="btn" data-act="invite-decline" data-id="${x.pactId}">Decline</button></div></section>`).join('');
 }
 function buddyTodayLine() {
+  const calInv = calPeople.find((p) => p.incoming && !p.accepted);
+  if (calInv) return `<div class="pace"><a href="#/cal">📅 ${escapeHtml(calInv.name || calInv.email)} wants to share calendars · open ›</a></div>`;
   if (myInvites.length) return `<div class="pace"><a href="#/buddy">✉️ ${escapeHtml(myInvites[0].from.join(' & ') || 'Someone')} invited you to Work Buddy · open ›</a></div>`;
   if (!buddyView) return '';
   const others = buddyView.members.filter((m) => !m.me);
@@ -2620,7 +2707,7 @@ function calNav(on) {
 }
 const shortDay = (iso) => (iso === todayISO() ? 'Today' : daysUntil(iso) === 1 ? 'Tomorrow'
   : fmtDay(parseISO(iso), { weekday: 'short', day: 'numeric', ...(Math.abs(daysUntil(iso)) > 6 ? { month: 'short' } : {}) }));
-const noteDateLabel = (n) => (n.date ? `${shortDay(n.date)}${n.endDate ? ` – ${shortDay(n.endDate)}` : ''}${n.time ? ` ${n.time}` : ''}` : '');
+const noteDateLabel = (n) => (n.date ? `${shortDay(n.date)}${n.endDate ? ` to ${shortDay(n.endDate)}` : ''}${n.time ? ` ${n.time}` : ''}` : '');
 const noteDays = (n) => (n.endDate ? Math.round((parseISO(n.endDate) - parseISO(n.date)) / 864e5) + 1 : 1);
 // A whole push pin, leaning a little: round head, collar and needle.
 const PIN_SVG = `<svg class="pin" viewBox="0 0 30 40" aria-hidden="true"><g transform="rotate(24 15 14)">
@@ -4534,6 +4621,9 @@ document.addEventListener('click', (e) => {
     }
     case 'cal-day': calViewDay = btn.dataset.date; render(); break;
     case 'cal-who': calWho = btn.dataset.v; try { localStorage.setItem('calWho', calWho); } catch {} render(); break;
+    case 'cal-share': openCalShare(); break;
+    case 'cal-accept': calAccept(btn.dataset.id); break;
+    case 'cal-remove': calRemove(btn.dataset.id); break;
     case 'cal-prev': case 'cal-next': calViewDay = isoDate(addDays(parseISO(calViewDay), act === 'cal-prev' ? -7 : 7)); render(); break;
     case 'cal-today': calViewDay = todayISO(); render(); break;
     case 'prev': viewKey = shiftWeek(viewKey, -1); render(); break;
@@ -4678,6 +4768,7 @@ document.addEventListener('input', (e) => {
   if (form) syncFormVisibility(form);
 });
 document.addEventListener('change', (e) => {
+  if (e.target.dataset && e.target.dataset.calLevel) { calSetLevel(e.target.dataset.calLevel, e.target.value); return; }
   if (e.target.closest('form[data-form="buddy-routine"]')) {
     if (e.target.name === 'share') { setShareCalendar(e.target.value); return; }
     state.buddy = { commitmentId: e.target.value || null }; buddyAutoDate = null; save(); render(); return;
@@ -4714,6 +4805,7 @@ document.addEventListener('submit', (e) => {
   else if (form === 'note-date') { const f = new FormData(e.target); pinNote(e.target.dataset.id, f.get('date') || todayISO(), f.get('time'), f.get('endDate') || null); }
   else if (form === 'test') saveTestForm(e.target);
   else if (form === 'buddy-create') createPact(e.target);
+  else if (form === 'cal-invite') { calInvite(e.target); e.target.reset(); }
   else if (form === 'buddy-email') { inviteByEmail(new FormData(e.target).get('email')); e.target.reset(); }
   else if (form === 'buddy-note') buddyTick(true, String(new FormData(e.target).get('note') || '').trim());
   else if (form === 'stage-link') {

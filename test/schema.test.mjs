@@ -17,6 +17,7 @@ await db.exec(`
   alter default privileges in schema public grant all on tables to anon, authenticated;
 `);
 await db.exec(fs.readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8'));
+await db.exec(fs.readFileSync(new URL('../supabase/calendar-sharing.sql', import.meta.url), 'utf8'));
 
 const ids = { cathy: '00000000-0000-0000-0000-00000000000c', han: '00000000-0000-0000-0000-00000000000a', eve: '00000000-0000-0000-0000-00000000000e' };
 const emails = { cathy: 'Cathy@Gmail.com', han: 'han@gmail.com', eve: 'eve@gmail.com' };
@@ -96,4 +97,30 @@ assert.equal((await as('cathy', 'select * from pact_members')).length, 1);
 assert.equal((await as('cathy', 'select * from pact_days')).length, 0, 'Han\'s ticks went with Han');
 await as('cathy', 'select leave_pact($1)', [pact]);
 assert.equal((await db.query('select count(*)::int as n from pacts')).rows[0].n, 0);
+// --- sharing calendars with anyone (no pact needed)
+await fails('cathy', "insert into calendar_links (to_email) values ('cathy@gmail.com')", [], /row-level security/); // not with yourself
+await as('cathy', "insert into calendar_links (to_email) values ('han@gmail.com')");
+let hanPeople = await as('han', 'select * from calendar_people()');
+assert.equal(hanPeople.length, 1);
+assert.deepEqual([hanPeople[0].name, hanPeople[0].incoming, hanPeople[0].accepted], ['Cathy', true, false], 'Han sees Cathy\'s invite');
+assert.equal((await as('eve', 'select * from calendar_people()')).length, 0, 'Eve sees nothing');
+await fails('eve', 'select accept_calendar_link($1)', [hanPeople[0].link_id], /taken back/);
+assert.equal((await as('han', "select * from shared_events('2026-10-19', '2026-10-25')")).length, 0, 'nothing shared before accepting');
+await as('han', 'select accept_calendar_link($1)', [hanPeople[0].link_id]);
+const cathyPeople = await as('cathy', 'select * from calendar_people()');
+assert.deepEqual([cathyPeople[0].name, cathyPeople[0].accepted, cathyPeople[0].incoming], ['Han', true, false]);
+await as('han', "insert into events (id, day, starts, ends, title) values ('h1', '2026-10-21', '09:00', '10:00', 'Accounting')");
+let s1 = await as('han', "select name, title from shared_events('2026-10-19', '2026-10-25')");
+assert.deepEqual(s1.map((r) => [r.name, r.title]), [['Cathy', 'Microeconomics lecture']], 'Han sees Cathy\'s calendar with names');
+let s2 = await as('cathy', "select name, title from shared_events('2026-10-19', '2026-10-25')");
+assert.deepEqual(s2.map((r) => [r.name, r.title]), [['Han', 'Accounting']], 'and Cathy sees Han\'s ("ours")');
+await as('cathy', "select set_calendar_level($1, 'busy')", [cathyPeople[0].link_id]);
+s1 = await as('han', "select title, starts from shared_events('2026-10-19', '2026-10-25')");
+assert.deepEqual(s1.map((r) => [r.title, r.starts]), [['', '10:00:00']], 'busy hides Cathy\'s names but keeps the times');
+assert.equal((await as('cathy', "select title from shared_events('2026-10-19', '2026-10-25')"))[0].title, 'Accounting', 'Han\'s own level is unchanged');
+await as('han', "update calendar_links set from_level = 'names'"); // no rule allows it, so nothing changes
+assert.equal((await as('han', 'select their_level from calendar_people()'))[0].their_level, 'busy', 'Han can\'t change Cathy\'s level');
+assert.equal((await as('eve', "select * from shared_events('2026-10-19', '2026-10-25')")).length, 0, 'Eve sees nobody\'s calendar');
+await as('han', 'delete from calendar_links');
+assert.equal((await as('cathy', "select * from shared_events('2026-10-19', '2026-10-25')")).length, 0, 'either side can stop sharing');
 console.log('ALL DATABASE RULE TESTS PASSED');

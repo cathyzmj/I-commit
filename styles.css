@@ -977,3 +977,13 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .binv { display: flex; align-items: center; gap: 8px; padding: 6px 4px; font-size: 13.5px; }
 .binv span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .binv a.mini-btn { text-decoration: none; color: var(--ink); }
+
+/* Calendar bar: whose calendar, and sharing */
+.calbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 2px; }
+.calbar .seg-mini { flex: 0 1 auto; overflow-x: auto; max-width: 100%; }
+.calbar .mini-btn { margin-left: auto; white-space: nowrap; }
+.cpeople { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-top: 1px solid var(--line); }
+.cpeople .cp-who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cpeople .cp-who span { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cpeople select { width: auto; font-size: 13px; padding: 6px 8px; }
+.cpeople a.mini-btn { text-decoration: none; color: var(--ink); }
