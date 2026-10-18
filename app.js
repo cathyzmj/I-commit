@@ -2249,7 +2249,7 @@ function saveTestForm(form) {
 // Everything lives in the Supabase database (supabase/schema.sql), whose rules decide who sees
 // what; changes arrive live. state.buddy only keeps this device's preference for auto-ticking.
 const BUDDY_POLL_MS = 2 * 60e3;
-let sb = null, sbUser = null, myProfile = null;
+let sb = null, sbUser = null, myProfile = null, sbLastError = '';
 let buddyView = null, buddyError = null, buddyBusy = false, buddyAutoDate = null;
 let myInvites = [];
 const typing = () => { const a = document.activeElement; return a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
@@ -2271,9 +2271,11 @@ async function getSb() {
 // Google's sign-in token (from Continue with Google) signs you in to Supabase as well.
 async function sbSignIn(idToken) {
   const db = await getSb();
-  if (!db || !idToken) return false;
+  if (!db) { sbLastError = 'Couldn’t reach the Work Buddy database (no settings from the server).'; return false; }
+  if (!idToken) { sbLastError = 'Google didn’t hand over a sign-in token. Try again.'; return false; }
   const { data, error } = await db.auth.signInWithIdToken({ provider: 'google', token: idToken });
-  if (error) { toast(`Work Buddy sign-in: ${error.message}`); return false; }
+  if (error) { sbLastError = error.message || String(error); toast(`Work Buddy sign-in: ${sbLastError}`); return false; }
+  sbLastError = '';
   sbUser = data.user;
   return true;
 }
@@ -2538,7 +2540,8 @@ function buddyTabHtml() {
     return head('Work Buddy', 'Partner up') + `<section class="card banner-card"><b>One more Google sign-in</b>
       <p class="small">Work Buddy has moved to the new database. Sign in with Google once more on this device to turn it on.</p>
       <div class="btn-row"><button class="btn primary" data-act="google-signin">Continue with Google</button></div>
-      ${loginWait ? '<p class="small muted">Finish signing in in the Google window…</p>' : ''}</section>`;
+      ${loginWait ? '<p class="small muted">Finish signing in in the Google window…</p>' : ''}
+      ${sbLastError && !loginWait ? `<p class="small err">Last try didn’t work: ${escapeHtml(sbLastError)}</p>` : ''}</section>`;
   }
   if (!buddyView) {
     return head('Work Buddy', 'Partner up') + invitesHtml(false) + `
