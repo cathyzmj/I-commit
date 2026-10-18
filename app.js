@@ -193,7 +193,7 @@ function flush() {
   writeState().catch((e) => toast('Could not save: ' + e.message));
   scheduleWidgetPush();
   buddyAutoTick();
-  if (state.buddy && state.buddy.share !== 'off') scheduleShare();
+  if (myProfile && myProfile.share_calendar !== 'off') scheduleShare();
   if (changed) scheduleSync();
 }
 
@@ -297,7 +297,7 @@ function migrate(s) {
   s.tests = (Array.isArray(s.tests) ? s.tests : []).map(normaliseTest);
   s.notes = (Array.isArray(s.notes) ? s.notes : []).map(normaliseNote);
   s.account = s.account && s.account.email && s.sync.enabled ? { email: String(s.account.email), name: String(s.account.name || '') } : null;
-  s.buddy = s.buddy && /^[A-Za-z0-9_-]{32,128}$/.test(s.buddy.token || '') ? { token: s.buddy.token, pactId: String(s.buddy.pactId || ''), commitmentId: s.buddy.commitmentId || null, share: ['busy', 'names'].includes(s.buddy.share) ? s.buddy.share : 'off' } : null;
+  s.buddy = s.buddy ? { commitmentId: s.buddy.commitmentId || null } : null; // Work Buddy itself lives in Supabase
   s.calendars = {
     feeds: feeds.filter((f) => f && f.url).map((f) => ({
       id: f.id || uid(), name: String(f.name || 'Calendar'), url: String(f.url), section: String(f.section || 'Calendar'),
@@ -993,7 +993,7 @@ function calendarTabHtml() {
   // share theirs) your buddy's, shown on their own or together with yours.
   const timed = {}, untimed = {};
   for (const d of days) { timed[d] = []; untimed[d] = []; }
-  const buddies = sharingBuddies();
+  const buddies = sharingBuddies(wk);
   const who = buddies.length ? calWho : 'me';
   for (const b of who === 'me' ? [] : buddies) {
     for (const x of b.cal.events) {
@@ -2242,55 +2242,272 @@ function saveTestForm(form) {
   toast(`${form.dataset.id ? 'Saved' : 'Logged'}${extra}`);
 }
 
-// ---------- Work Buddy ----------
-// The simplest version: one pact with a real person (or a few). Each of you ticks your own day,
-// optionally with a note; the streak grows only on days everyone finished. Your tick can follow a
-// linked routine automatically. Data lives on the server in /api/buddy; membership syncs like the rest.
+// ---------- Work Buddy (on Supabase) ----------
+// A pact is a small group (usually two people) doing the same routine. Each of you ticks your own
+// day, optionally with a note; the streak grows only on days everyone finished. You invite a buddy
+// by their Gmail; they accept after signing in with Google. You can each share your calendar.
+// Everything lives in the Supabase database (supabase/schema.sql), whose rules decide who sees
+// what; changes arrive live. state.buddy only keeps this device's preference for auto-ticking.
 const BUDDY_POLL_MS = 2 * 60e3;
+let sb = null, sbUser = null, myProfile = null;
 let buddyView = null, buddyError = null, buddyBusy = false, buddyAutoDate = null;
-async function buddyApi(body) {
-  const headers = { 'content-type': 'application/json' };
-  if (state.buddy && state.buddy.token) headers.authorization = `Bearer ${state.buddy.token}`;
-  if (state.account && state.sync.enabled) headers['x-data-key'] = state.sync.key;
-  const r = await fetch('/api/buddy', { method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) { const e = new Error(data.error || `Something went wrong (${r.status}).`); e.status = r.status; throw e; }
-  return data;
-}
-const typing = () => { const a = document.activeElement; return a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
-// Invites sent to your Gmail (when signed in with Google), shown on Buddy and Today.
 let myInvites = [];
-async function refreshInvites() {
-  if (!state.account || !state.sync.enabled) { myInvites = []; return; }
-  try { myInvites = (await buddyApi({ action: 'invites' })).invites || []; } catch { return; }
-  if ((route.tab === 'buddy' || route.tab === 'today') && !route.id && !typing()) render();
+const typing = () => { const a = document.activeElement; return a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
+const rerenderBuddy = () => { if (['buddy', 'today', 'cal'].includes(route.tab) && !route.id && !typing()) render(); };
+
+// The Supabase client, made once the server has said where the database is.
+async function getSb() {
+  if (sb) return sb;
+  const cfg = await loadLoginConfig();
+  if (!cfg || !cfg.supabase || !window.supabase) return null;
+  sb = window.supabase.createClient(cfg.supabase.url, cfg.supabase.key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+  sb.auth.onAuthStateChange((event, session) => {
+    const before = sbUser && sbUser.id;
+    sbUser = session ? session.user : null;
+    if ((sbUser && sbUser.id) !== before) setTimeout(refreshBuddy, 0);
+  });
+  return sb;
+}
+// Google's sign-in token (from Continue with Google) signs you in to Supabase as well.
+async function sbSignIn(idToken) {
+  const db = await getSb();
+  if (!db || !idToken) return false;
+  const { data, error } = await db.auth.signInWithIdToken({ provider: 'google', token: idToken });
+  if (error) { toast(`Work Buddy sign-in: ${error.message}`); return false; }
+  sbUser = data.user;
+  return true;
+}
+async function sbSignOut() {
+  if (sb) { try { await sb.auth.signOut(); } catch { /* offline */ } }
+  sbUser = null; myProfile = null; buddyView = null; myInvites = []; buddyEvents.clear(); unsubscribeBuddy();
+}
+const sbErr = (error) => (error && error.message ? error.message.replace(/^.*?exception:\s*/i, '') : 'Something went wrong.');
+
+// Loads your profile, invites and pact (with members and the last 120 days of ticks).
+async function refreshBuddy() {
+  const db = await getSb();
+  if (!db) return;
+  if (!sbUser) { const { data } = await db.auth.getSession(); sbUser = data.session ? data.session.user : null; }
+  if (!sbUser) { buddyView = null; myInvites = []; myProfile = null; rerenderBuddy(); return; }
+  try {
+    const [prof, inv, mem] = await Promise.all([
+      db.from('profiles').select('*').eq('id', sbUser.id).maybeSingle(),
+      db.rpc('my_invites'),
+      db.from('pact_members').select('pact_id, joined_at').eq('user_id', sbUser.id).order('joined_at'),
+    ]);
+    if (prof.error || inv.error || mem.error) throw prof.error || inv.error || mem.error;
+    myProfile = prof.data;
+    myInvites = (inv.data || []).map((x) => ({ pactId: x.pact_id, name: x.pact_name, from: x.from_names || [] }));
+    const pactId = mem.data[0] && mem.data[0].pact_id;
+    if (!pactId) { buddyView = null; unsubscribeBuddy(); subscribeInvites(); }
+    else {
+      const [pact, members, days, invites] = await Promise.all([
+        db.from('pacts').select('*').eq('id', pactId).single(),
+        db.from('pact_members').select('user_id, joined_at, profiles(name, email, share_calendar)').eq('pact_id', pactId).order('joined_at'),
+        db.from('pact_days').select('user_id, day, note, done_at').eq('pact_id', pactId).gte('day', addDaysISO(todayISO(), -120)),
+        db.from('pact_invites').select('email').eq('pact_id', pactId).order('created_at'),
+      ]);
+      const err = pact.error || members.error || days.error || invites.error;
+      if (err) throw err;
+      buddyView = {
+        id: pactId, name: pact.data.name, invited: invites.data.map((i) => i.email),
+        members: members.data.map((m) => ({
+          id: m.user_id, me: m.user_id === sbUser.id, name: (m.profiles && m.profiles.name) || 'Buddy', email: m.profiles && m.profiles.email,
+          share: (m.profiles && m.profiles.share_calendar) || 'off',
+          days: Object.fromEntries(days.data.filter((d) => d.user_id === m.user_id).map((d) => [d.day, { d: 1, n: d.note, at: d.done_at }])),
+        })),
+      };
+      subscribeBuddy(pactId);
+    }
+    buddyError = null;
+    buddyAutoTick();
+    scheduleShare(500);
+  } catch (e) { buddyError = sbErr(e); }
+  rerenderBuddy();
+}
+// Live updates: a buddy's tick, someone joining or a new invite shows up straight away.
+let rtChannel = null, rtKey = null, refreshTimer = null;
+const refreshSoon = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshBuddy, 400); };
+function subscribeBuddy(pactId) {
+  if (rtKey === pactId || !sb) return;
+  unsubscribeBuddy();
+  rtKey = pactId;
+  const f = `pact_id=eq.${pactId}`;
+  rtChannel = sb.channel(`pact-${pactId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pact_days', filter: f }, refreshSoon)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pact_members', filter: f }, refreshSoon)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pact_invites' }, refreshSoon)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, () => { buddyEvents.clear(); refreshSoon(); })
+    .subscribe();
+}
+function subscribeInvites() {
+  if (rtKey === 'invites' || !sb) return;
+  unsubscribeBuddy();
+  rtKey = 'invites';
+  rtChannel = sb.channel('my-invites').on('postgres_changes', { event: '*', schema: 'public', table: 'pact_invites' }, refreshSoon).subscribe();
+}
+function unsubscribeBuddy() {
+  if (rtChannel && sb) sb.removeChannel(rtChannel);
+  rtChannel = null; rtKey = null;
+}
+
+// ---- actions
+async function createPact(form) {
+  const f = new FormData(form);
+  const email = String(f.get('email') || '').trim();
+  const { data: pactId, error } = await sb.rpc('create_pact', { pact_name: String(f.get('name') || '') });
+  if (error) { toast(sbErr(error)); return; }
+  state.buddy = { commitmentId: f.get('routine') || null };
+  save();
+  if (email) await inviteByEmail(email, pactId); else toast('Pact started. Invite your buddy by Gmail below.');
+  await refreshBuddy();
+}
+async function inviteByEmail(email, pactId = buddyView && buddyView.id) {
+  email = String(email || '').trim().toLowerCase();
+  if (!email || !pactId) return;
+  if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(email)) { toast('That doesn’t look like an email address.'); return; }
+  const { error } = await sb.from('pact_invites').insert({ pact_id: pactId, email });
+  if (error && error.code !== '23505') { toast(sbErr(error)); return; }
+  toast(`Invited ${email}. They'll see it when they sign in with Google.`);
+  refreshBuddy();
+}
+async function takeBackInvite(email) {
+  const { error } = await sb.from('pact_invites').delete().eq('pact_id', buddyView.id).eq('email', email);
+  if (error) toast(sbErr(error));
+  refreshBuddy();
 }
 async function acceptInvite(pactId) {
-  const old = state.buddy;
-  try {
-    const r = await buddyApi({ action: 'accept', pactId });
-    if (old) { try { await buddyApi({ action: 'leave' }); } catch { /* old pact may be gone */ } }
-    state.buddy = { token: r.token, pactId: r.pact.id, commitmentId: old ? old.commitmentId : (routineChoices().find((c) => /test/i.test(c.name)) || {}).id || null, share: old ? old.share : 'off' };
-    buddyView = r.pact; buddyError = null; shareSig = null;
-    myInvites = myInvites.filter((x) => x.pactId !== pactId);
-    save();
-    location.hash = '#/buddy';
-    render();
-    toast(`You're in “${r.pact.name}”`);
-    buddyAutoTick();
-    scheduleShare(0);
-  } catch (e) { toast(e.message); refreshInvites(); }
+  const old = buddyView && buddyView.id;
+  const { error } = await sb.rpc('accept_invite', { p: pactId });
+  if (error) { toast(sbErr(error)); refreshBuddy(); return; }
+  if (old && old !== pactId) await sb.rpc('leave_pact', { p: old });
+  if (!state.buddy) { state.buddy = { commitmentId: (routineChoices().find((c) => /test/i.test(c.name)) || {}).id || null }; save(); }
+  location.hash = '#/buddy';
+  await refreshBuddy();
+  toast(`You're in “${buddyView ? buddyView.name : 'the pact'}”`);
 }
 async function declineInvite(pactId) {
-  try { await buddyApi({ action: 'decline', pactId }); } catch (e) { toast(e.message); }
-  myInvites = myInvites.filter((x) => x.pactId !== pactId);
-  render();
+  const { error } = await sb.from('pact_invites').delete().eq('pact_id', pactId).eq('email', (myProfile && myProfile.email) || '');
+  if (error) toast(sbErr(error));
+  refreshBuddy();
 }
-async function inviteByEmail(email) {
-  email = String(email || '').trim();
-  if (!email) return;
-  try { buddyView = (await buddyApi({ action: 'invite-email', email })).pact; render(); toast(`Invited ${email}. They'll see it when they sign in with Google.`); }
-  catch (e) { toast(e.message); }
+async function buddyTick(done, note = '') {
+  if (!buddyView || buddyBusy) return;
+  buddyBusy = true;
+  const day = todayISO();
+  const { error } = done
+    ? await sb.from('pact_days').upsert({ pact_id: buddyView.id, user_id: sbUser.id, day, note: String(note || '').slice(0, 140), done_at: new Date().toISOString() })
+    : await sb.from('pact_days').delete().eq('pact_id', buddyView.id).eq('user_id', sbUser.id).eq('day', day);
+  buddyBusy = false;
+  if (error) { toast(sbErr(error)); return; }
+  await refreshBuddy();
+}
+async function leavePact() {
+  if (!buddyView || !confirm('Leave this pact? Your ticks in it are removed. If you are the last person, the pact is deleted.')) return;
+  const { error } = await sb.rpc('leave_pact', { p: buddyView.id });
+  if (error) { toast(sbErr(error)); return; }
+  buddyView = null;
+  await refreshBuddy();
+}
+async function setShareCalendar(level) {
+  const { error } = await sb.from('profiles').update({ share_calendar: level }).eq('id', sbUser.id);
+  if (error) { toast(sbErr(error)); return; }
+  if (myProfile) myProfile.share_calendar = level;
+  shareSig = null;
+  await shareCalendar();
+  toast(level === 'off' ? 'Stopped sharing your calendar' : 'Your calendar is shared with your buddy');
+  refreshBuddy();
+}
+// Done today on the linked routine?
+function linkedDoneToday() {
+  const id = state.buddy && state.buddy.commitmentId;
+  const w = id && state.weeks[currentWeekKey()];
+  const it = w && w.items[id];
+  if (!it) return null;
+  return it.freq === 'weekly' || it.freq === 'once' ? periodDone(it) : dayDone(it, todayIndex(currentWeekKey()));
+}
+// Ticks you in the pact when the linked routine is finished (and unticks only what it ticked itself).
+function buddyAutoTick() {
+  if (!buddyView || buddyBusy || !sbUser) return;
+  const done = linkedDoneToday();
+  if (done == null) return;
+  const mine = buddyView.members.find((m) => m.me);
+  const has = !!(mine && mine.days[todayISO()]);
+  if (done && !has) { buddyAutoDate = todayISO(); buddyTick(true, ''); }
+  else if (!done && has && buddyAutoDate === todayISO()) { buddyAutoDate = null; buddyTick(false); }
+}
+
+// ---- calendars
+// When you share, your one-off events and timetable (60 days back to 6 months ahead) are kept in the
+// events table; "busy" hides their names from your buddy inside the database. Turning sharing off
+// removes them.
+let shareSig = null, shareTimer = null;
+function myEventRows() {
+  const from = addDaysISO(todayISO(), -60), to = addDaysISO(todayISO(), 183);
+  return state.commitments.filter((c) => c.freq === 'once' && !c.archived && c.date && c.date >= from && c.date <= to).map((c) => {
+    const s0 = c.time ? toMinutes(c.time) : null;
+    const e0 = c.time ? (c.endTime && toMinutes(c.endTime) > s0 ? toMinutes(c.endTime) : s0 + Math.max(30, Math.round((c.hours || 1) * 60))) : null;
+    return { id: c.id, day: c.date, starts: c.time || null, ends: e0 != null ? fmtTime(Math.min(e0, 23 * 60 + 59)) : null, title: c.name.slice(0, 120) };
+  });
+}
+function scheduleShare(delay = 3000) {
+  clearTimeout(shareTimer);
+  shareTimer = setTimeout(shareCalendar, delay);
+}
+async function shareCalendar() {
+  if (!sbUser || !myProfile) return;
+  const on = myProfile.share_calendar !== 'off';
+  const rows = on ? myEventRows() : [];
+  const sig = JSON.stringify([on, rows]);
+  if (sig === shareSig) return;
+  try {
+    const { data: have, error } = await sb.from('events').select('id');
+    if (error) return;
+    const keep = new Set(rows.map((r) => r.id));
+    const gone = have.map((r) => r.id).filter((id) => !keep.has(id));
+    for (let i = 0; i < gone.length; i += 200) await sb.from('events').delete().in('id', gone.slice(i, i + 200));
+    for (let i = 0; i < rows.length; i += 200) {
+      const { error: e2 } = await sb.from('events').upsert(rows.slice(i, i + 200).map((r) => ({ ...r, user_id: sbUser.id, updated_at: new Date().toISOString() })));
+      if (e2) return;
+    }
+    shareSig = sig;
+  } catch { /* tries again next time */ }
+}
+// Your buddies' shared events for one week (Monday key), fetched when the calendar shows that week.
+const buddyEvents = new Map(); // week -> { at, list }
+async function loadBuddyWeek(wk) {
+  if (!sb || !sbUser) return;
+  const { data, error } = await sb.rpc('buddy_events', { day_from: wk, day_to: addDaysISO(wk, 6) });
+  if (error) return;
+  buddyEvents.set(wk, { at: Date.now(), list: data || [] });
+  if (route.tab === 'cal' && !typing()) render();
+}
+// Buddies who share their calendar, with their events for the week shown (fetched if needed).
+function sharingBuddies(wk) {
+  if (!buddyView) return [];
+  const sharers = buddyView.members.filter((m) => !m.me && m.share !== 'off');
+  if (!sharers.length) return [];
+  const cached = buddyEvents.get(wk);
+  if (!cached || Date.now() - cached.at > 60e3) loadBuddyWeek(wk);
+  const list = cached ? cached.list : [];
+  return sharers.map((m) => ({
+    name: m.name,
+    cal: { events: list.filter((x) => x.user_id === m.id).map((x) => ({ d: x.day, s: x.starts ? x.starts.slice(0, 5) : null, e: x.ends ? x.ends.slice(0, 5) : null, n: x.title || '' })) },
+  }));
+}
+
+function pactStreak(p) {
+  if (p.members.length < 2) return 0;
+  const all = (d) => p.members.every((m) => m.days[d]);
+  let d = todayISO();
+  if (!all(d)) d = addDaysISO(d, -1);
+  let n = 0;
+  while (all(d) && n < 400) { n++; d = addDaysISO(d, -1); }
+  return n;
+}
+async function shareText(text, url) {
+  if (navigator.share) { try { await navigator.share({ text, url }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  copyText(`${text} ${url}`);
 }
 const inviteMail = (email) => `mailto:${encodeURIComponent(email)}?${new URLSearchParams({
   subject: 'Join me on I Commit!',
@@ -2303,193 +2520,54 @@ function invitesHtml(inPact) {
     <p class="small">${inPact ? 'Accepting moves you out of your current pact.' : 'Do it together: each of you ticks your own day, and the streak grows on days you both finish.'}</p>
     <div class="btn-row"><button class="btn primary" data-act="invite-accept" data-id="${x.pactId}">Accept</button><button class="btn" data-act="invite-decline" data-id="${x.pactId}">Decline</button></div></section>`).join('');
 }
-
-async function refreshBuddy() {
-  refreshInvites();
-  if (!state.buddy || buddyBusy) return;
-  try { buddyView = (await buddyApi()).pact; buddyError = null; buddyAutoTick(); scheduleShare(500); }
-  catch (e) { buddyError = e.status === 401 || e.status === 404 ? 'gone' : e.message; }
-  if ((route.tab === 'buddy' || route.tab === 'today') && !route.id && !typing()) render();
-}
-function joinedPact(data, form) {
-  state.buddy = { token: data.token, pactId: data.pact.id, commitmentId: new FormData(form).get('routine') || null, share: 'off' };
-  buddyView = data.pact; buddyError = null;
-  save();
-  location.hash = '#/buddy';
-  render();
-  buddyAutoTick();
-}
-async function createPact(form) {
-  const f = new FormData(form);
-  const email = String(f.get('email') || '').trim();
-  try {
-    joinedPact(await buddyApi({ action: 'create', me: f.get('me'), name: f.get('name') }), form);
-    if (email) await inviteByEmail(email); else toast('Pact started. Invite your buddy by Gmail below.');
-  } catch (e) { toast(e.message); }
-}
-async function joinPact(form) {
-  const f = new FormData(form);
-  try { joinedPact(await buddyApi({ action: 'join', invite: f.get('invite'), me: f.get('me') }), form); toast('You’re in!'); }
-  catch (e) { toast(e.message); }
-}
-async function buddyTick(done, note = '') {
-  if (!state.buddy || buddyBusy) return;
-  buddyBusy = true;
-  try { buddyView = (await buddyApi({ action: 'tick', date: todayISO(), done, note })).pact; buddyError = null; }
-  catch (e) { toast(e.message); }
-  buddyBusy = false;
-  if (!typing()) render();
-}
-// Leaves the current pact and joins the one from the invite being shown, keeping your name and settings.
-async function switchPact() {
-  const invite = route.invite, me = buddyView && buddyView.members.find((m) => m.me);
-  if (!invite || !me) return;
-  const keep = { commitmentId: state.buddy.commitmentId, share: state.buddy.share };
-  try {
-    const joined = await buddyApi({ action: 'join', invite, me: me.name });
-    try { await buddyApi({ action: 'leave' }); } catch { /* the old pact may already be gone */ }
-    state.buddy = { token: joined.token, pactId: joined.pact.id, ...keep };
-    buddyView = joined.pact; buddyError = null; shareSig = null;
-    save();
-    location.hash = '#/buddy';
-    render();
-    toast(`You're in “${joined.pact.name}” now`);
-    scheduleShare(0);
-  } catch (e) { toast(e.message); }
-}
-async function leavePact() {
-  if (!confirm('Leave this pact? Your ticks in it are removed. If you are the last person, the pact is deleted.')) return;
-  try { if (buddyError !== 'gone') await buddyApi({ action: 'leave' }); } catch (e) { if (e.status !== 401 && e.status !== 404) { toast(e.message); return; } }
-  state.buddy = null; buddyView = null; buddyError = null;
-  save(); render();
-}
-// Done today on the linked routine?
-function linkedDoneToday() {
-  const id = state.buddy && state.buddy.commitmentId;
-  const w = id && state.weeks[currentWeekKey()];
-  const it = w && w.items[id];
-  if (!it) return null;
-  return it.freq === 'weekly' || it.freq === 'once' ? periodDone(it) : dayDone(it, todayIndex(currentWeekKey()));
-}
-// Ticks you in the pact when the linked routine is finished (and unticks only what it ticked itself).
-function buddyAutoTick() {
-  if (!buddyView || buddyBusy) return;
-  const done = linkedDoneToday();
-  if (done == null) return;
-  const mine = buddyView.members.find((m) => m.me);
-  const has = !!(mine && mine.days[todayISO()]);
-  if (done && !has) { buddyAutoDate = todayISO(); buddyTick(true, ''); }
-  else if (!done && has && buddyAutoDate === todayISO()) { buddyAutoDate = null; buddyTick(false); }
-}
-// Sharing your calendar (only when you turn it on): your one-off events and synced calendar for this
-// week and the next three, as busy times or with names. Sent again whenever it changes.
-let shareSig = null, shareTimer = null;
-function calendarShare() {
-  const from = currentWeekKey(), to = addDaysISO(from, 27);
-  return state.commitments.filter((c) => c.freq === 'once' && !c.archived && c.date && c.date >= from && c.date <= to)
-    .map((c) => {
-      const s0 = c.time ? toMinutes(c.time) : null;
-      const e0 = c.time ? (c.endTime && toMinutes(c.endTime) > s0 ? toMinutes(c.endTime) : s0 + Math.max(30, Math.round((c.hours || 1) * 60))) : null;
-      return { d: c.date, s: c.time || null, e: e0 != null ? fmtTime(Math.min(e0, 23 * 60 + 59)) : null, n: c.name };
-    }).sort((a, b) => `${a.d}${a.s}`.localeCompare(`${b.d}${b.s}`));
-}
-function scheduleShare(delay = 3000) {
-  clearTimeout(shareTimer);
-  shareTimer = setTimeout(shareCalendar, delay);
-}
-async function shareCalendar() {
-  if (!state.buddy || !buddyView) return;
-  const share = state.buddy.share || 'off';
-  const mine = buddyView.members.find((m) => m.me);
-  const events = share === 'off' ? null : calendarShare();
-  const sig = JSON.stringify([share, events]);
-  if (sig === shareSig || (share === 'off' && !(mine && mine.cal))) { shareSig = sig; return; }
-  try { buddyView = (await buddyApi({ action: 'calendar', events, detail: share })).pact; shareSig = sig; }
-  catch { /* tries again next time */ }
-}
-// Buddies who share their calendar with you.
-const sharingBuddies = () => (buddyView ? buddyView.members.filter((m) => !m.me && m.cal) : []);
-
-function pactStreak(p) {
-  if (p.members.length < 2) return 0;
-  const all = (d) => p.members.every((m) => m.days[d]);
-  let d = todayISO();
-  if (!all(d)) d = addDaysISO(d, -1);
-  let n = 0;
-  while (all(d) && n < 400) { n++; d = addDaysISO(d, -1); }
-  return n;
-}
-const inviteUrl = (p) => `${location.origin}${location.pathname}#/join/${p.invite}`;
-// Invite codes are 10 letters/digits; shown as ABCDE-FGHJK, accepted in any case, with or without the dash.
-const fmtCode = (c) => String(c || '').toUpperCase().replace(/^(.{5})(.{5})$/, '$1-$2');
-const readCode = (v) => { const t = String(v || '').toLowerCase().replace(/[^a-z0-9]/g, ''); return t.length >= 10 ? t.slice(-10) : ''; };
-// The home-screen app (or the Mac app) rather than a browser tab: their data is kept apart from the browser's.
-const inBrowserTab = () => !(navigator.standalone || matchMedia('(display-mode: standalone)').matches || window.webkit?.messageHandlers?.native);
-const inviteText = (p) => `Join my "${p.name}" pact on I Commit! We each tick our own day and keep a streak together.\n\nIn the app: Buddy → Got an invite? → enter ${fmtCode(p.invite)}\nOr open this link:`;
-async function shareText(text, url) {
-  if (navigator.share) { try { await navigator.share({ text, url }); return; } catch (e) { if (e.name === 'AbortError') return; } }
-  copyText(`${text} ${url}`);
-}
 function buddyTodayLine() {
   if (myInvites.length) return `<div class="pace"><a href="#/buddy">✉️ ${escapeHtml(myInvites[0].from.join(' & ') || 'Someone')} invited you to Work Buddy · open ›</a></div>`;
-  if (!state.buddy || !buddyView) return '';
+  if (!buddyView) return '';
   const others = buddyView.members.filter((m) => !m.me);
   const s = pactStreak(buddyView);
   return `<div class="pace"><a href="#/buddy">Work Buddy${s ? ` · 🔥 ${s}` : ''} · ${others.length ? others.map((m) => `${escapeHtml(m.name)} ${m.days[todayISO()] ? '✅' : '⬜'}`).join(' · ') : 'waiting for your buddy'} ›</a></div>`;
 }
 function buddyTabHtml() {
   const head = (label, title) => `<header class="top">${topBar({ label, title, right: menuBtn })}</header>`;
-  if (!state.buddy) {
-    const invite = route.invite || '';
-    return head('Work Buddy', invite ? 'Join a pact' : 'Partner up') + `
-      ${invitesHtml(false)}
-      ${!state.account ? `<section class="card banner-card"><b>Sign in with Google to pair up by Gmail</b>
-        <p class="small">Then you invite your buddy by their Gmail, or see their invite and tap Accept.</p>
-        <div class="btn-row"><a class="btn primary" href="#/account">Sign in with Google</a></div></section>` : ''}
-      ${invite && inBrowserTab() ? `<section class="card banner-card"><b>Using I Commit! from your home screen?</b>
-        <p class="small">The home-screen app keeps its own data, separate from this browser tab. Open the app there instead: <b>Buddy → Got an invite?</b> and enter</p>
-        <div class="bcode big"><b>${fmtCode(invite)}</b><button class="mini-btn" data-act="copy-invite-code" data-code="${invite}">Copy</button></div>
-        <p class="small muted">Or join here if you use I Commit! in this browser${!state.account ? ', or <a href="#/account">sign in with Google</a> first so this browser has your data' : ''}.</p></section>` : ''}
-      <form class="card form" data-form="${invite ? 'buddy-join' : 'buddy-create'}" data-section="${invite ? 'Join' : 'Start a pact'}">
-        <div class="card-head"><h2>${invite ? 'You’ve been invited' : 'Start a pact'}</h2></div>
-        <p class="small muted">${invite ? 'Do the same routine together. Each of you ticks your own day; the streak grows on days you both finish.'
-          : 'Do a routine together with a real person, e.g. an online test every day. Each of you ticks your own day; the streak grows only on days you both finish.'}</p>
-        <label class="f">Your name<input name="me" required maxlength="40" placeholder="What your buddy sees" value="${escapeHtml(state.account ? (state.account.name || '') : '')}"></label>
-        ${invite || !state.account ? '' : '<label class="f">Your buddy’s Gmail<input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="e.g. han@gmail.com"><span class="help">They see your invite when they open I Commit! signed in with that Gmail.</span></label>'}
-        ${invite ? `<input type="hidden" name="invite" value="${escapeHtml(invite)}">` : '<label class="f">What you’re doing together<input name="name" maxlength="60" value="Daily online test"></label>'}
-        <label class="f">Tick me automatically when I finish<span class="help">Optional. Or tick by hand on this page.</span>${routineSelect('routine', (routineChoices().find((c) => /test/i.test(c.name)) || {}).id, 'Nothing, I’ll tick here')}</label>
-        <button class="btn primary" type="submit">${invite ? 'Join' : state.account ? 'Start and invite' : 'Start and get an invite code'}</button>
-      </form>
-      ${invite ? '' : `<form class="card form" data-form="buddy-code"><div class="card-head"><h2>Got an invite code?</h2></div>
-        <label class="f">Invite code or link<input name="code" placeholder="e.g. ABCDE-FGHJK" autocapitalize="characters" autocorrect="off" spellcheck="false"></label>
-        <button class="btn" type="submit">Continue</button></form>`}`;
+  if (!state.account) {
+    return head('Work Buddy', 'Partner up') + `<section class="card banner-card"><b>Sign in with Google to pair up</b>
+      <p class="small">Invite your buddy by their Gmail, or accept their invite. Your pact belongs to your accounts, so it's there on every device.</p>
+      <div class="btn-row"><a class="btn primary" href="#/account">Sign in with Google</a></div></section>`;
+  }
+  if (!sbUser) {
+    return head('Work Buddy', 'Partner up') + `<section class="card banner-card"><b>One more Google sign-in</b>
+      <p class="small">Work Buddy has moved to the new database. Sign in with Google once more on this device to turn it on.</p>
+      <div class="btn-row"><button class="btn primary" data-act="google-signin">Continue with Google</button></div>
+      ${loginWait ? '<p class="small muted">Finish signing in in the Google window…</p>' : ''}</section>`;
   }
   if (!buddyView) {
-    return head('Work Buddy', 'Pact') + `<section class="card empty">
-      ${buddyError === 'gone' ? '<p>This pact no longer exists or you were removed.</p><button class="btn" data-act="buddy-leave">Start again</button>'
-        : buddyError ? `<p class="err">${escapeHtml(buddyError)}</p><button class="btn" data-act="buddy-refresh">Try again</button>` : '<p class="muted">Loading…</p>'}</section>`;
+    return head('Work Buddy', 'Partner up') + invitesHtml(false) + `
+      ${buddyError ? `<section class="card"><p class="err pad">${escapeHtml(buddyError)}</p><button class="btn" data-act="buddy-refresh">Try again</button></section>` : ''}
+      <form class="card form" data-form="buddy-create" data-section="Start a pact">
+        <div class="card-head"><h2>Start a pact</h2></div>
+        <p class="small muted">Do a routine together with a real person, e.g. an online test every day. Each of you ticks your own day; the streak grows only on days you both finish.</p>
+        <label class="f">Your buddy’s Gmail<input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="e.g. han@gmail.com"><span class="help">They see your invite when they open I Commit! signed in with that Gmail.</span></label>
+        <label class="f">What you’re doing together<input name="name" maxlength="60" value="Daily online test"></label>
+        <label class="f">Tick me automatically when I finish<span class="help">Optional. Or tick by hand on this page.</span>${routineSelect('routine', (routineChoices().find((c) => /test/i.test(c.name)) || {}).id, 'Nothing, I’ll tick here')}</label>
+        <button class="btn primary" type="submit">Start and invite</button>
+      </form>`;
   }
   const p = buddyView, today = todayISO();
   const me = p.members.find((m) => m.me) || { days: {} };
-  // An invite to a different pact (e.g. a new one your buddy started): offer to move over.
-  const switchCard = route.invite && route.invite !== p.invite ? `
-    <section class="card banner-card" data-section="Invite">
-      <b>Join the pact from this invite?</b>
-      <p class="small">You're in “${escapeHtml(p.name)}”${p.members.length > 1 ? ` with ${escapeHtml(p.members.filter((m) => !m.me).map((m) => m.name).join(' & '))}` : ', on your own'}. Joining the new one (code ${fmtCode(route.invite)}) leaves this one.</p>
-      <div class="btn-row"><button class="btn primary" data-act="buddy-switch">Join the new pact</button><a class="btn" href="#/buddy">Stay here</a></div>
-    </section>` : '';
   const others = p.members.filter((m) => !m.me);
   const streak = pactStreak(p);
   const mineToday = me.days[today];
-  const linked = state.buddy.commitmentId && state.commitments.find((c) => c.id === state.buddy.commitmentId);
+  const prefs = state.buddy || { commitmentId: null };
+  const linked = prefs.commitmentId && state.commitments.find((c) => c.id === prefs.commitmentId);
   const waiting = others.filter((m) => !m.days[today]);
+  const share = (myProfile && myProfile.share_calendar) || 'off';
   const timeOf = (d) => (d && d.at ? new Date(d.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
   const days = Array.from({ length: 14 }, (_, i) => addDaysISO(today, i - 13));
   const row = (m) => `<div class="bgrid-row"><span class="bname">${m.me ? 'You' : escapeHtml(m.name)}</span>${days.map((d) =>
     `<i class="${m.days[d] ? 'on' : ''} ${d === today ? 'today' : ''}" title="${fmtShort(d)}"></i>`).join('')}</div>`;
-  return head('Work Buddy', escapeHtml(p.name)) + switchCard + invitesHtml(true) + `
+  return head('Work Buddy', escapeHtml(p.name)) + invitesHtml(true) + `
     <section class="card" data-section="Today">
-      <div class="bstreak"><b>${streak ? `🔥 ${streak}` : '🌱 0'}</b><span>${others.length ? `day streak · grows on days you all finish` : 'Waiting for your buddy to join'}</span></div>
+      <div class="bstreak"><b>${streak ? `🔥 ${streak}` : '🌱 0'}</b><span>${others.length ? 'day streak · grows on days you all finish' : p.invited.length ? `Waiting for ${escapeHtml(p.invited.join(' & '))} to accept` : 'Invite your buddy below'}</span></div>
       <div class="bmember me ${mineToday ? 'done' : ''}">
         <button class="chk ${mineToday ? 'on' : ''}" data-act="buddy-tick" aria-pressed="${!!mineToday}" aria-label="I did it today">${mineToday ? CHECK : ''}</button>
         <div class="bm-body"><b>You</b><span>${mineToday ? `Done ${timeOf(mineToday)}${mineToday.n ? ` · “${escapeHtml(mineToday.n)}”` : ''}` : 'Not yet today'}</span></div>
@@ -2506,20 +2584,15 @@ function buddyTabHtml() {
     </section>
     <section class="card" data-section="Settings">
       <div class="card-head"><h2>Invite & settings</h2></div>
-      ${state.account ? `<form class="inline binvite" data-form="buddy-email"><input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="Invite by Gmail, e.g. han@gmail.com"><button class="btn primary" type="submit">Invite</button></form>
-        ${(p.invited || []).map((e) => `<div class="binv"><span>✉️ ${escapeHtml(e)} · invited</span><a class="mini-btn" href="${escapeHtml(inviteMail(e))}">Email them</a><button class="mini-btn" data-act="invite-takeback" data-email="${escapeHtml(e)}">Take back</button></div>`).join('')}
-        <p class="help">They see the invite when they open I Commit! signed in with that Gmail. “Email them” opens a ready-made email in your Mail app.</p>`
-        : '<p class="help"><a href="#/account">Sign in with Google</a> to invite by Gmail.</p>'}
-      <div class="bcode"><span>Or a code</span><b>${fmtCode(p.invite)}</b><button class="mini-btn" data-act="buddy-copy-code">Copy</button></div>
-      <p class="help">Your buddy can enter it in their app: Buddy → Got an invite code?</p>
-      <div class="btn-row"><button class="btn" data-act="buddy-invite">Share invite</button><button class="btn" data-act="buddy-copy">Copy link</button></div>
-      <form class="form flat" data-form="buddy-routine"><label class="f">Tick me automatically when I finish${routineSelect('routine', state.buddy.commitmentId, 'Nothing, I’ll tick here')}</label>
+      <form class="inline binvite" data-form="buddy-email"><input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="Invite by Gmail, e.g. han@gmail.com"><button class="btn primary" type="submit">Invite</button></form>
+      ${p.invited.map((e) => `<div class="binv"><span>✉️ ${escapeHtml(e)} · invited</span><a class="mini-btn" href="${escapeHtml(inviteMail(e))}">Email them</a><button class="mini-btn" data-act="invite-takeback" data-email="${escapeHtml(e)}">Take back</button></div>`).join('')}
+      <p class="help">They see the invite when they open I Commit! signed in with that Gmail. “Email them” opens a ready-made email in your Mail app.</p>
+      <form class="form flat" data-form="buddy-routine"><label class="f">Tick me automatically when I finish${routineSelect('routine', prefs.commitmentId, 'Nothing, I’ll tick here')}</label>
         <label class="f">Share my calendar with my buddy<select name="share">
-          <option value="off" ${state.buddy.share === 'off' ? 'selected' : ''}>Off</option>
-          <option value="busy" ${state.buddy.share === 'busy' ? 'selected' : ''}>Busy times only</option>
-          <option value="names" ${state.buddy.share === 'names' ? 'selected' : ''}>With event names</option></select>
-          <span class="help">Your timetable and one-off events for the next four weeks. You see theirs only if they share too.</span></label></form>
-      <form class="inline bswitch" data-form="buddy-code"><input name="code" placeholder="Got a different invite? Enter its code" autocapitalize="characters" autocorrect="off" spellcheck="false"><button class="mini-btn" type="submit">Go</button></form>
+          <option value="off" ${share === 'off' ? 'selected' : ''}>Off</option>
+          <option value="busy" ${share === 'busy' ? 'selected' : ''}>Busy times only</option>
+          <option value="names" ${share === 'names' ? 'selected' : ''}>With event names</option></select>
+          <span class="help">Your timetable and one-off events. You see theirs only if they share too.</span></label></form>
       <div class="danger"><button class="btn warn" data-act="buddy-leave">Leave pact</button></div>
     </section>`;
 }
@@ -3784,9 +3857,7 @@ function applyRecord(k, p) {
     const i = list.findIndex((x) => x.id === v.id);
     if (i >= 0) list[i] = v; else list.push(v);
   } else if (type === 'b') {
-    const had = state.buddy && state.buddy.token;
-    state.buddy = { token: p.token, pactId: p.pactId, commitmentId: p.commitmentId || null, share: ['busy', 'names'].includes(p.share) ? p.share : 'off' };
-    if (had !== p.token) { buddyView = null; setTimeout(refreshBuddy, 0); }
+    state.buddy = { commitmentId: p.commitmentId || null };
   } else if (type === 'f') {
     const f = state.calendars.feeds.find((x) => x.id === p.id);
     if (f) Object.assign(f, pick(p, FEED_FIELDS));
@@ -3810,7 +3881,7 @@ function removeRecord(k) {
   else if (type === 't') state.trees = state.trees.filter((x) => x.id !== a);
   else if (type === 'x') state.tests = state.tests.filter((x) => x.id !== a);
   else if (type === 'n') state.notes = state.notes.filter((x) => x.id !== a);
-  else if (type === 'b') { state.buddy = null; buddyView = null; }
+  else if (type === 'b') state.buddy = null;
   else if (state.weeks[a]) delete state.weeks[a].items[b];
 }
 
@@ -4087,6 +4158,7 @@ async function pollGoogle() {
 }
 async function finishGoogleSignIn(r) {
   const account = { email: r.email, name: r.name || '' };
+  await sbSignIn(r.idToken);
   if (state.sync.enabled && r.syncKey === state.sync.key) {
     state.account = account; save(); render(); toast(`Signed in as ${r.email}`);
   } else if (r.fresh) {
@@ -4102,8 +4174,9 @@ async function finishGoogleSignIn(r) {
 function signOut() {
   if (!confirm('Sign out on this device? Your data stays in your Google account; this device starts empty until you sign in again.')) return;
   stopGoogleWait();
+  sbSignOut();
   state = defaultState();
-  recordHashes = null; buddyView = null;
+  recordHashes = null;
   save();
   location.hash = '#/today';
   render();
@@ -4431,15 +4504,10 @@ document.addEventListener('click', (e) => {
       const names = buddyView.members.filter((m) => !m.me && !m.days[todayISO()]).map((m) => m.name).join(' & ');
       shareText(`${names}, haven't seen your ${buddyView.name.toLowerCase()} today 👀 Let's keep the streak going!`, `${location.origin}${location.pathname}#/buddy`); break;
     }
-    case 'buddy-invite': shareText(inviteText(buddyView), inviteUrl(buddyView)); break;
-    case 'buddy-copy': copyText(inviteUrl(buddyView)); break;
-    case 'buddy-copy-code': copyText(fmtCode(buddyView.invite)); break;
     case 'buddy-leave': leavePact(); break;
-    case 'buddy-switch': switchPact(); break;
     case 'invite-accept': acceptInvite(btn.dataset.id); break;
     case 'invite-decline': declineInvite(btn.dataset.id); break;
-    case 'invite-takeback': buddyApi({ action: 'uninvite', email: btn.dataset.email }).then((r) => { buddyView = r.pact; render(); }).catch((e) => toast(e.message)); break;
-    case 'copy-invite-code': copyText(fmtCode(btn.dataset.code)); break;
+    case 'invite-takeback': takeBackInvite(btn.dataset.email); break;
     case 'google-signin': startGoogleSignIn(); break;
     case 'google-cancel': stopGoogleWait(); render(); break;
     case 'sign-out': signOut(); break;
@@ -4617,9 +4685,9 @@ document.addEventListener('input', (e) => {
   if (form) syncFormVisibility(form);
 });
 document.addEventListener('change', (e) => {
-  if (e.target.closest('form[data-form="buddy-routine"]') && state.buddy) {
-    if (e.target.name === 'share') { state.buddy.share = e.target.value; save(); render(); scheduleShare(0); toast(e.target.value === 'off' ? 'Stopped sharing your calendar' : 'Your calendar is shared with your buddy'); return; }
-    state.buddy.commitmentId = e.target.value || null; buddyAutoDate = null; save(); render(); return;
+  if (e.target.closest('form[data-form="buddy-routine"]')) {
+    if (e.target.name === 'share') { setShareCalendar(e.target.value); return; }
+    state.buddy = { commitmentId: e.target.value || null }; buddyAutoDate = null; save(); render(); return;
   }
   if (e.target.id === 'bgFile') {
     const file = e.target.files[0];
@@ -4653,13 +4721,8 @@ document.addEventListener('submit', (e) => {
   else if (form === 'note-date') { const f = new FormData(e.target); pinNote(e.target.dataset.id, f.get('date') || todayISO(), f.get('time'), f.get('endDate') || null); }
   else if (form === 'test') saveTestForm(e.target);
   else if (form === 'buddy-create') createPact(e.target);
-  else if (form === 'buddy-join') joinPact(e.target);
   else if (form === 'buddy-email') { inviteByEmail(new FormData(e.target).get('email')); e.target.reset(); }
   else if (form === 'buddy-note') buddyTick(true, String(new FormData(e.target).get('note') || '').trim());
-  else if (form === 'buddy-code') {
-    const code = readCode(new FormData(e.target).get('code'));
-    if (code) location.hash = `#/join/${code}`; else toast('Enter the 10-character code (e.g. ABCDE-FGHJK) or paste the link');
-  }
   else if (form === 'stage-link') {
     const c = state.commitments.find((x) => x.id === e.target.dataset.id);
     const url = cleanUrl(new FormData(e.target).get('url'));

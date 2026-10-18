@@ -34,6 +34,8 @@ assert.match(await cb.text(), /signed in as cathy@example\.com/);
 assert.equal(sent.body.get('code'), 'abc');
 assert.equal(sent.body.get('redirect_uri'), `${ORIGIN}/api/login/callback`);
 const first = await finish(S(1), OLD);
+assert.equal(first.body.idToken, google.id_token, 'hands over Google\'s token for Supabase');
+delete first.body.idToken;
 assert.deepEqual(first.body, { syncKey: OLD, email: 'cathy@example.com', name: 'Cathy', fresh: false }, 'keeps this device\'s data');
 assert.deepEqual((await finish(S(1), OLD)).body, { pending: true }, 'a state works once');
 

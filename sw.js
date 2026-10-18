@@ -1,7 +1,7 @@
 // Offline cache. Bump CACHE when you add or rename files so old caches are cleared.
-const CACHE = 'wct-v34';
+const CACHE = 'wct-v35';
 const ASSETS = [
-  './', './index.html', './styles.css', './app.js', './xlsx.js', './ics.js', './widget/commitments-widget.js', './manifest.webmanifest',
+  './', './index.html', './styles.css', './app.js', './xlsx.js', './ics.js', './widget/commitments-widget.js', './vendor/supabase.js', './manifest.webmanifest',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png',
 ];
 

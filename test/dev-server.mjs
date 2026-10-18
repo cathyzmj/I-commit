@@ -7,14 +7,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { handle as syncHandle } from '../server/sync.mjs';
 import { handle as widgetHandle } from '../server/widget.mjs';
-import { handle as buddyHandle } from '../server/buddy.mjs';
 import { handle as loginHandle } from '../server/login.mjs';
 import { memoryStore } from './sync-fn-store.mjs';
 
 const root = path.resolve(path.dirname(decodeURIComponent(new URL(import.meta.url).pathname)), '..');
 const port = Number(process.argv[2]) || 8766;
 const syncStore = memoryStore();
-const buddyStore = memoryStore();
 const loginStore = memoryStore();
 // A stand-in for Google: /api/login/dev?state=…&email=… "signs in" as that email.
 const devGoogle = async (url, opts) => {
@@ -40,7 +38,6 @@ http.createServer(async (req, res) => {
     let response;
     if (url.pathname === '/api/sync') response = await syncHandle(await toRequest(req), syncStore);
     else if (url.pathname === '/api/widget') response = await widgetHandle(await toRequest(req), widgetStore);
-    else if (url.pathname === '/api/buddy') response = await buddyHandle(await toRequest(req), buddyStore, loginStore);
     else if (url.pathname === '/api/login/dev') {
       response = new Response(`<form action="/api/login/callback"><input type="hidden" name="state" value="${url.searchParams.get('state')}"><p>Pretend Google sign-in</p><input name="code" value="cathy@example.com"><button>Continue</button></form>`, { headers: { 'content-type': 'text/html' } });
     } else if (url.pathname.startsWith('/api/login')) response = await loginHandle(await toRequest(req), { store: loginStore, syncStore, env: loginEnv, fetchImpl: devGoogle });

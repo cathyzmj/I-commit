@@ -4,7 +4,8 @@
 //
 //   GET  /api/login/config        -> { clientId }         (public; the app builds Google's sign-in link)
 //   GET  /api/login/callback      <- Google, after you pick your account: ?code=…&state=…
-//   POST /api/login { state }     -> { pending } until Google is done, then { syncKey, email, name, fresh }
+//   POST /api/login { state }     -> { pending } until Google is done, then { syncKey, email, name, fresh, idToken }
+//        (idToken: Google's sign-in token, which the app passes to Supabase to sign in there too)
 //        (+ "Authorization: Bearer <data key>" when the device already syncs)
 //
 // The app makes a random `state`, opens Google's page with it, and asks /api/login until the
@@ -48,7 +49,10 @@ export async function handle(req, { store, syncStore, env, fetchImpl = fetch }) 
   if (!/\.apps\.googleusercontent\.com$/.test(clientId)) return json(503, { error: 'The Google Client ID on the server looks wrong (it should end in .apps.googleusercontent.com). Set GOOGLE_CLIENT_ID again.', setup: true });
 
   // devAuthUrl: only on the local test server, which stands in for Google's sign-in page.
-  if (url.pathname.endsWith('/config')) return json(200, { clientId, redirectUri: redirectUri(req), ...(env.DEV_AUTH_URL ? { devAuthUrl: env.DEV_AUTH_URL } : {}) });
+  if (url.pathname.endsWith('/config')) {
+    return json(200, { clientId, redirectUri: redirectUri(req), ...(env.DEV_AUTH_URL ? { devAuthUrl: env.DEV_AUTH_URL } : {}),
+      ...(env.SUPABASE_URL && env.SUPABASE_KEY ? { supabase: { url: env.SUPABASE_URL, key: env.SUPABASE_KEY } } : {}) });
+  }
 
   if (url.pathname.endsWith('/callback')) {
     const state = url.searchParams.get('state') || '', code = url.searchParams.get('code') || '';
@@ -65,7 +69,7 @@ export async function handle(req, { store, syncStore, env, fetchImpl = fetch }) 
         : tok.error === 'redirect_uri_mismatch' ? 'The redirect address in Google Cloud doesn\'t match.' : 'Close this window and try again in I Commit!.';
       return page('Google sign-in failed', esc(why));
     }
-    await store.setJSON(`state:${state}`, { ...who, at: Date.now() });
+    await store.setJSON(`state:${state}`, { ...who, idToken: tok.id_token, at: Date.now() });
     return page(`You're signed in as ${who.email}`, 'Go back to I Commit! — it will open your data in a moment. You can close this window.');
   }
 
@@ -78,12 +82,12 @@ export async function handle(req, { store, syncStore, env, fetchImpl = fetch }) 
   if (!rec) return json(200, { pending: true });
   await store.delete(`state:${state}`);
   if (Date.now() - rec.data.at > STATE_MS) return json(400, { error: 'That sign-in took too long. Try again.' });
-  const { sub, email, name } = rec.data;
+  const { sub, email, name, idToken } = rec.data;
 
   const user = await store.getWithMetadata(`user:${sub}`);
   if (user) {
     if (user.data.email !== email || user.data.name !== name) await store.setJSON(`user:${sub}`, { ...user.data, email, name });
-    return json(200, { syncKey: user.data.syncKey, email, name, fresh: false });
+    return json(200, { syncKey: user.data.syncKey, email, name, fresh: false, idToken });
   }
   // A new account. A device that already syncs (and whose data isn't someone else's account) keeps
   // its data; otherwise the account starts with a new, empty data key and this device uploads to it.
@@ -93,7 +97,7 @@ export async function handle(req, { store, syncStore, env, fetchImpl = fetch }) 
   const fresh = !syncKey;
   if (fresh) syncKey = newKey();
   const made = await store.setJSON(`user:${sub}`, { sub, email, name, syncKey, created: new Date().toISOString() }, { onlyIfNew: true });
-  if (!made.modified) return json(200, { syncKey: (await store.getWithMetadata(`user:${sub}`)).data.syncKey, email, name, fresh: false });
+  if (!made.modified) return json(200, { syncKey: (await store.getWithMetadata(`user:${sub}`)).data.syncKey, email, name, fresh: false, idToken });
   await store.setJSON(`key:${await hex(syncKey)}`, { sub });
-  return json(200, { syncKey, email, name, fresh });
+  return json(200, { syncKey, email, name, fresh, idToken });
 }
