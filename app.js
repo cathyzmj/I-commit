@@ -4,17 +4,6 @@
 // A commitment has a frequency (daily / weekly / once) and a kind:
 //   task    – done or not done (planned time = `hours`)
 //   counter – count towards `target` `unit`s in `step`s (e.g. 3 emails; 15 h)
-const DEFAULT_COMMITMENTS = [
-  // Examples for a fresh install; edit them in the Commitments tab.
-  // [freq, kind, section, name, target, unit, hours]
-  ['daily', 'task', 'Study', 'Independent study', 1, '', 2],
-  ['daily', 'task', 'Study', 'Practice questions', 1, '', 0.5],
-  ['daily', 'counter', 'Networking', 'Outreach messages', 3, 'messages', 0.5],
-  ['daily', 'task', 'Health', 'Exercise', 1, '', 0.5],
-  ['weekly', 'counter', 'Career', 'Applications', 5, 'h', 5],
-  ['weekly', 'counter', 'Projects', 'Side project', 10, 'h', 10],
-  ['weekly', 'task', 'Social', 'Club meeting', 1, '', 1],
-]
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const FREQS = ['daily', 'weekly', 'periodic', 'once'];
 const FREQ_LABEL = { daily: 'Daily', weekly: 'Weekly', periodic: 'Periodic', once: 'One-off' };
@@ -213,8 +202,7 @@ function newCommitment(fields) {
 function defaultState() {
   return {
     version: 2,
-    commitments: DEFAULT_COMMITMENTS.map(([freq, kind, section, name, target, unit, hours], i) =>
-      newCommitment({ freq, kind, section, name, target, unit, hours, step: isHourUnit(unit) ? 0.5 : 1, order: i })),
+    commitments: [], // new people start with an empty list and add their own
     weeks: {},
     calendars: { feeds: [] },
     widget: { enabled: false, token: null, lastPush: null, lastError: null },
