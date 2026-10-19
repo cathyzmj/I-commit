@@ -10,14 +10,28 @@ create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   owner uuid not null references public.profiles on delete cascade default auth.uid(),
   name text not null check (char_length(name) between 1 and 80),
-  color text not null default 'blue' check (color in ('blue', 'purple', 'teal', 'coral', 'pink', 'amber', 'green', 'gray')),
+  color text not null default 'blue',      -- a preset name or any '#rrggbb' (checked below)
   start_date date not null,                 -- the Monday of week 1
-  weeks int not null default 8 check (weeks between 1 and 52),
+  weeks int not null default 8,
   notion_url text not null default '' check (char_length(notion_url) <= 500),
   drive_url text not null default '' check (char_length(drive_url) <= 500),
   sort int not null default 0,
   created_at timestamptz not null default now()
 );
+
+-- Added later; these lines also upgrade a table made by an earlier version of this file.
+alter table public.projects add column if not exists layout text not null default 'weeks';  -- 'weeks' (Gantt) or 'months' (calendar)
+alter table public.projects add column if not exists logo text not null default '';         -- a small picture as a data: URL
+alter table public.projects drop constraint if exists projects_color_check;
+alter table public.projects add constraint projects_color_check
+  check (color in ('blue', 'purple', 'teal', 'coral', 'pink', 'amber', 'green', 'gray') or color ~ '^#[0-9a-f]{6}$');
+alter table public.projects drop constraint if exists projects_weeks_check;
+alter table public.projects add constraint projects_weeks_check check (weeks between 1 and 60);
+alter table public.projects drop constraint if exists projects_layout_check;
+alter table public.projects add constraint projects_layout_check check (layout in ('weeks', 'months'));
+alter table public.projects drop constraint if exists projects_logo_check;
+alter table public.projects add constraint projects_logo_check
+  check (logo = '' or (char_length(logo) <= 200000 and logo ~ '^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$'));
 
 create table if not exists public.project_steps (
   id uuid primary key default gen_random_uuid(),

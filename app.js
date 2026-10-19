@@ -4356,6 +4356,11 @@ const projDb = {
     if (error) throw error;
     return data;
   },
+  async insertMany(table, rows) {
+    if (!rows.length) return;
+    const { error } = await sb.from(table).insert(rows);
+    if (error) throw error;
+  },
   async remove(table, match) {
     const { error } = await sb.from(table).delete().match(match);
     if (error) throw error;
@@ -4380,7 +4385,46 @@ async function loadBoard(id) {
   if (route.page === 'project' && route.projId === id && !typing()) render();
 }
 const projById = (id) => (projects || []).find((p) => p.id === id);
-const pcol = (p) => PROJ_COLORS[p.color] || PROJ_COLORS.blue;
+// Any '#rrggbb' colour works too: darker for text, paler for fills, and white or dark text on top.
+const isHex = (c) => /^#[0-9a-f]{6}$/i.test(c || '');
+function hexPalette(hex) {
+  const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const mix = (t, k) => '#' + rgb.map((v) => Math.round(v + (t - v) * k).toString(16).padStart(2, '0')).join('');
+  const light = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255 > 0.62;
+  return [mix(0, 0.6), mix(255, 0.86), hex, mix(255, 0.55), light ? mix(0, 0.7) : '#ffffff'];
+}
+// [dark text, light fill, mid, soft, text on mid]
+const pcol = (p) => (isHex(p.color) ? hexPalette(p.color) : [...(PROJ_COLORS[p.color] || PROJ_COLORS.blue), (PROJ_COLORS[p.color] || PROJ_COLORS.blue)[1]]);
+const safeLogo = (logo) => (/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(logo || '') && logo.length <= 200000 ? logo : '');
+// A logo is shrunk to at most 192px so it fits in the database row.
+async function logoDataUrl(file) {
+  const img = await createImageBitmap(file);
+  const k = Math.min(1, 192 / Math.max(img.width, img.height));
+  const c = Object.assign(document.createElement('canvas'), { width: Math.max(1, Math.round(img.width * k)), height: Math.max(1, Math.round(img.height * k)) });
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  let url = c.toDataURL('image/png');
+  if (url.length > 150000) url = c.toDataURL('image/jpeg', 0.85);
+  return url;
+}
+
+// ---- months (for projects shown as a monthly calendar)
+// Weeks still number the project internally, so meetings and steps work the same in both formats.
+const monthStart = (mk) => `${mk}-01`;
+const monthEnd = (mk) => { const [y, m] = mk.split('-').map(Number); return isoDate(new Date(y, m, 0)); };
+const addMonthKey = (mk, n) => { const [y, m] = mk.split('-').map(Number); return isoDate(new Date(y, m - 1 + n, 1)).slice(0, 7); };
+const monthName = (mk, opts = { month: 'long', year: 'numeric' }) => fmtDay(parseISO(monthStart(mk)), opts);
+function projMonths(p) {
+  const first = addDaysISO(p.start_date, 6).slice(0, 7), last = addDaysISO(projEnd(p), -6).slice(0, 7), out = [];
+  for (let mk = first; mk <= last && out.length < 24; mk = addMonthKey(mk, 1)) out.push(mk);
+  return out;
+}
+// The real first and last day: whole weeks, or whole months for a monthly project.
+const projSpan = (p) => (p.layout === 'months' ? [monthStart(projMonths(p)[0]), monthEnd(projMonths(p).at(-1))] : [p.start_date, projEnd(p)]);
+function projRange(p) {
+  if (p.layout !== 'months') return shortRange(p.start_date, projEnd(p));
+  const ms = projMonths(p);
+  return ms.length === 1 ? monthName(ms[0]) : `${monthName(ms[0], { month: 'short' })} to ${monthName(ms.at(-1), { month: 'short', year: 'numeric' })}`;
+}
 
 // ---- weeks
 const projWeekStart = (p, w) => addDaysISO(p.start_date, (w - 1) * 7);
@@ -4396,9 +4440,12 @@ function projNowWeek(p) {
   return n >= 1 && n <= p.weeks ? n : null;
 }
 function projStatus(p) {
+  const [a, z] = projSpan(p), t = todayISO();
+  if (t < a) return `Starts ${fmtShort(a)}`;
+  if (t > z) return `Finished ${fmtShort(z)}`;
+  if (p.layout === 'months') { const ms = projMonths(p), i = ms.indexOf(t.slice(0, 7)); return `Month ${i + 1} of ${ms.length} · ${monthName(ms[i], { month: 'long' })}`; }
   const w = projNowWeek(p);
-  if (w) return `Week ${w} of ${p.weeks} · ${weekDates(p, w)}`;
-  return todayISO() < p.start_date ? `Starts ${fmtShort(p.start_date)}` : `Finished ${fmtShort(projEnd(p))}`;
+  return `Week ${w} of ${p.weeks} · ${weekDates(p, w)}`;
 }
 const meetingDate = (p, m) => addDaysISO(projWeekStart(p, m.week), (m.weekday || 1) - 1);
 const stepDue = (p, s) => addDaysISO(projWeekStart(p, s.week_to), 4); // the Friday of its last week
@@ -4450,11 +4497,11 @@ function galleryHtml() {
       <a class="btn primary" href="#/gallery/new">Create project</a></section>`;
   }
   return head + `<div class="pgallery">${projects.map((p) => {
-    const [ink, fill, mid, soft] = pcol(p);
+    const [ink, fill, mid, soft] = pcol(p), logo = safeLogo(p.logo);
     const next = p.meetings.map((m) => ({ m, d: meetingDate(p, m) })).filter((x) => x.d >= todayISO()).sort((a, b) => a.d.localeCompare(b.d))[0];
     const now = projNowWeek(p);
     return `<a class="pgcard" href="#/gallery/${p.id}">
-      <div class="pg-cover" style="background:linear-gradient(135deg, ${soft}, ${fill});color:${ink}"><span>${shortRange(p.start_date, projEnd(p))}</span>
+      <div class="pg-cover" style="background:linear-gradient(135deg, ${soft}, ${fill});color:${ink}">${logo ? `<img class="pg-logo" src="${logo}" alt="">` : ''}<span>${projRange(p)}</span>
         ${now ? `<i style="width:${Math.round((now / p.weeks) * 100)}%;background:${mid}"></i>` : ''}</div>
       <div class="pg-body"><b>${escapeHtml(p.name)}</b><span>${projStatus(p)}</span>
         ${next ? `<span class="pg-next" style="color:${ink}">Next: ${escapeHtml(next.m.title)} · ${fmtShort(next.d)}</span>` : ''}
@@ -4520,11 +4567,11 @@ function timelineHtml(p) {
   for (let w = 1; w <= p.weeks; w++) {
     html += `<div class="ptl-cell ptl-week ${w === now ? 'now' : ''}" style="grid-row:2;grid-column:${w + 1}"><b>Week ${w}</b><small>${weekDates(p, w)}</small></div>`;
   }
-  const [ink, fill, mid, soft] = pcol(p);
+  const [ink, , mid, soft, onMid] = pcol(p);
   p.steps.forEach((s, i) => {
     const r = 3 + i;
     if (i === 0) html += `<div class="ptl-cell ptl-lab" style="grid-row:3 / span ${p.steps.length};grid-column:1">Steps</div>`;
-    html += `<button class="ptl-bar ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" style="grid-row:${r};grid-column:${s.week_from + 1} / ${Math.min(p.weeks, s.week_to) + 2};background:${i % 2 ? soft : mid};color:${i % 2 ? ink : fill}"><span>${s.done ? '✓ ' : ''}${escapeHtml(s.title)}</span></button>`;
+    html += `<button class="ptl-bar ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" style="grid-row:${r};grid-column:${s.week_from + 1} / ${Math.min(p.weeks, s.week_to) + 2};background:${i % 2 ? soft : mid};color:${i % 2 ? ink : onMid}"><span>${s.done ? '✓ ' : ''}${escapeHtml(s.title)}</span></button>`;
   });
   const mr = 3 + Math.max(1, p.steps.length);
   if (!p.steps.length) html += `<div class="ptl-cell ptl-lab" style="grid-row:3;grid-column:1">Steps</div><div class="ptl-cell muted small" style="grid-row:3;grid-column:2 / span ${p.weeks}">No steps yet.</div>`;
@@ -4550,6 +4597,31 @@ function scrollTimeline() {
   const lab = box.querySelector('.ptl-lab').offsetWidth;
   box.scrollLeft = now ? Math.max(0, now.offsetLeft - lab - (box.clientWidth > 520 ? now.offsetWidth : 0)) : 0;
   tlScroll = { id: route.projId, left: box.scrollLeft };
+}
+
+// Monthly format: a calendar grid per month with meetings and step deadlines on their days,
+// and the steps listed underneath. Tap a date to add a meeting on it.
+function monthViewHtml(p) {
+  const today = todayISO(), [a, z] = projSpan(p), [ink, fill, mid] = pcol(p);
+  const on = {};
+  const add = (d, h) => { on[d] = (on[d] || '') + h; };
+  for (const m of [...p.meetings].sort((x, y) => (x.time || '99').localeCompare(y.time || '99'))) {
+    add(meetingDate(p, m), `<button class="pm-ev k-${m.kind}" data-act="meet-edit" data-id="${m.id}" title="${escapeHtml(m.title)}">${m.time ? `<small>${m.time.slice(0, 5)}</small> ` : ''}${escapeHtml(m.title)}</button>`);
+  }
+  for (const s of p.steps) add(stepDue(p, s), `<button class="pm-ev due ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" title="${escapeHtml(s.title)} due">⚑ ${escapeHtml(s.title)}</button>`);
+  const months = projMonths(p).map((mk) => {
+    const end = monthEnd(mk);
+    let cells = '';
+    for (let d = weekOf(monthStart(mk)); !(d > end && parseISO(d).getDay() === 1); d = addDaysISO(d, 1)) {
+      const inMonth = d.slice(0, 7) === mk;
+      cells += `<div class="pm-day ${inMonth ? '' : 'out'} ${d === today ? 'today' : ''} ${d < a || d > z ? 'off' : ''}">
+        ${inMonth ? `<button class="pm-num" data-act="meet-new" data-day="${d}" aria-label="Add a meeting on ${fmtShort(d)}">${parseISO(d).getDate()}</button>${on[d] || ''}` : ''}</div>`;
+    }
+    return `<div class="pm-month"><h3>${monthName(mk)}</h3><div class="pm-grid">${DAY_NAMES.map((n) => `<div class="pm-dn">${n}</div>`).join('')}${cells}</div></div>`;
+  }).join('');
+  const steps = p.steps.map((s) => `<button class="pm-step ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" style="--pc:${mid};background:${fill};color:${ink}">
+    <b>${s.done ? '✓ ' : ''}${escapeHtml(s.title)}</b><small>${shortRange(projWeekStart(p, s.week_from), stepDue(p, s))}</small></button>`).join('');
+  return `<div class="pmonths">${months}</div>${steps ? `<div class="pm-steps"><h3>Steps</h3>${steps}</div>` : ''}`;
 }
 
 function boardHtml(p) {
@@ -4591,19 +4663,19 @@ function projectPageHtml() {
   if (projects === null) { loadProjects(); return `<header class="top">${topBar({ left: back, title: 'Project' })}</header><section class="card"><p class="muted pad">Loading…</p></section>`; }
   const p = projById(route.projId);
   if (!p) return `<header class="top">${topBar({ left: back, title: 'Not found' })}</header><section class="card empty"><p>This project no longer exists.</p><a class="btn" href="#/gallery">Gallery</a></section>`;
-  const [ink, fill] = pcol(p);
+  const [ink, fill] = pcol(p), logo = safeLogo(p.logo);
   const isOneDrive = /onedrive|sharepoint|1drv/i.test(p.drive_url);
   return `
     <header class="top">${topBar({ left: back, label: 'Project', title: escapeHtml(p.name), right: `<a class="txt-btn" href="#/gallery/${p.id}/edit">Edit</a>` })}
-      <div class="pmeta"><span class="ppill" style="background:${fill};color:${ink}">${projStatus(p)}</span>
+      <div class="pmeta">${logo ? `<img class="plogo" src="${logo}" alt="">` : ''}<span class="ppill" style="background:${fill};color:${ink}">${projStatus(p)}</span>
         ${p.notion_url ? `<a class="mini-btn" href="${escapeHtml(notionAppUrl(p.notion_url))}" target="_blank" rel="noopener">N Notion page</a>` : ''}
         ${p.drive_url ? `<a class="mini-btn" href="${escapeHtml(p.drive_url)}" target="_blank" rel="noopener">${isOneDrive ? 'OneDrive' : 'Drive'} folder ↗</a>` : ''}
         ${!p.notion_url && !p.drive_url ? `<a class="mini-btn" href="#/gallery/${p.id}/edit">+ Add Notion or Drive link</a>` : ''}</div>
     </header>
     ${refsHtml(p)}
-    <section class="card" data-section="Timeline">
-      <div class="card-head"><h2>Timeline</h2><span class="hint">${shortRange(p.start_date, projEnd(p))}</span></div>
-      ${timelineHtml(p)}
+    <section class="card" data-section="${p.layout === 'months' ? 'Calendar' : 'Timeline'}">
+      <div class="card-head"><h2>${p.layout === 'months' ? 'Calendar' : 'Timeline'}</h2><span class="hint">${projRange(p)}</span></div>
+      ${p.layout === 'months' ? monthViewHtml(p) : timelineHtml(p)}
       <div class="btn-row"><button class="btn" data-act="step-new">+ Step</button><button class="btn" data-act="meet-new">+ Meeting</button></div>
     </section>
     <section class="card" data-section="Task board">
@@ -4616,19 +4688,39 @@ function projectPageHtml() {
 
 function projectEditHtml() {
   const isNew = route.projId === 'new';
-  const p = isNew ? { name: '', color: 'blue', start_date: currentWeekKey(), weeks: 8, notion_url: '', drive_url: '' } : projById(route.projId);
+  const p = isNew ? { name: '', color: 'blue', layout: 'weeks', logo: '', start_date: currentWeekKey(), weeks: 8, notion_url: '', drive_url: '' } : projById(route.projId);
   if (!p) return projectPageHtml();
+  const custom = isHex(p.color), logo = safeLogo(p.logo);
+  const months = isNew ? [todayISO().slice(0, 7), addMonthKey(todayISO().slice(0, 7), 2)] : [projMonths(p)[0], projMonths(p).at(-1)];
+  const nMonths = Math.max(1, (+months[1].slice(0, 4) - +months[0].slice(0, 4)) * 12 + (+months[1].slice(5) - +months[0].slice(5)) + 1);
+  const monthOpts = Array.from({ length: 37 }, (_, i) => addMonthKey(todayISO().slice(0, 7), i - 12))
+    .map((mk) => `<option value="${mk}" ${mk === months[0] ? 'selected' : ''}>${monthName(mk)}</option>`).join('');
   return `
     <header class="top">${topBar({ left: '<button class="txt-btn" data-act="back">Cancel</button>', title: isNew ? 'New project' : 'Edit project',
       right: '<button class="txt-btn strong" type="submit" form="pform">Save</button>' })}</header>
-    <form id="pform" class="card form" data-form="project" data-id="${isNew ? '' : p.id}">
+    <form id="pform" class="card form" data-form="project" data-id="${isNew ? '' : p.id}" data-layout="${p.layout === 'months' ? 'months' : 'weeks'}">
       <label class="f">Name<input name="name" required maxlength="80" value="${escapeHtml(p.name)}" placeholder="e.g. Castore consulting project"></label>
-      <div class="f">Colour<div class="pcolors">${Object.entries(PROJ_COLORS).map(([k, c]) => `<label><input type="radio" name="color" value="${k}" ${p.color === k ? 'checked' : ''}><span style="background:${c[2]}"></span></label>`).join('')}</div></div>
-      <div class="f2"><label class="f">Week 1 starts<input type="date" name="start" value="${p.start_date}"><span class="help">Any day in that week; weeks run Monday to Sunday.</span></label>
+      <div class="f">Colour<div class="pcolors">${Object.entries(PROJ_COLORS).map(([k, c]) => `<label><input type="radio" name="color" value="${k}" ${p.color === k ? 'checked' : ''}><span style="background:${c[2]}"></span></label>`).join('')}
+        <label class="pc-custom" title="Pick any colour"><input type="radio" name="color" value="custom" ${custom ? 'checked' : ''}><span style="${custom ? `background:${p.color}` : ''}"></span>
+          <input type="color" name="customColor" value="${custom ? p.color : '#ffde01'}" aria-label="Pick any colour"></label></div>
+        <span class="help">The last circle opens a picker for any colour.</span></div>
+      <div class="f">Logo<div class="plogo-row"><span class="plogo-prev" id="logoPrev">${logo ? `<img src="${logo}" alt="">` : '<span class="muted small">None</span>'}</span>
+        <label class="mini-btn">Upload picture…<input type="file" id="logoFile" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
+        <button type="button" class="mini-btn" data-act="logo-remove" ${logo ? '' : 'hidden'}>Remove</button>
+        <input type="hidden" name="logo" value="${logo}"></div></div>
+      <div class="f">Format<div class="pformat">
+        <label><input type="radio" name="layout" value="weeks" ${p.layout !== 'months' ? 'checked' : ''}><span><b>Week by week</b><small>A column per week with step bars, like a consulting Gantt</small></span></label>
+        <label><input type="radio" name="layout" value="months" ${p.layout === 'months' ? 'checked' : ''}><span><b>Monthly calendar</b><small>Month grids with your meetings, for longer things like a society</small></span></label></div></div>
+      <div class="f2 only-weeks"><label class="f">Week 1 starts<input type="date" name="start" value="${p.start_date}"><span class="help">Any day in that week; weeks run Monday to Sunday.</span></label>
         <label class="f">Number of weeks<input type="number" name="weeks" min="1" max="52" step="1" value="${p.weeks}"></label></div>
+      <div class="f2 only-months"><label class="f">First month<select name="startMonth">${monthOpts}</select></label>
+        <label class="f">Number of months<input type="number" name="months" min="1" max="12" step="1" value="${nMonths}"></label></div>
       <label class="f">Notion page<input name="notion" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(p.notion_url)}" placeholder="https://www.notion.so/…"></label>
       <label class="f">Drive or OneDrive folder<input name="drive" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(p.drive_url)}" placeholder="https://drive.google.com/…"></label>
-      ${isNew ? `<label class="toggle-row"><input type="checkbox" name="meetings" checked><span>Add a kick-off, weekly check-ins, a mid-project check-in and a final presentation<small>You can change or delete them afterwards.</small></span></label>` : ''}
+      ${isNew ? `<label class="toggle-row only-weeks"><input type="checkbox" name="meetings" checked><span>Add a kick-off, weekly check-ins, a mid-project check-in and a final presentation<small>You can change or delete them afterwards.</small></span></label>
+      <div class="only-months"><label class="toggle-row"><input type="checkbox" name="weekly" checked><span>Weekly meeting<small>Same day and time every week; you can move or cancel single weeks later.</small></span></label>
+        <div class="f2"><label class="f">Day<select name="wday">${DAY_NAMES.map((d, i) => `<option value="${i + 1}">${d}</option>`).join('')}</select></label>
+          <label class="f">Time (optional)<input type="time" name="wtime"></label></div></div>` : ''}
       <button class="btn primary" type="submit">${isNew ? 'Create project' : 'Save'}</button>
       ${isNew ? '' : '<div class="danger"><button type="button" class="btn warn" data-act="project-delete">Delete project</button></div>'}
     </form>`;
@@ -4637,22 +4729,45 @@ async function saveProjectForm(form) {
   const f = new FormData(form);
   const name = String(f.get('name') || '').trim();
   if (!name) { toast('Give it a name'); return; }
+  const layout = f.get('layout') === 'months' ? 'months' : 'weeks';
+  const custom = String(f.get('customColor') || '').toLowerCase();
   const row = {
-    name, color: PROJ_COLORS[f.get('color')] ? f.get('color') : 'blue', start_date: weekOf(f.get('start') || todayISO()),
-    weeks: Math.min(52, Math.max(1, Math.round(num(f.get('weeks'), 8)) || 8)), notion_url: cleanUrl(f.get('notion')), drive_url: cleanUrl(f.get('drive')),
+    name, layout, logo: safeLogo(String(f.get('logo') || '')),
+    color: f.get('color') === 'custom' && isHex(custom) ? custom : PROJ_COLORS[f.get('color')] ? f.get('color') : 'blue',
+    notion_url: cleanUrl(f.get('notion')), drive_url: cleanUrl(f.get('drive')),
   };
+  let span = null;
+  if (layout === 'months') {
+    // whole months: from the Monday on or before the 1st to the week holding the last day
+    const first = /^\d{4}-\d{2}$/.test(f.get('startMonth')) ? f.get('startMonth') : todayISO().slice(0, 7);
+    const n = Math.min(12, Math.max(1, Math.round(num(f.get('months'), 3)) || 3));
+    span = [monthStart(first), monthEnd(addMonthKey(first, n - 1))];
+    row.start_date = weekOf(span[0]);
+    row.weeks = Math.ceil((Math.round((parseISO(span[1]) - parseISO(row.start_date)) / 864e5) + 1) / 7);
+  } else {
+    row.start_date = weekOf(f.get('start') || todayISO());
+    row.weeks = Math.min(52, Math.max(1, Math.round(num(f.get('weeks'), 8)) || 8));
+  }
   try {
     const saved = await projDb.save('projects', { ...(form.dataset.id ? { id: form.dataset.id } : { sort: (projects || []).length }), ...row });
-    if (!form.dataset.id && f.get('meetings') === 'on') {
+    if (!form.dataset.id && layout === 'weeks' && f.get('meetings') === 'on') {
       const plan = [{ title: 'Kick-off', kind: 'kickoff', week: 1 }];
       const mid = Math.max(2, Math.round(row.weeks / 2));
       for (let w = 2; w < row.weeks; w++) plan.push(w === mid ? { title: 'Mid-project check-in', kind: 'mid', week: w } : { title: 'Weekly check-in', kind: 'checkin', week: w });
       if (row.weeks > 1) plan.push({ title: 'Final presentation', kind: 'final', week: row.weeks });
-      for (const m of plan) await projDb.save('project_meetings', { project_id: saved.id, weekday: 1, ...m });
+      await projDb.insertMany('project_meetings', plan.map((m) => ({ project_id: saved.id, weekday: 1, ...m })));
+    }
+    if (!form.dataset.id && layout === 'months' && f.get('weekly') === 'on') {
+      const wd = Math.min(7, Math.max(1, +f.get('wday') || 1)), rows = [];
+      for (let w = 1; w <= row.weeks; w++) {
+        const d = addDaysISO(row.start_date, (w - 1) * 7 + wd - 1);
+        if (d >= span[0] && d <= span[1]) rows.push({ project_id: saved.id, title: 'Weekly meeting', kind: 'checkin', week: w, weekday: wd, time: validTime(f.get('wtime')) });
+      }
+      await projDb.insertMany('project_meetings', rows);
     }
     await loadProjects();
     location.replace(`#/gallery/${saved.id}`);
-  } catch (e) { toast(sbErr(e)); }
+  } catch (e) { toast(/schema cache|does not exist/i.test(e.message || '') ? 'Run the Gallery setup in Supabase once more to turn on formats, logos and any colour.' : sbErr(e)); }
 }
 async function deleteProject() {
   const p = projById(route.projId);
@@ -4679,10 +4794,15 @@ function openStepSheet(id) {
       ${id ? '<button type="button" class="btn warn" data-act="step-delete">Delete step</button>' : ''}
     </form>`, { step: id || 'new' });
 }
-function openMeetSheet(id) {
+function openMeetSheet(id, day = null) {
   const p = projById(route.projId);
-  const m = id ? p.meetings.find((x) => x.id === id) : { title: 'Weekly check-in', kind: 'checkin', week: projNowWeek(p) || 1, weekday: 1, time: null };
+  const m = id ? p.meetings.find((x) => x.id === id) : { title: p.layout === 'months' ? 'Meeting' : 'Weekly check-in', kind: p.layout === 'months' ? 'other' : 'checkin', week: projNowWeek(p) || 1, weekday: 1, time: null };
   if (!m) return;
+  if (day) { // tapped a date on the monthly calendar
+    const w = Math.floor(Math.round((parseISO(day) - parseISO(p.start_date)) / 864e5) / 7) + 1;
+    if (w < 1 || w > p.weeks) { toast('That day is outside this project'); return; }
+    m.week = w; m.weekday = (parseISO(day).getDay() + 6) % 7 + 1;
+  }
   openSheet(`<div class="sheet-head"><h3>${id ? 'Meeting' : 'New meeting'}</h3></div>
     <form class="form flat" data-form="meeting" data-id="${id || ''}">
       <label class="f">Name<input name="title" required maxlength="120" value="${escapeHtml(m.title)}"></label>
@@ -4690,6 +4810,7 @@ function openMeetSheet(id) {
         <label class="f">Week<select name="week">${weekOptions(p, m.week)}</select></label></div>
       <div class="f2"><label class="f">Day<select name="weekday">${DAY_NAMES.map((d, i) => `<option value="${i + 1}" ${(m.weekday || 1) === i + 1 ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
         <label class="f">Time (optional)<input type="time" name="time" value="${m.time ? m.time.slice(0, 5) : ''}"></label></div>
+      ${id ? '' : '<label class="toggle-row"><input type="checkbox" name="repeat"><span>Every week until the end</span></label>'}
       <button class="btn primary" type="submit">Save</button>
       ${id ? '<button type="button" class="btn warn" data-act="meet-delete">Delete meeting</button>' : ''}
     </form>`, { meet: id || 'new' });
@@ -4706,10 +4827,14 @@ async function saveStep(form) {
 }
 async function saveMeeting(form) {
   const p = projById(route.projId), f = new FormData(form);
+  const row = { title: String(f.get('title') || '').trim() || 'Meeting', kind: MEETING_KINDS[f.get('kind')] ? f.get('kind') : 'other',
+    week: +f.get('week'), weekday: +f.get('weekday') || 1, time: validTime(f.get('time')) };
   try {
-    await projDb.save('project_meetings', { ...(form.dataset.id ? { id: form.dataset.id } : { project_id: p.id }),
-      title: String(f.get('title') || '').trim() || 'Meeting', kind: MEETING_KINDS[f.get('kind')] ? f.get('kind') : 'other',
-      week: +f.get('week'), weekday: +f.get('weekday') || 1, time: validTime(f.get('time')) });
+    if (!form.dataset.id && f.get('repeat') === 'on') {
+      const [, z] = projSpan(p), rows = [];
+      for (let w = row.week; w <= p.weeks; w++) if (meetingDate(p, { week: w, weekday: row.weekday }) <= z) rows.push({ project_id: p.id, ...row, week: w });
+      await projDb.insertMany('project_meetings', rows);
+    } else await projDb.save('project_meetings', { ...(form.dataset.id ? { id: form.dataset.id } : { project_id: p.id }), ...row });
     closeSheet();
     await loadProjects();
   } catch (e) { toast(sbErr(e)); }
@@ -5160,7 +5285,11 @@ document.addEventListener('click', (e) => {
     case 'step-new': openStepSheet(null); break;
     case 'step-edit': openStepSheet(btn.dataset.id); break;
     case 'step-delete': removeFromSheet('project_steps'); break;
-    case 'meet-new': openMeetSheet(null); break;
+    case 'meet-new': openMeetSheet(null, btn.dataset.day || null); break;
+    case 'logo-remove': {
+      const f = btn.closest('form');
+      f.logo.value = ''; document.getElementById('logoPrev').innerHTML = '<span class="muted small">None</span>'; btn.hidden = true; break;
+    }
     case 'meet-edit': openMeetSheet(btn.dataset.id); break;
     case 'meet-delete': removeFromSheet('project_meetings'); break;
     case 'board-brain': case 'board-sort':
@@ -5355,6 +5484,12 @@ document.addEventListener('input', (e) => {
   }
   const tf = e.target.closest('form[data-form="test"]');
   if (tf && e.target.name === 'mode') { tf.dataset.mode = e.target.value; return; }
+  if (e.target.name === 'customColor') { // the colour picker on a project
+    const lab = e.target.closest('.pc-custom');
+    lab.querySelector('input[type="radio"]').checked = true;
+    lab.querySelector('span').style.background = e.target.value;
+    return;
+  }
   if (e.target.id === 'bgStrength') {
     bg.strength = Number(e.target.value) / 100;
     document.getElementById('bgpic').style.opacity = bg.strength;
@@ -5368,6 +5503,18 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('change', (e) => {
   if (e.target.dataset && e.target.dataset.calLevel) { calSetLevel(e.target.dataset.calLevel, e.target.value); return; }
+  if (e.target.id === 'logoFile') {
+    const file = e.target.files[0], f = e.target.closest('form');
+    e.target.value = '';
+    if (file) logoDataUrl(file).then((url) => {
+      if (!safeLogo(url)) { toast('That picture is too big, try a smaller one'); return; }
+      f.logo.value = url;
+      document.getElementById('logoPrev').innerHTML = `<img src="${url}" alt="">`;
+      f.querySelector('[data-act="logo-remove"]').hidden = false;
+    }).catch(() => toast('Couldn’t read that picture. Try a PNG or JPG.'));
+    return;
+  }
+  if (e.target.name === 'layout' && e.target.form && e.target.form.dataset.form === 'project') { e.target.form.dataset.layout = e.target.value; return; }
   if (e.target.dataset && e.target.dataset.cardWeek) {
     const c = findCard(e.target.dataset.cardWeek);
     if (c) { c.week = e.target.value ? +e.target.value : null; projDb.save('project_cards', { id: c.id, week: c.week }).catch((err) => toast(sbErr(err))); }

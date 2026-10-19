@@ -19,6 +19,7 @@ await db.exec(`
 await db.exec(fs.readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8'));
 await db.exec(fs.readFileSync(new URL('../supabase/calendar-sharing.sql', import.meta.url), 'utf8'));
 await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.url), 'utf8'));
+await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.url), 'utf8')); // safe to run again
 
 const ids = { cathy: '00000000-0000-0000-0000-00000000000c', han: '00000000-0000-0000-0000-00000000000a', eve: '00000000-0000-0000-0000-00000000000e' };
 const emails = { cathy: 'Cathy@Gmail.com', han: 'han@gmail.com', eve: 'eve@gmail.com' };
@@ -141,6 +142,11 @@ await fails('han', "insert into projects (owner, name, start_date) values ($1, '
 await as('han', "update project_cards set text = 'hacked'");
 assert.equal((await as('cathy', "select text from project_cards where id = $1", [c1]))[0].text, 'Interview customers', 'nobody else can edit');
 await fails('cathy', "insert into project_steps (project_id, title, week_from, week_to) values ($1, 'bad', 3, 2)", [proj], /check/);
+await as('cathy', "update projects set color = '#ffde01', layout = 'months', logo = 'data:image/png;base64,iVBORw0KGgo=' where id = $1", [proj]);
+assert.deepEqual(Object.values((await as('cathy', 'select color, layout from projects'))[0]), ['#ffde01', 'months'], 'any colour, monthly format');
+await fails('cathy', "update projects set color = 'red; drop' where id = $1", [proj], /check/);
+await fails('cathy', "update projects set logo = 'javascript:alert(1)' where id = $1", [proj], /check/);
+await fails('cathy', "update projects set layout = 'years' where id = $1", [proj], /check/);
 await fails('han', "insert into project_refs (project_id, url) values ($1, 'https://x.com')", [proj], /row-level security/);
 await as('cathy', 'delete from projects where id = $1', [proj]);
 assert.equal((await db.query('select count(*)::int as n from project_cards')).rows[0].n, 0, 'deleting a project removes its board');
