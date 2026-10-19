@@ -1093,9 +1093,12 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .pref-add .btn { flex: none; }
 
 /* Project colour picker (any colour), logo and format */
-.pc-custom { position: relative; }
-.pc-custom span { background: conic-gradient(#f44, #fd3, #4d6, #3cf, #66f, #e4e, #f44); }
-.pc-custom input[type="color"] { position: absolute; inset: 0; width: 28px; height: 28px; opacity: 0; cursor: pointer; border: 0; padding: 0; }
+/* The last circle is the colour input itself (invisible, on top), so a click opens the picker. */
+.pc-custom { position: relative; width: 28px; height: 28px; }
+.pc-custom .pc-ring { display: block; width: 28px; height: 28px; border-radius: 50%; background: conic-gradient(#f44, #fd3, #4d6, #3cf, #66f, #e4e, #f44); pointer-events: none; }
+.pc-custom input[type="radio"]:checked ~ .pc-ring { outline: 2px solid var(--ink); outline-offset: 2px; }
+.pcolors .pc-custom input[type="color"] { position: absolute; inset: 0; width: 28px; height: 28px; opacity: 0; cursor: pointer; border: 0; padding: 0; margin: 0; pointer-events: auto; z-index: 1; }
+.pc-custom:has(input[type="color"]:focus-visible) .pc-ring { outline: 2px dashed var(--ink); outline-offset: 2px; }
 .plogo-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .plogo-row label.mini-btn { cursor: pointer; }
 .plogo-prev { width: 52px; height: 52px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: var(--track); overflow: hidden; }

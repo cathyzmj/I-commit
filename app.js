@@ -4407,6 +4407,13 @@ async function logoDataUrl(file) {
   return url;
 }
 
+// The colour picker on a project: choosing a colour also selects the "any colour" circle.
+function pickCustomColor(input) {
+  const box = input.closest('.pc-custom');
+  box.querySelector('input[type="radio"]').checked = true;
+  box.querySelector('.pc-ring').style.background = input.value;
+}
+
 // ---- months (for projects shown as a monthly calendar)
 // Weeks still number the project internally, so meetings and steps work the same in both formats.
 const monthStart = (mk) => `${mk}-01`;
@@ -4701,8 +4708,9 @@ function projectEditHtml() {
     <form id="pform" class="card form" data-form="project" data-id="${isNew ? '' : p.id}" data-layout="${p.layout === 'months' ? 'months' : 'weeks'}">
       <label class="f">Name<input name="name" required maxlength="80" value="${escapeHtml(p.name)}" placeholder="e.g. Castore consulting project"></label>
       <div class="f">Colour<div class="pcolors">${Object.entries(PROJ_COLORS).map(([k, c]) => `<label><input type="radio" name="color" value="${k}" ${p.color === k ? 'checked' : ''}><span style="background:${c[2]}"></span></label>`).join('')}
-        <label class="pc-custom" title="Pick any colour"><input type="radio" name="color" value="custom" ${custom ? 'checked' : ''}><span style="${custom ? `background:${p.color}` : ''}"></span>
-          <input type="color" name="customColor" value="${custom ? p.color : '#ffde01'}" aria-label="Pick any colour"></label></div>
+        <span class="pc-custom" title="Pick any colour"><input type="radio" name="color" value="custom" ${custom ? 'checked' : ''} tabindex="-1" aria-hidden="true">
+          <span class="pc-ring" style="${custom ? `background:${p.color}` : ''}"></span>
+          <input type="color" name="customColor" value="${custom ? p.color : '#ffde01'}" aria-label="Pick any colour"></span></div>
         <span class="help">The last circle opens a picker for any colour.</span></div>
       <div class="f">Logo<div class="plogo-row"><span class="plogo-prev" id="logoPrev">${logo ? `<img src="${logo}" alt="">` : '<span class="muted small">None</span>'}</span>
         <label class="mini-btn">Upload picture…<input type="file" id="logoFile" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
@@ -5484,12 +5492,7 @@ document.addEventListener('input', (e) => {
   }
   const tf = e.target.closest('form[data-form="test"]');
   if (tf && e.target.name === 'mode') { tf.dataset.mode = e.target.value; return; }
-  if (e.target.name === 'customColor') { // the colour picker on a project
-    const lab = e.target.closest('.pc-custom');
-    lab.querySelector('input[type="radio"]').checked = true;
-    lab.querySelector('span').style.background = e.target.value;
-    return;
-  }
+  if (e.target.name === 'customColor') { pickCustomColor(e.target); return; }
   if (e.target.id === 'bgStrength') {
     bg.strength = Number(e.target.value) / 100;
     document.getElementById('bgpic').style.opacity = bg.strength;
@@ -5514,6 +5517,7 @@ document.addEventListener('change', (e) => {
     }).catch(() => toast('Couldn’t read that picture. Try a PNG or JPG.'));
     return;
   }
+  if (e.target.name === 'customColor') { pickCustomColor(e.target); return; }
   if (e.target.name === 'layout' && e.target.form && e.target.form.dataset.form === 'project') { e.target.form.dataset.layout = e.target.value; return; }
   if (e.target.dataset && e.target.dataset.cardWeek) {
     const c = findCard(e.target.dataset.cardWeek);
