@@ -131,8 +131,9 @@ await as('cathy', "insert into project_meetings (project_id, title, kind, week) 
 const [{ id: c1 }] = await as('cathy', "insert into project_cards (project_id, text) values ($1, 'Interview customers') returning id", [proj]);
 const [{ id: c2 }] = await as('cathy', "insert into project_cards (project_id, text) values ($1, 'Map pricing') returning id", [proj]);
 await as('cathy', 'insert into project_links (project_id, from_card, to_card) values ($1, $2, $3)', [proj, c1, c2]);
+await as('cathy', "insert into project_refs (project_id, title, url) values ($1, 'Castore annual report', 'https://example.com/report.pdf')", [proj]);
 assert.equal((await as('cathy', 'select * from project_cards')).length, 2);
-for (const table of ['projects', 'project_steps', 'project_meetings', 'project_cards', 'project_links']) {
+for (const table of ['projects', 'project_steps', 'project_meetings', 'project_cards', 'project_links', 'project_refs']) {
   assert.equal((await as('han', `select * from ${table}`)).length, 0, `others can't see ${table}`);
 }
 await fails('han', "insert into project_steps (project_id, title, week_from, week_to) values ($1, 'x', 1, 1)", [proj], /row-level security/);
@@ -140,6 +141,8 @@ await fails('han', "insert into projects (owner, name, start_date) values ($1, '
 await as('han', "update project_cards set text = 'hacked'");
 assert.equal((await as('cathy', "select text from project_cards where id = $1", [c1]))[0].text, 'Interview customers', 'nobody else can edit');
 await fails('cathy', "insert into project_steps (project_id, title, week_from, week_to) values ($1, 'bad', 3, 2)", [proj], /check/);
+await fails('han', "insert into project_refs (project_id, url) values ($1, 'https://x.com')", [proj], /row-level security/);
 await as('cathy', 'delete from projects where id = $1', [proj]);
 assert.equal((await db.query('select count(*)::int as n from project_cards')).rows[0].n, 0, 'deleting a project removes its board');
+assert.equal((await db.query('select count(*)::int as n from project_refs')).rows[0].n, 0, 'and its references');
 console.log('ALL DATABASE RULE TESTS PASSED');

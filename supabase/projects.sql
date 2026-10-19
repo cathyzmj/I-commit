@@ -61,6 +61,16 @@ create table if not exists public.project_links (
   check (from_card <> to_card)
 );
 
+-- Reference links (articles, decks, reports) kept with a project.
+create table if not exists public.project_refs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects on delete cascade,
+  title text not null default '' check (char_length(title) <= 120),
+  url text not null check (char_length(url) between 1 and 1000),
+  sort int not null default 0,
+  created_at timestamptz not null default now()
+);
+
 create or replace function public.can_use_project(p uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.projects where id = p and owner = auth.uid()) $$;
@@ -70,6 +80,7 @@ alter table public.project_steps enable row level security;
 alter table public.project_meetings enable row level security;
 alter table public.project_cards enable row level security;
 alter table public.project_links enable row level security;
+alter table public.project_refs enable row level security;
 
 drop policy if exists "your projects" on public.projects;
 create policy "your projects" on public.projects for all to authenticated
@@ -85,6 +96,9 @@ create policy "cards of your projects" on public.project_cards for all to authen
   using (public.can_use_project(project_id)) with check (public.can_use_project(project_id));
 drop policy if exists "links of your projects" on public.project_links;
 create policy "links of your projects" on public.project_links for all to authenticated
+  using (public.can_use_project(project_id)) with check (public.can_use_project(project_id));
+drop policy if exists "references of your projects" on public.project_refs;
+create policy "references of your projects" on public.project_refs for all to authenticated
   using (public.can_use_project(project_id)) with check (public.can_use_project(project_id));
 
 revoke execute on function public.can_use_project(uuid) from anon, public;

@@ -4334,7 +4334,12 @@ const projDb = {
     ]);
     const err = p.error || s.error || m.error;
     if (err) throw err;
-    return p.data.map((x) => ({ ...x, steps: s.data.filter((r) => r.project_id === x.id), meetings: m.data.filter((r) => r.project_id === x.id) }));
+    // References came later (same setup file, run again); without them the rest still works.
+    const rf = await sb.from('project_refs').select('*').order('sort').order('created_at');
+    refsMissing = !!rf.error;
+    const refs = rf.error ? [] : rf.data;
+    return p.data.map((x) => ({ ...x, steps: s.data.filter((r) => r.project_id === x.id), meetings: m.data.filter((r) => r.project_id === x.id),
+      refs: refs.filter((r) => r.project_id === x.id) }));
   },
   async board(id) {
     const [c, l] = await Promise.all([
@@ -4360,7 +4365,7 @@ const projDb = {
     if (error && error.code !== '23505') throw error;
   },
 };
-let projectsError = null;
+let projectsError = null, refsMissing = false;
 async function loadProjects() {
   if (!sbUser) return;
   try { projects = await projDb.list(); projectsError = null; } catch (e) {
@@ -4453,8 +4458,48 @@ function galleryHtml() {
         ${now ? `<i style="width:${Math.round((now / p.weeks) * 100)}%;background:${mid}"></i>` : ''}</div>
       <div class="pg-body"><b>${escapeHtml(p.name)}</b><span>${projStatus(p)}</span>
         ${next ? `<span class="pg-next" style="color:${ink}">Next: ${escapeHtml(next.m.title)} · ${fmtShort(next.d)}</span>` : ''}
-        <div class="pg-icons">${p.notion_url ? '<span title="Notion">N</span>' : ''}${p.drive_url ? `<span title="Files">${/onedrive|sharepoint|1drv/i.test(p.drive_url) ? 'OneDrive' : 'Drive'}</span>` : ''}<span>${p.steps.length} steps</span></div></div></a>`;
+        <div class="pg-icons">${p.notion_url ? '<span title="Notion">N</span>' : ''}${p.drive_url ? `<span title="Files">${/onedrive|sharepoint|1drv/i.test(p.drive_url) ? 'OneDrive' : 'Drive'}</span>` : ''}<span>${p.steps.length} steps</span>${p.refs.length ? `<span>${p.refs.length} refs</span>` : ''}</div></div></a>`;
   }).join('')}</div>`;
+}
+
+// Reference links: anything worth keeping to hand (articles, reports, decks, briefs).
+// An untitled link is named from its address, e.g. notion.so/Market-sizing-1a2b… → "Market sizing".
+function refName(r) {
+  if (r.title) return r.title;
+  try {
+    const seg = decodeURIComponent(new URL(r.url).pathname.split('/').filter(Boolean).pop() || '')
+      .replace(/\.[a-z0-9]{2,4}$/i, '').replace(/-?[0-9a-f]{32}$/i, '').replace(/[-_+]+/g, ' ').trim();
+    return seg && !/^[0-9a-f]{20,}$/i.test(seg) && !/^(view|edit|preview|open|index|home|share|u|d|\d+)$/i.test(seg) ? seg[0].toUpperCase() + seg.slice(1) : hostOf(r.url);
+  } catch { return r.url; }
+}
+function refsHtml(p) {
+  const rows = p.refs.map((r) => `<div class="pref">
+      <a class="pref-link" href="${escapeHtml(/notion\.so\//.test(r.url) ? notionAppUrl(r.url) : r.url)}" target="_blank" rel="noopener">
+        <b>${escapeHtml(refName(r))}</b><small>${escapeHtml(hostOf(r.url))} ↗</small></a>
+      <button class="mini-btn" data-act="ref-delete" data-id="${r.id}" aria-label="Remove ${escapeHtml(refName(r))}">×</button></div>`).join('');
+  return `<section class="card" data-section="References">
+    <div class="card-head"><h2>References</h2>${p.refs.length ? `<span class="hint">${p.refs.length}</span>` : ''}</div>
+    ${refsMissing ? '<p class="help">Run the Gallery setup in Supabase once more to turn references on.</p>' : `${rows}
+    <form class="pref-add" data-form="ref">
+      <input name="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="Paste a link" required>
+      <input name="title" maxlength="120" placeholder="Name (optional)">
+      <button class="btn" type="submit">Add</button></form>`}
+  </section>`;
+}
+async function addRef(form) {
+  const p = projById(route.projId), f = new FormData(form);
+  const url = cleanUrl(f.get('url'));
+  if (!p || !url) { toast('Paste a full link (https://…)'); return; }
+  try {
+    await projDb.save('project_refs', { project_id: p.id, url, title: String(f.get('title') || '').trim().slice(0, 120), sort: p.refs.length });
+    await loadProjects();
+    render();
+  } catch (e) { toast(sbErr(e)); }
+}
+async function deleteRef(id) {
+  try { await projDb.remove('project_refs', { id }); } catch (e) { toast(sbErr(e)); return; }
+  await loadProjects();
+  render();
 }
 
 function timelineHtml(p) {
@@ -4555,6 +4600,7 @@ function projectPageHtml() {
         ${p.drive_url ? `<a class="mini-btn" href="${escapeHtml(p.drive_url)}" target="_blank" rel="noopener">${isOneDrive ? 'OneDrive' : 'Drive'} folder ↗</a>` : ''}
         ${!p.notion_url && !p.drive_url ? `<a class="mini-btn" href="#/gallery/${p.id}/edit">+ Add Notion or Drive link</a>` : ''}</div>
     </header>
+    ${refsHtml(p)}
     <section class="card" data-section="Timeline">
       <div class="card-head"><h2>Timeline</h2><span class="hint">${shortRange(p.start_date, projEnd(p))}</span></div>
       ${timelineHtml(p)}
@@ -5109,6 +5155,7 @@ document.addEventListener('click', (e) => {
     }
     case 'buddy-leave': leavePact(); break;
     case 'project-delete': deleteProject(); break;
+    case 'ref-delete': deleteRef(btn.dataset.id); break;
     case 'projects-retry': projects = null; render(); break;
     case 'step-new': openStepSheet(null); break;
     case 'step-edit': openStepSheet(btn.dataset.id); break;
@@ -5364,6 +5411,7 @@ document.addEventListener('submit', (e) => {
   else if (form === 'buddy-create') createPact(e.target);
   else if (form === 'project') saveProjectForm(e.target);
   else if (form === 'step') saveStep(e.target);
+  else if (form === 'ref') addRef(e.target);
   else if (form === 'meeting') saveMeeting(e.target);
   else if (form === 'cal-invite') { calInvite(e.target); e.target.reset(); }
   else if (form === 'buddy-email') { inviteByEmail(new FormData(e.target).get('email')); e.target.reset(); }
