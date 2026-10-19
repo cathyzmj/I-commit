@@ -18,6 +18,7 @@ await db.exec(`
 `);
 await db.exec(fs.readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8'));
 await db.exec(fs.readFileSync(new URL('../supabase/calendar-sharing.sql', import.meta.url), 'utf8'));
+await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.url), 'utf8'));
 
 const ids = { cathy: '00000000-0000-0000-0000-00000000000c', han: '00000000-0000-0000-0000-00000000000a', eve: '00000000-0000-0000-0000-00000000000e' };
 const emails = { cathy: 'Cathy@Gmail.com', han: 'han@gmail.com', eve: 'eve@gmail.com' };
@@ -123,4 +124,22 @@ assert.equal((await as('han', 'select their_level from calendar_people()'))[0].t
 assert.equal((await as('eve', "select * from shared_events('2026-10-19', '2026-10-25')")).length, 0, 'Eve sees nobody\'s calendar');
 await as('han', 'delete from calendar_links');
 assert.equal((await as('cathy', "select * from shared_events('2026-10-19', '2026-10-25')")).length, 0, 'either side can stop sharing');
+// --- Gallery projects: private to their owner
+const [{ id: proj }] = await as('cathy', "insert into projects (name, start_date) values ('Castore consulting project', '2026-09-28') returning id");
+await as('cathy', "insert into project_steps (project_id, title, week_from, week_to) values ($1, 'Step 1A', 2, 4)", [proj]);
+await as('cathy', "insert into project_meetings (project_id, title, kind, week) values ($1, 'Final presentation', 'final', 8)", [proj]);
+const [{ id: c1 }] = await as('cathy', "insert into project_cards (project_id, text) values ($1, 'Interview customers') returning id", [proj]);
+const [{ id: c2 }] = await as('cathy', "insert into project_cards (project_id, text) values ($1, 'Map pricing') returning id", [proj]);
+await as('cathy', 'insert into project_links (project_id, from_card, to_card) values ($1, $2, $3)', [proj, c1, c2]);
+assert.equal((await as('cathy', 'select * from project_cards')).length, 2);
+for (const table of ['projects', 'project_steps', 'project_meetings', 'project_cards', 'project_links']) {
+  assert.equal((await as('han', `select * from ${table}`)).length, 0, `others can't see ${table}`);
+}
+await fails('han', "insert into project_steps (project_id, title, week_from, week_to) values ($1, 'x', 1, 1)", [proj], /row-level security/);
+await fails('han', "insert into projects (owner, name, start_date) values ($1, 'x', '2026-10-05')", [ids.cathy], /row-level security/);
+await as('han', "update project_cards set text = 'hacked'");
+assert.equal((await as('cathy', "select text from project_cards where id = $1", [c1]))[0].text, 'Interview customers', 'nobody else can edit');
+await fails('cathy', "insert into project_steps (project_id, title, week_from, week_to) values ($1, 'bad', 3, 2)", [proj], /check/);
+await as('cathy', 'delete from projects where id = $1', [proj]);
+assert.equal((await db.query('select count(*)::int as n from project_cards')).rows[0].n, 0, 'deleting a project removes its board');
 console.log('ALL DATABASE RULE TESTS PASSED');

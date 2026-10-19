@@ -66,6 +66,7 @@ const ICONS = {
   week: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 12h17M9.2 4.5v15M14.8 4.5v15" stroke="currentColor" stroke-width="1.8"/></svg>',
   apps: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="7" width="17" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M3.5 12.5h17" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
   cal: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="7" y="13" width="4" height="3" rx="1" fill="currentColor"/></svg>',
+  gallery: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2" fill="currentColor"/></svg>',
   commitments: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6.5h11M9 12h11M9 17.5h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="4.5" cy="6.5" r="1.4" fill="currentColor"/><circle cx="4.5" cy="12" r="1.4" fill="currentColor"/><circle cx="4.5" cy="17.5" r="1.4" fill="currentColor"/></svg>',
 };
 
@@ -524,7 +525,7 @@ function countLabel(it, n) {
 }
 
 // ---------- Routing ----------
-// #/today  #/cal  #/routine (was #/week)  #/apps  #/buddy  #/commitments  #/c/<id>  #/c/<id>/edit  #/new/<freq>
+// #/today  #/cal  #/routine (was #/week)  #/apps  #/buddy  #/gallery  #/gallery/<id>[/edit]  #/commitments  #/c/<id>  #/c/<id>/edit  #/new/<freq>
 function parseHash() {
   const [a, b, c] = location.hash.replace(/^#\/?/, '').split('/');
   if (a === 'c' && b) return { tab: 'commitments', id: b, edit: c === 'edit' };
@@ -538,8 +539,9 @@ function parseHash() {
   if (a === 'knowledge') return b === 'new' || c === 'edit' ? { tab: 'routine', page: 'tree-edit', treeId: b } : { tab: 'routine', page: 'knowledge', focus: b || null };
   if (a === 'tests') return { tab: 'routine', page: 'tests', testId: b || null };
   if (a === 'board') return { tab: 'cal', page: 'board' };
+  if (a === 'gallery' && b) return { tab: 'gallery', page: b === 'new' || c === 'edit' ? 'project-edit' : 'project', projId: b };
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
-  return { tab: ['today', 'routine', 'cal', 'buddy', 'commitments'].includes(a) ? a : 'today' };
+  return { tab: ['today', 'routine', 'cal', 'buddy', 'gallery', 'commitments'].includes(a) ? a : 'today' };
 }
 // The app always opens on Today (an invite link still opens its page). A refresh stays where you were.
 const isReload = (() => { try { return performance.getEntriesByType('navigation')[0].type === 'reload'; } catch { return false; } })();
@@ -548,7 +550,9 @@ let route = parseHash();
 window.addEventListener('hashchange', () => {
   route = parseHash();
   treeDraft = null;
+  editingCard = null;
   if (route.tab === 'buddy') refreshBuddy();
+  if (route.tab === 'gallery' && projects !== null && !route.page) loadProjects();
   if (route.page === 'account') loadLoginConfig();
   if (route.page === 'knowledge' && route.focus) focusTree(route.focus);
   if (route.tab === 'apps') {
@@ -579,12 +583,15 @@ function render() {
   else if (route.page === 'tree-edit') html = treeEditHtml();
   else if (route.page === 'tests') html = testsPageHtml();
   else if (route.page === 'board') html = boardPageHtml();
+  else if (route.page === 'project') html = projectPageHtml();
+  else if (route.page === 'project-edit') html = projectEditHtml();
   else if (route.id && route.edit) html = editPageHtml();
   else if (route.id) html = detailPageHtml(route.id);
   else if (route.tab === 'routine') html = weekTabHtml();
   else if (route.tab === 'buddy') html = buddyTabHtml();
   else if (route.tab === 'cal') html = calendarTabHtml();
   else if (route.tab === 'apps') html = appsTabHtml();
+  else if (route.tab === 'gallery') html = galleryHtml();
   else if (route.tab === 'commitments') html = commitmentsTabHtml();
   else html = todayTabHtml();
   $app.dataset.tab = route.id || route.page ? 'page' : route.tab;
@@ -593,6 +600,7 @@ function render() {
   fillSideSections();
   if (route.page === 'knowledge') initMaps();
   if (route.page === 'board') layoutBoard();
+  if (route.page === 'project') scrollTimeline();
 }
 
 // ---------- Side navigation (wide screens, e.g. the Mac app) ----------
@@ -600,7 +608,8 @@ function render() {
 // Phones keep the bottom tab bar instead (CSS switches at 900px).
 // [route, full name, short name for the phone tab bar]
 const NAV_PAGES = [['today', 'Today', 'Today'], ['cal', 'Calendar', 'Calendar'], ['routine', 'Routine', 'Routine'],
-  ['apps', 'Applications', 'Apps'], ['buddy', 'Work Buddy', 'Buddy'], ['commitments', 'All commitments', 'All']];
+  ['apps', 'Applications', 'Apps'], ['buddy', 'Work Buddy', 'Buddy'],
+  ['gallery', 'Gallery', 'Gallery'], ['commitments', 'All commitments', 'All']];
 function sideNavHtml() {
   const extra = [['#/calendar', 'Calendars'], ['#/account', state.account ? 'Account' : 'Sign in'], ['#/widget', 'Phone widget']];
   return `<aside class="sidenav" aria-label="Navigation">
@@ -809,6 +818,7 @@ function todayTabHtml() {
       <div class="hbar"><i style="width:${ds.planned ? Math.min(100, (ds.actual / ds.planned) * 100) : 0}%"></i></div>
       <div class="pace"><a href="#/routine">This week: ${fmtH(ws.actual)} of ${fmtH(ws.planned)} · ${Math.round(ws.pct * 100)}% ticked ›</a></div>
       ${buddyTodayLine()}
+      ${projectTodayLine()}
     </header>
     ${reviewBannerHtml()}
     ${signInHintHtml()}
@@ -818,7 +828,8 @@ function todayTabHtml() {
     </section>
     <section class="card" data-section="Today only">
       <div class="card-head"><h2>Today only</h2><a class="txt-btn" href="#/new/once">+ Add</a></div>
-      ${onceToday.length ? onceToday.map(([id, it]) => periodRowHtml(wk, id, it)).join('') : notesOn(iso).length ? '' : '<p class="muted pad small">No one-off tasks today.</p>'}
+      ${onceToday.length ? onceToday.map(([id, it]) => periodRowHtml(wk, id, it)).join('') : notesOn(iso).length || projectItemsOn(iso).length ? '' : '<p class="muted pad small">No one-off tasks today.</p>'}
+      ${projectItemsOn(iso).length ? `<div class="dpills today-notes">${projectItemsOn(iso).map(projPillHtml).join('')}</div>` : ''}
       ${notesOn(iso).length ? `<div class="dpills today-notes">${notesOn(iso).map((n) => notePillHtml(n, iso)).join('')}</div>` : ''}
     </section>
     ${appsTodayCardHtml()}
@@ -969,11 +980,13 @@ function calendarTabHtml() {
     }).join('');
     const apps = (appsByDay[d] || []).map((e) => `<a class="chip-app k-${e.kind}" href="#/apps/${d}" title="${escapeHtml(`${e.a.company} ${APP_EVENT_LABEL[e.kind]}`)}">${escapeHtml(e.a.company)} ${e.kind === 'open' ? 'opens' : e.kind === 'close' ? 'closes' : 'due'}</a>`).join('');
     const notes = notesOn(d).map((n) => notePillHtml(n, d)).join('');
-    const body = routine + ones + notes + apps;
+    const projs = projectItemsOn(d).map(projPillHtml).join('');
+    const body = routine + ones + notes + projs + apps;
     return `<div class="pcol ${d === calViewDay ? 'sel' : ''} ${d === today ? 'today' : ''}">
       ${routine ? `<div class="dpills">${routine}</div>` : ''}
       ${ones ? `<div class="dpills">${ones}</div>` : ''}
       ${notes ? `<div class="dpills">${notes}</div>` : ''}
+      ${projs ? `<div class="dpills">${projs}</div>` : ''}
       ${apps ? `<div class="papps">${apps}</div>` : ''}
       ${body ? '' : '<p class="muted small">Nothing planned.</p>'}</div>`;
   };
@@ -2274,6 +2287,7 @@ async function sbSignIn(idToken) {
 async function sbSignOut() {
   if (sb) { try { await sb.auth.signOut(); } catch { /* offline */ } }
   sbUser = null; myProfile = null; buddyView = null; myInvites = []; calPeople = []; sharedCache.clear(); unsubscribeBuddy();
+  projects = null; projectsError = null; projBoards.clear();
 }
 const sbErr = (error) => (error && error.message ? error.message.replace(/^.*?exception:\s*/i, '') : 'Something went wrong.');
 
@@ -2317,6 +2331,7 @@ async function refreshBuddy() {
       subscribeBuddy(pactId);
     }
     buddyError = null;
+    if (projects === null) loadProjects();
     buddyAutoTick();
     scheduleShare(500);
   } catch (e) { buddyError = sbErr(e); }
@@ -4286,6 +4301,511 @@ function accountPageHtml() {
     </section>`;
 }
 
+// ---------- Gallery (projects) ----------
+// Longer pieces of work (a consulting project, an internship, a society event) with their own
+// page: links to Notion and Drive/OneDrive, a week-by-week timeline of steps and meetings, and a
+// task board (Brainstorm: cards anywhere, linked to each other; Sort: put them in order and turn
+// them into tasks). Stored in Supabase (supabase/projects.sql). Meetings and step deadlines show on
+// the calendar and on Today.
+// Colours: [dark text, light fill, mid, soft]
+const PROJ_COLORS = {
+  blue: ['#0C447C', '#E6F1FB', '#185FA5', '#B5D4F4'], purple: ['#3C3489', '#EEEDFE', '#534AB7', '#CECBF6'],
+  teal: ['#085041', '#E1F5EE', '#0F6E56', '#9FE1CB'], coral: ['#712B13', '#FAECE7', '#993C1D', '#F5C4B3'],
+  pink: ['#72243E', '#FBEAF0', '#993556', '#F4C0D1'], amber: ['#633806', '#FAEEDA', '#854F0B', '#FAC775'],
+  green: ['#27500A', '#EAF3DE', '#3B6D11', '#C0DD97'], gray: ['#444441', '#F1EFE8', '#5F5E5A', '#D3D1C7'],
+};
+const CARD_COLORS = ['amber', 'coral', 'teal', 'purple', 'blue'];
+const MEETING_KINDS = { kickoff: 'Kick-off', checkin: 'Check-in', mid: 'Mid-project', final: 'Final', other: 'Other' };
+let projects = null;                 // [{ ...project, steps, meetings }] once loaded
+const projBoards = new Map();        // project id -> { cards, links }
+let boardMode = 'brain';
+try { boardMode = localStorage.getItem('boardMode') === 'sort' ? 'sort' : 'brain'; } catch {}
+
+// The database calls, in one place.
+const projDb = {
+  async list() {
+    const [p, s, m] = await Promise.all([
+      sb.from('projects').select('*').order('sort').order('created_at'),
+      sb.from('project_steps').select('*').order('sort').order('week_from'),
+      sb.from('project_meetings').select('*').order('week'),
+    ]);
+    const err = p.error || s.error || m.error;
+    if (err) throw err;
+    return p.data.map((x) => ({ ...x, steps: s.data.filter((r) => r.project_id === x.id), meetings: m.data.filter((r) => r.project_id === x.id) }));
+  },
+  async board(id) {
+    const [c, l] = await Promise.all([
+      sb.from('project_cards').select('*').eq('project_id', id).order('rank').order('created_at'),
+      sb.from('project_links').select('*').eq('project_id', id),
+    ]);
+    if (c.error || l.error) throw c.error || l.error;
+    return { cards: c.data, links: l.data };
+  },
+  async save(table, row) {
+    const { id, ...rest } = row;
+    const q = id ? sb.from(table).update(rest).eq('id', id) : sb.from(table).insert(rest);
+    const { data, error } = await q.select().single();
+    if (error) throw error;
+    return data;
+  },
+  async remove(table, match) {
+    const { error } = await sb.from(table).delete().match(match);
+    if (error) throw error;
+  },
+  async link(row) {
+    const { error } = await sb.from('project_links').insert(row);
+    if (error && error.code !== '23505') throw error;
+  },
+};
+let projectsError = null;
+async function loadProjects() {
+  if (!sbUser) return;
+  try { projects = await projDb.list(); projectsError = null; } catch (e) {
+    // e.g. the projects tables haven't been added to the database yet (supabase/projects.sql)
+    projectsError = /does not exist|could not find the table/i.test(e.message || '') ? 'The Gallery isn’t set up in the database yet.' : sbErr(e);
+    projects = [];
+  }
+  if (['gallery', 'cal', 'today'].includes(route.tab) && !typing()) render();
+}
+async function loadBoard(id) {
+  try { projBoards.set(id, await projDb.board(id)); } catch (e) { toast(sbErr(e)); return; }
+  if (route.page === 'project' && route.projId === id && !typing()) render();
+}
+const projById = (id) => (projects || []).find((p) => p.id === id);
+const pcol = (p) => PROJ_COLORS[p.color] || PROJ_COLORS.blue;
+
+// ---- weeks
+const projWeekStart = (p, w) => addDaysISO(p.start_date, (w - 1) * 7);
+const projEnd = (p) => addDaysISO(p.start_date, p.weeks * 7 - 1);
+function shortRange(a, b) {
+  const A = parseISO(a), B = parseISO(b);
+  return A.getMonth() === B.getMonth() ? `${A.getDate()} to ${fmtDay(B, { day: 'numeric', month: 'short' })}`
+    : `${fmtDay(A, { day: 'numeric', month: 'short' })} to ${fmtDay(B, { day: 'numeric', month: 'short' })}`;
+}
+const weekDates = (p, w) => shortRange(projWeekStart(p, w), addDaysISO(projWeekStart(p, w), 6));
+function projNowWeek(p) {
+  const n = Math.floor((parseISO(todayISO()) - parseISO(p.start_date)) / (7 * 864e5)) + 1;
+  return n >= 1 && n <= p.weeks ? n : null;
+}
+function projStatus(p) {
+  const w = projNowWeek(p);
+  if (w) return `Week ${w} of ${p.weeks} · ${weekDates(p, w)}`;
+  return todayISO() < p.start_date ? `Starts ${fmtShort(p.start_date)}` : `Finished ${fmtShort(projEnd(p))}`;
+}
+const meetingDate = (p, m) => addDaysISO(projWeekStart(p, m.week), (m.weekday || 1) - 1);
+const stepDue = (p, s) => addDaysISO(projWeekStart(p, s.week_to), 4); // the Friday of its last week
+const weekOptions = (p, cur, blank = false) => (blank ? `<option value="">No week</option>` : '') +
+  Array.from({ length: p.weeks }, (_, i) => i + 1).map((w) => `<option value="${w}" ${w === cur ? 'selected' : ''}>Week ${w} · ${weekDates(p, w)}</option>`).join('');
+
+// ---- what shows on the calendar and Today
+function projectItemsOn(iso) {
+  const out = [];
+  for (const p of projects || []) {
+    for (const m of p.meetings) if (meetingDate(p, m) === iso) out.push({ p, kind: m.kind, title: m.title, time: m.time ? m.time.slice(0, 5) : null });
+    for (const s of p.steps) if (!s.done && stepDue(p, s) === iso) out.push({ p, kind: 'due', title: `${s.title} due`, time: null });
+  }
+  return out.sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+}
+function projPillHtml(x) {
+  const [ink, fill, mid] = pcol(x.p);
+  const icon = x.kind === 'due' ? '⚑' : x.kind === 'final' ? '★' : '▲';
+  return `<a class="dpill projpill" href="#/gallery/${x.p.id}" style="--pc:${mid};background:${fill};color:${ink}">
+    <span class="pp-ic">${icon}</span><span class="dname">${x.time ? `<small class="dtime">${x.time}</small> ` : ''}${escapeHtml(x.title)}<small class="pp-name"> · ${escapeHtml(x.p.name)}</small></span></a>`;
+}
+// The final presentation (or any "final" meeting) in the next 7 days, for Today.
+function projectTodayLine() {
+  let best = null;
+  for (const p of projects || []) for (const m of p.meetings) {
+    if (m.kind !== 'final') continue;
+    const d = meetingDate(p, m), n = daysUntil(d);
+    if (n >= 0 && n <= 7 && (!best || n < best.n)) best = { p, m, n };
+  }
+  if (!best) return '';
+  return `<div class="pace"><a href="#/gallery/${best.p.id}">★ ${escapeHtml(best.m.title)} · ${escapeHtml(best.p.name)} · ${best.n === 0 ? 'today' : best.n === 1 ? 'tomorrow' : `in ${best.n} days`} ›</a></div>`;
+}
+
+// ---- pages
+const gallerySignIn = (head) => head + `<section class="card banner-card"><b>${state.account ? 'One more Google sign-in' : 'Sign in with Google to use the Gallery'}</b>
+  <p class="small">Projects are saved to your account, so they're the same on your phone and Mac.</p>
+  <div class="btn-row">${state.account ? '<button class="btn primary" data-act="google-signin">Continue with Google</button>' : '<a class="btn primary" href="#/account">Sign in with Google</a>'}</div></section>`;
+function galleryHtml() {
+  const head = `<header class="top">${topBar({ label: 'Projects', title: 'Gallery', right: sbUser ? '<a class="txt-btn" href="#/gallery/new">+ New</a>' : menuBtn })}</header>`;
+  if (!sbUser) return gallerySignIn(head);
+  if (projects === null) { loadProjects(); return head + '<section class="card"><p class="muted pad">Loading…</p></section>'; }
+  if (projectsError) {
+    return head + `<section class="card empty"><p><b>Couldn’t load your projects</b></p><p class="small muted">${escapeHtml(projectsError)}</p>
+      <button class="btn" data-act="projects-retry">Try again</button></section>`;
+  }
+  if (!projects.length) {
+    return head + `<section class="card empty"><p><b>Start your first project</b></p>
+      <p class="small muted">A project page keeps its Notion and Drive links, a week-by-week timeline and a task board in one place.</p>
+      <a class="btn primary" href="#/gallery/new">Create project</a></section>`;
+  }
+  return head + `<div class="pgallery">${projects.map((p) => {
+    const [ink, fill, mid, soft] = pcol(p);
+    const next = p.meetings.map((m) => ({ m, d: meetingDate(p, m) })).filter((x) => x.d >= todayISO()).sort((a, b) => a.d.localeCompare(b.d))[0];
+    const now = projNowWeek(p);
+    return `<a class="pgcard" href="#/gallery/${p.id}">
+      <div class="pg-cover" style="background:linear-gradient(135deg, ${soft}, ${fill});color:${ink}"><span>${shortRange(p.start_date, projEnd(p))}</span>
+        ${now ? `<i style="width:${Math.round((now / p.weeks) * 100)}%;background:${mid}"></i>` : ''}</div>
+      <div class="pg-body"><b>${escapeHtml(p.name)}</b><span>${projStatus(p)}</span>
+        ${next ? `<span class="pg-next" style="color:${ink}">Next: ${escapeHtml(next.m.title)} · ${fmtShort(next.d)}</span>` : ''}
+        <div class="pg-icons">${p.notion_url ? '<span title="Notion">N</span>' : ''}${p.drive_url ? `<span title="Files">${/onedrive|sharepoint|1drv/i.test(p.drive_url) ? 'OneDrive' : 'Drive'}</span>` : ''}<span>${p.steps.length} steps</span></div></div></a>`;
+  }).join('')}</div>`;
+}
+
+function timelineHtml(p) {
+  const now = projNowWeek(p);
+  const cols = `var(--ptl-lab) repeat(${p.weeks}, minmax(96px, 1fr))`;
+  // month labels spanning the weeks that start in them
+  const months = [];
+  for (let w = 1; w <= p.weeks; w++) {
+    const m = fmtDay(parseISO(projWeekStart(p, w)), { month: 'long' });
+    if (months.length && months[months.length - 1].m === m) months[months.length - 1].n++;
+    else months.push({ m, n: 1 });
+  }
+  let row = 1, html = `<div class="ptl-cell ptl-head" style="grid-row:1;grid-column:1"></div>`;
+  let col = 2;
+  for (const x of months) { html += `<div class="ptl-cell ptl-head" style="grid-row:1;grid-column:${col} / span ${x.n}">${x.m}</div>`; col += x.n; }
+  row = 2;
+  html += `<div class="ptl-cell ptl-lab" style="grid-row:2;grid-column:1">Week</div>`;
+  for (let w = 1; w <= p.weeks; w++) {
+    html += `<div class="ptl-cell ptl-week ${w === now ? 'now' : ''}" style="grid-row:2;grid-column:${w + 1}"><b>Week ${w}</b><small>${weekDates(p, w)}</small></div>`;
+  }
+  const [ink, fill, mid, soft] = pcol(p);
+  p.steps.forEach((s, i) => {
+    const r = 3 + i;
+    if (i === 0) html += `<div class="ptl-cell ptl-lab" style="grid-row:3 / span ${p.steps.length};grid-column:1">Steps</div>`;
+    html += `<button class="ptl-bar ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" style="grid-row:${r};grid-column:${s.week_from + 1} / ${Math.min(p.weeks, s.week_to) + 2};background:${i % 2 ? soft : mid};color:${i % 2 ? ink : fill}"><span>${s.done ? '✓ ' : ''}${escapeHtml(s.title)}</span></button>`;
+  });
+  const mr = 3 + Math.max(1, p.steps.length);
+  if (!p.steps.length) html += `<div class="ptl-cell ptl-lab" style="grid-row:3;grid-column:1">Steps</div><div class="ptl-cell muted small" style="grid-row:3;grid-column:2 / span ${p.weeks}">No steps yet.</div>`;
+  html += `<div class="ptl-cell ptl-lab ptl-sep" style="grid-row:${mr};grid-column:1">Meetings</div>`;
+  for (let w = 1; w <= p.weeks; w++) {
+    const ms = p.meetings.filter((m) => m.week === w);
+    html += `<div class="ptl-cell ptl-sep ptl-meets" style="grid-row:${mr};grid-column:${w + 1}">${ms.map((m) =>
+      `<button class="ptl-meet k-${m.kind}" data-act="meet-edit" data-id="${m.id}"><span>▲</span>${escapeHtml(m.title)}<small>${DAY_NAMES[(m.weekday || 1) - 1]}${m.time ? ` ${m.time.slice(0, 5)}` : ''}</small></button>`).join('')}</div>`;
+  }
+  return `<div class="ptl-scroll"><div class="ptl" style="grid-template-columns:${cols}">${html}</div></div>`;
+}
+
+// The timeline keeps its sideways scroll when the page redraws, and first opens on the current week.
+let tlScroll = { id: null, left: 0 };
+document.addEventListener('scroll', (e) => {
+  if (e.target.classList && e.target.classList.contains('ptl-scroll')) tlScroll = { id: route.projId, left: e.target.scrollLeft };
+}, true);
+function scrollTimeline() {
+  const box = $app.querySelector('.ptl-scroll');
+  if (!box) return;
+  if (tlScroll.id === route.projId) { box.scrollLeft = tlScroll.left; return; }
+  const now = box.querySelector('.ptl-week.now');
+  const lab = box.querySelector('.ptl-lab').offsetWidth;
+  box.scrollLeft = now ? Math.max(0, now.offsetLeft - lab - (box.clientWidth > 520 ? now.offsetWidth : 0)) : 0;
+  tlScroll = { id: route.projId, left: box.scrollLeft };
+}
+
+function boardHtml(p) {
+  const b = projBoards.get(p.id);
+  if (!b) { loadBoard(p.id); return '<p class="muted pad small">Loading the board…</p>'; }
+  if (boardMode === 'sort') {
+    const cards = [...b.cards].sort((x, y) => x.rank - y.rank);
+    if (!cards.length) return '<p class="muted pad small">No cards yet. Add your thoughts in Brainstorm first.</p>';
+    return `<div class="psort">${cards.map((c, i) => `<div class="psort-row">
+      <span class="psort-n">${i + 1}</span>
+      <div class="psort-move"><button class="mini-btn" data-act="card-up" data-id="${c.id}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="mini-btn" data-act="card-down" data-id="${c.id}" ${i === cards.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div>
+      <span class="psort-text">${escapeHtml(c.text || 'Empty card')}</span>
+      <select data-card-week="${c.id}">${weekOptions(p, c.week, true)}</select>
+      ${c.task_id && state.commitments.some((x) => x.id === c.task_id) ? `<a class="mini-btn" href="#/c/${c.task_id}">✓ Task</a>` : `<button class="mini-btn" data-act="card-task" data-id="${c.id}">To task</button>`}
+    </div>`).join('')}</div>`;
+  }
+  const h = Math.max(340, ...b.cards.map((c) => c.y + 150));
+  const byId = new Map(b.cards.map((c) => [c.id, c]));
+  const lines = b.links.map((l) => {
+    const a = byId.get(l.from_card), z = byId.get(l.to_card);
+    if (!a || !z) return '';
+    return `<line x1="${a.x + 75}" y1="${a.y + 30}" x2="${z.x + 75}" y2="${z.y + 30}" data-from="${l.from_card}" data-to="${l.to_card}"/>`;
+  }).join('');
+  return `<div class="pbrain" data-proj="${p.id}" style="height:${h}px">
+    <svg class="pbrain-lines">${lines}<line class="pbrain-temp" x1="0" y1="0" x2="0" y2="0" style="display:none"/></svg>
+    ${b.cards.map((c) => `<div class="pcard c-${CARD_COLORS.includes(c.color) ? c.color : 'amber'} ${editingCard === c.id ? 'editing' : ''}" data-card="${c.id}" style="left:${c.x}px;top:${c.y}px">
+      ${editingCard === c.id ? `<textarea data-card-text="${c.id}" maxlength="400" placeholder="Type a thought…">${escapeHtml(c.text)}</textarea>
+        <div class="pcard-tools">${CARD_COLORS.map((k) => `<button class="nc c-${k}" data-act="card-color" data-id="${c.id}" data-color="${k}" aria-label="${k}"></button>`).join('')}
+        <button class="mini-btn" data-act="card-done">Done</button><button class="mini-btn" data-act="card-delete" data-id="${c.id}" aria-label="Delete card">×</button></div>`
+        : `<div class="pcard-text">${c.text ? escapeHtml(c.text) : '<span class="muted">Empty</span>'}</div>`}
+      <span class="pcard-link" data-link-from="${c.id}" title="Drag to another card to connect"></span></div>`).join('')}
+    ${b.cards.length ? '' : '<p class="pbrain-empty">Double-click (or tap + Card) to write a thought. Drag the dot on a card onto another card to connect them.</p>'}
+  </div>`;
+}
+
+function projectPageHtml() {
+  const back = '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>';
+  if (!sbUser) return gallerySignIn(`<header class="top">${topBar({ left: back, title: 'Project' })}</header>`);
+  if (projects === null) { loadProjects(); return `<header class="top">${topBar({ left: back, title: 'Project' })}</header><section class="card"><p class="muted pad">Loading…</p></section>`; }
+  const p = projById(route.projId);
+  if (!p) return `<header class="top">${topBar({ left: back, title: 'Not found' })}</header><section class="card empty"><p>This project no longer exists.</p><a class="btn" href="#/gallery">Gallery</a></section>`;
+  const [ink, fill] = pcol(p);
+  const isOneDrive = /onedrive|sharepoint|1drv/i.test(p.drive_url);
+  return `
+    <header class="top">${topBar({ left: back, label: 'Project', title: escapeHtml(p.name), right: `<a class="txt-btn" href="#/gallery/${p.id}/edit">Edit</a>` })}
+      <div class="pmeta"><span class="ppill" style="background:${fill};color:${ink}">${projStatus(p)}</span>
+        ${p.notion_url ? `<a class="mini-btn" href="${escapeHtml(notionAppUrl(p.notion_url))}" target="_blank" rel="noopener">N Notion page</a>` : ''}
+        ${p.drive_url ? `<a class="mini-btn" href="${escapeHtml(p.drive_url)}" target="_blank" rel="noopener">${isOneDrive ? 'OneDrive' : 'Drive'} folder ↗</a>` : ''}
+        ${!p.notion_url && !p.drive_url ? `<a class="mini-btn" href="#/gallery/${p.id}/edit">+ Add Notion or Drive link</a>` : ''}</div>
+    </header>
+    <section class="card" data-section="Timeline">
+      <div class="card-head"><h2>Timeline</h2><span class="hint">${shortRange(p.start_date, projEnd(p))}</span></div>
+      ${timelineHtml(p)}
+      <div class="btn-row"><button class="btn" data-act="step-new">+ Step</button><button class="btn" data-act="meet-new">+ Meeting</button></div>
+    </section>
+    <section class="card" data-section="Task board">
+      <div class="card-head"><h2>Task board</h2>
+        <div class="seg-mini"><button data-act="board-brain" class="${boardMode === 'brain' ? 'on' : ''}">Brainstorm</button><button data-act="board-sort" class="${boardMode === 'sort' ? 'on' : ''}">Sort</button></div></div>
+      ${boardMode === 'brain' ? '<div class="btn-row"><button class="btn" data-act="card-new">+ Card</button></div>' : '<p class="help">Put the cards in order, give each a week, and turn them into tasks.</p>'}
+      ${boardHtml(p)}
+    </section>`;
+}
+
+function projectEditHtml() {
+  const isNew = route.projId === 'new';
+  const p = isNew ? { name: '', color: 'blue', start_date: currentWeekKey(), weeks: 8, notion_url: '', drive_url: '' } : projById(route.projId);
+  if (!p) return projectPageHtml();
+  return `
+    <header class="top">${topBar({ left: '<button class="txt-btn" data-act="back">Cancel</button>', title: isNew ? 'New project' : 'Edit project',
+      right: '<button class="txt-btn strong" type="submit" form="pform">Save</button>' })}</header>
+    <form id="pform" class="card form" data-form="project" data-id="${isNew ? '' : p.id}">
+      <label class="f">Name<input name="name" required maxlength="80" value="${escapeHtml(p.name)}" placeholder="e.g. Castore consulting project"></label>
+      <div class="f">Colour<div class="pcolors">${Object.entries(PROJ_COLORS).map(([k, c]) => `<label><input type="radio" name="color" value="${k}" ${p.color === k ? 'checked' : ''}><span style="background:${c[2]}"></span></label>`).join('')}</div></div>
+      <div class="f2"><label class="f">Week 1 starts<input type="date" name="start" value="${p.start_date}"><span class="help">Any day in that week; weeks run Monday to Sunday.</span></label>
+        <label class="f">Number of weeks<input type="number" name="weeks" min="1" max="52" step="1" value="${p.weeks}"></label></div>
+      <label class="f">Notion page<input name="notion" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(p.notion_url)}" placeholder="https://www.notion.so/…"></label>
+      <label class="f">Drive or OneDrive folder<input name="drive" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(p.drive_url)}" placeholder="https://drive.google.com/…"></label>
+      ${isNew ? `<label class="toggle-row"><input type="checkbox" name="meetings" checked><span>Add a kick-off, weekly check-ins, a mid-project check-in and a final presentation<small>You can change or delete them afterwards.</small></span></label>` : ''}
+      <button class="btn primary" type="submit">${isNew ? 'Create project' : 'Save'}</button>
+      ${isNew ? '' : '<div class="danger"><button type="button" class="btn warn" data-act="project-delete">Delete project</button></div>'}
+    </form>`;
+}
+async function saveProjectForm(form) {
+  const f = new FormData(form);
+  const name = String(f.get('name') || '').trim();
+  if (!name) { toast('Give it a name'); return; }
+  const row = {
+    name, color: PROJ_COLORS[f.get('color')] ? f.get('color') : 'blue', start_date: weekOf(f.get('start') || todayISO()),
+    weeks: Math.min(52, Math.max(1, Math.round(num(f.get('weeks'), 8)) || 8)), notion_url: cleanUrl(f.get('notion')), drive_url: cleanUrl(f.get('drive')),
+  };
+  try {
+    const saved = await projDb.save('projects', { ...(form.dataset.id ? { id: form.dataset.id } : { sort: (projects || []).length }), ...row });
+    if (!form.dataset.id && f.get('meetings') === 'on') {
+      const plan = [{ title: 'Kick-off', kind: 'kickoff', week: 1 }];
+      const mid = Math.max(2, Math.round(row.weeks / 2));
+      for (let w = 2; w < row.weeks; w++) plan.push(w === mid ? { title: 'Mid-project check-in', kind: 'mid', week: w } : { title: 'Weekly check-in', kind: 'checkin', week: w });
+      if (row.weeks > 1) plan.push({ title: 'Final presentation', kind: 'final', week: row.weeks });
+      for (const m of plan) await projDb.save('project_meetings', { project_id: saved.id, weekday: 1, ...m });
+    }
+    await loadProjects();
+    location.replace(`#/gallery/${saved.id}`);
+  } catch (e) { toast(sbErr(e)); }
+}
+async function deleteProject() {
+  const p = projById(route.projId);
+  if (!p || !confirm(`Delete “${p.name}” with its timeline and task board?`)) return;
+  try { await projDb.remove('projects', { id: p.id }); } catch (e) { toast(sbErr(e)); return; }
+  projBoards.delete(p.id);
+  await loadProjects();
+  location.replace('#/gallery');
+}
+
+// ---- steps and meetings (edited in a sheet)
+function openStepSheet(id) {
+  const p = projById(route.projId);
+  const s = id ? p.steps.find((x) => x.id === id) : { title: '', week_from: projNowWeek(p) || 1, week_to: Math.min(p.weeks, (projNowWeek(p) || 1) + 1), done: false };
+  if (!s) return;
+  openSheet(`<div class="sheet-head"><h3>${id ? 'Step' : 'New step'}</h3></div>
+    <form class="form flat" data-form="step" data-id="${id || ''}">
+      <label class="f">Name<input name="title" required maxlength="120" value="${escapeHtml(s.title)}" placeholder="e.g. Step 1A: customer interviews"></label>
+      <div class="f2"><label class="f">From<select name="from">${weekOptions(p, s.week_from)}</select></label>
+        <label class="f">To<select name="to">${weekOptions(p, s.week_to)}</select></label></div>
+      ${id ? `<label class="toggle-row"><input type="checkbox" name="done" ${s.done ? 'checked' : ''}><span>Done</span></label>` : ''}
+      <p class="help">Due on the Friday of its last week; it shows on your calendar then.</p>
+      <button class="btn primary" type="submit">Save</button>
+      ${id ? '<button type="button" class="btn warn" data-act="step-delete">Delete step</button>' : ''}
+    </form>`, { step: id || 'new' });
+}
+function openMeetSheet(id) {
+  const p = projById(route.projId);
+  const m = id ? p.meetings.find((x) => x.id === id) : { title: 'Weekly check-in', kind: 'checkin', week: projNowWeek(p) || 1, weekday: 1, time: null };
+  if (!m) return;
+  openSheet(`<div class="sheet-head"><h3>${id ? 'Meeting' : 'New meeting'}</h3></div>
+    <form class="form flat" data-form="meeting" data-id="${id || ''}">
+      <label class="f">Name<input name="title" required maxlength="120" value="${escapeHtml(m.title)}"></label>
+      <div class="f2"><label class="f">Type<select name="kind">${Object.entries(MEETING_KINDS).map(([k, l]) => `<option value="${k}" ${m.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="f">Week<select name="week">${weekOptions(p, m.week)}</select></label></div>
+      <div class="f2"><label class="f">Day<select name="weekday">${DAY_NAMES.map((d, i) => `<option value="${i + 1}" ${(m.weekday || 1) === i + 1 ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
+        <label class="f">Time (optional)<input type="time" name="time" value="${m.time ? m.time.slice(0, 5) : ''}"></label></div>
+      <button class="btn primary" type="submit">Save</button>
+      ${id ? '<button type="button" class="btn warn" data-act="meet-delete">Delete meeting</button>' : ''}
+    </form>`, { meet: id || 'new' });
+}
+async function saveStep(form) {
+  const p = projById(route.projId), f = new FormData(form);
+  const from = +f.get('from'), to = Math.max(from, +f.get('to'));
+  try {
+    await projDb.save('project_steps', { ...(form.dataset.id ? { id: form.dataset.id } : { project_id: p.id, sort: p.steps.length }),
+      title: String(f.get('title') || '').trim() || 'Step', week_from: from, week_to: to, ...(form.dataset.id ? { done: f.get('done') === 'on' } : {}) });
+    closeSheet();
+    await loadProjects();
+  } catch (e) { toast(sbErr(e)); }
+}
+async function saveMeeting(form) {
+  const p = projById(route.projId), f = new FormData(form);
+  try {
+    await projDb.save('project_meetings', { ...(form.dataset.id ? { id: form.dataset.id } : { project_id: p.id }),
+      title: String(f.get('title') || '').trim() || 'Meeting', kind: MEETING_KINDS[f.get('kind')] ? f.get('kind') : 'other',
+      week: +f.get('week'), weekday: +f.get('weekday') || 1, time: validTime(f.get('time')) });
+    closeSheet();
+    await loadProjects();
+  } catch (e) { toast(sbErr(e)); }
+}
+async function removeFromSheet(table) {
+  const id = sheetCtx && (sheetCtx.step || sheetCtx.meet);
+  if (!id || id === 'new' || !confirm('Delete it?')) return;
+  try { await projDb.remove(table, { id }); } catch (e) { toast(sbErr(e)); return; }
+  closeSheet();
+  await loadProjects();
+}
+
+// ---- task board
+let editingCard = null;
+async function addCard(x, y) {
+  const p = projById(route.projId), b = projBoards.get(p.id);
+  if (!b) return;
+  try {
+    const c = await projDb.save('project_cards', { project_id: p.id, text: '', x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)),
+      color: CARD_COLORS[b.cards.length % CARD_COLORS.length], rank: b.cards.length });
+    b.cards.push(c);
+    editingCard = c.id;
+    render();
+    const ta = $app.querySelector(`[data-card-text="${CSS.escape(c.id)}"]`);
+    if (ta) ta.focus();
+  } catch (e) { toast(sbErr(e)); }
+}
+const findCard = (id) => { const b = projBoards.get(route.projId); return b && b.cards.find((c) => c.id === id); };
+let cardSaveTimer = null;
+function saveCardSoon(c) {
+  clearTimeout(cardSaveTimer);
+  cardSaveTimer = setTimeout(() => projDb.save('project_cards', { id: c.id, text: c.text, color: c.color, x: c.x, y: c.y, rank: c.rank, week: c.week, task_id: c.task_id }).catch((e) => toast(sbErr(e))), 400);
+}
+async function closeCard() {
+  const c = editingCard && findCard(editingCard);
+  editingCard = null;
+  if (c) {
+    clearTimeout(cardSaveTimer);
+    try { await projDb.save('project_cards', { id: c.id, text: c.text, color: c.color }); } catch (e) { toast(sbErr(e)); }
+  }
+  render();
+}
+async function deleteCard(id) {
+  const b = projBoards.get(route.projId);
+  try { await projDb.remove('project_cards', { id }); } catch (e) { toast(sbErr(e)); return; }
+  b.cards = b.cards.filter((c) => c.id !== id);
+  b.links = b.links.filter((l) => l.from_card !== id && l.to_card !== id);
+  if (editingCard === id) editingCard = null;
+  render();
+}
+async function moveCardRank(id, dir) {
+  const b = projBoards.get(route.projId);
+  const cards = [...b.cards].sort((x, y) => x.rank - y.rank);
+  const i = cards.findIndex((c) => c.id === id), j = i + dir;
+  if (i < 0 || j < 0 || j >= cards.length) return;
+  [cards[i], cards[j]] = [cards[j], cards[i]];
+  cards.forEach((c, k) => { c.rank = k; });
+  render();
+  try { await Promise.all([cards[i], cards[j]].map((c) => projDb.save('project_cards', { id: c.id, rank: c.rank }))); } catch (e) { toast(sbErr(e)); }
+}
+// A sorted card becomes a one-off task on the Monday of its week (or "date to be confirmed").
+async function cardToTask(id) {
+  const p = projById(route.projId), c = findCard(id);
+  if (!p || !c || !c.text.trim()) { toast('Write something on the card first'); return; }
+  const date = c.week ? (projNowWeek(p) === c.week ? todayISO() : projWeekStart(p, c.week)) : null;
+  const t = normaliseCommitment(newCommitment({ name: c.text.trim().split('\n')[0].slice(0, 120), section: p.name.slice(0, 40), freq: 'once', kind: 'task',
+    date, hours: 1, notes: c.text.trim().includes('\n') ? c.text.trim().split('\n').slice(1).join('\n').trim() : '', notionUrl: p.notion_url || '', order: nextOrder() }));
+  state.commitments.push(t);
+  renumber();
+  save();
+  c.task_id = t.id;
+  try { await projDb.save('project_cards', { id: c.id, task_id: t.id }); } catch (e) { toast(sbErr(e)); }
+  render();
+  toast(date ? `Now a task on ${fmtShort(date)}` : 'Now a task (date to be confirmed)');
+}
+
+// Dragging on the brainstorm board: move a card, or drag its dot onto another card to link them.
+let cardDrag = null;
+document.addEventListener('pointerdown', (e) => {
+  const board = e.target.closest('.pbrain');
+  if (!board || e.button > 0) return;
+  const linkFrom = e.target.closest('[data-link-from]');
+  const el = e.target.closest('.pcard');
+  if (!el || (!linkFrom && e.target.closest('button, textarea, a'))) return;
+  const br = board.getBoundingClientRect(), r = el.getBoundingClientRect();
+  cardDrag = { board, el, id: el.dataset.card, link: !!linkFrom, dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moved: false, br };
+  el.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+document.addEventListener('pointermove', (e) => {
+  const d = cardDrag;
+  if (!d) return;
+  if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 6) return;
+  d.moved = true;
+  const br = d.board.getBoundingClientRect();
+  if (d.link) {
+    const c = findCard(d.id), temp = d.board.querySelector('.pbrain-temp');
+    temp.style.display = '';
+    temp.setAttribute('x1', c.x + 75); temp.setAttribute('y1', c.y + 30);
+    temp.setAttribute('x2', e.clientX - br.left); temp.setAttribute('y2', e.clientY - br.top);
+    return;
+  }
+  d.el.classList.add('dragging');
+  d.el.style.left = `${Math.max(0, Math.min(br.width - 60, e.clientX - br.left - d.dx))}px`;
+  d.el.style.top = `${Math.max(0, e.clientY - br.top - d.dy)}px`;
+});
+document.addEventListener('pointerup', async (e) => {
+  const d = cardDrag;
+  cardDrag = null;
+  if (!d) return;
+  const c = findCard(d.id);
+  if (!c) return;
+  if (d.link) {
+    const target = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest && x.closest('.pcard')).find((x) => x && x.dataset.card !== d.id);
+    const b = projBoards.get(route.projId);
+    if (target && !b.links.some((l) => (l.from_card === d.id && l.to_card === target.dataset.card) || (l.to_card === d.id && l.from_card === target.dataset.card))) {
+      const row = { project_id: route.projId, from_card: d.id, to_card: target.dataset.card };
+      b.links.push(row);
+      try { await projDb.link(row); } catch (err) { toast(sbErr(err)); }
+    }
+    render();
+    return;
+  }
+  if (!d.moved) { if (editingCard !== c.id) { editingCard = c.id; render(); const ta = $app.querySelector(`[data-card-text="${CSS.escape(c.id)}"]`); if (ta) ta.focus(); } return; }
+  c.x = Math.round(parseFloat(d.el.style.left));
+  c.y = Math.round(parseFloat(d.el.style.top));
+  render();
+  try { await projDb.save('project_cards', { id: c.id, x: c.x, y: c.y }); } catch (err) { toast(sbErr(err)); }
+});
+document.addEventListener('dblclick', (e) => {
+  const board = e.target.closest('.pbrain');
+  if (!board || e.target.closest('.pcard')) return;
+  const br = board.getBoundingClientRect();
+  addCard(e.clientX - br.left - 70, e.clientY - br.top - 24);
+});
+// Tapping a link line removes it.
+document.addEventListener('click', async (e) => {
+  const line = e.target.closest && e.target.closest('.pbrain-lines line[data-from]');
+  if (!line || !confirm('Remove this connection?')) return;
+  const b = projBoards.get(route.projId);
+  b.links = b.links.filter((l) => !(l.from_card === line.dataset.from && l.to_card === line.dataset.to));
+  render();
+  try { await projDb.remove('project_links', { from_card: line.dataset.from, to_card: line.dataset.to }); } catch (err) { toast(sbErr(err)); }
+});
+
 // ---------- Sheets (bottom modals) ----------
 let sheetCtx = null;
 function openSheet(html, ctx = null) {
@@ -4585,6 +5105,30 @@ document.addEventListener('click', (e) => {
       shareText(`${names}, haven't seen your ${buddyView.name.toLowerCase()} today 👀 Let's keep the streak going!`, `${location.origin}${location.pathname}#/buddy`); break;
     }
     case 'buddy-leave': leavePact(); break;
+    case 'project-delete': deleteProject(); break;
+    case 'projects-retry': projects = null; render(); break;
+    case 'step-new': openStepSheet(null); break;
+    case 'step-edit': openStepSheet(btn.dataset.id); break;
+    case 'step-delete': removeFromSheet('project_steps'); break;
+    case 'meet-new': openMeetSheet(null); break;
+    case 'meet-edit': openMeetSheet(btn.dataset.id); break;
+    case 'meet-delete': removeFromSheet('project_meetings'); break;
+    case 'board-brain': case 'board-sort':
+      boardMode = act === 'board-sort' ? 'sort' : 'brain'; editingCard = null;
+      try { localStorage.setItem('boardMode', boardMode); } catch {}
+      render(); break;
+    case 'card-new': {
+      // the next free spot, left to right, in rows that fit the board's width
+      const b = projBoards.get(route.projId), n = b ? b.cards.length : 0, board = $app.querySelector('.pbrain');
+      const per = Math.max(1, Math.floor(((board ? board.clientWidth : 360) - 20) / 170));
+      addCard(20 + (n % per) * 170, 20 + Math.floor(n / per) * 110); break;
+    }
+    case 'card-done': closeCard(); break;
+    case 'card-delete': deleteCard(btn.dataset.id); break;
+    case 'card-color': { const c = findCard(btn.dataset.id); if (c) { c.color = btn.dataset.color; saveCardSoon(c); render(); } break; }
+    case 'card-up': moveCardRank(btn.dataset.id, -1); break;
+    case 'card-down': moveCardRank(btn.dataset.id, 1); break;
+    case 'card-task': cardToTask(btn.dataset.id); break;
     case 'invite-accept': acceptInvite(btn.dataset.id); break;
     case 'invite-decline': declineInvite(btn.dataset.id); break;
     case 'invite-takeback': takeBackInvite(btn.dataset.email); break;
@@ -4742,6 +5286,11 @@ function syncFormVisibility(form) {
   form.dataset.tbc = String(fd.get('tbc') === 'on');
 }
 document.addEventListener('input', (e) => {
+  if (e.target.dataset && e.target.dataset.cardText) {
+    const c = findCard(e.target.dataset.cardText);
+    if (c) { c.text = e.target.value.slice(0, 400); saveCardSoon(c); }
+    return;
+  }
   if (e.target.dataset && e.target.dataset.noteText) {
     const n = state.notes.find((x) => x.id === e.target.dataset.noteText);
     if (n) { n.text = e.target.value.slice(0, 400); save(); }
@@ -4769,6 +5318,11 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('change', (e) => {
   if (e.target.dataset && e.target.dataset.calLevel) { calSetLevel(e.target.dataset.calLevel, e.target.value); return; }
+  if (e.target.dataset && e.target.dataset.cardWeek) {
+    const c = findCard(e.target.dataset.cardWeek);
+    if (c) { c.week = e.target.value ? +e.target.value : null; projDb.save('project_cards', { id: c.id, week: c.week }).catch((err) => toast(sbErr(err))); }
+    return;
+  }
   if (e.target.closest('form[data-form="buddy-routine"]')) {
     if (e.target.name === 'share') { setShareCalendar(e.target.value); return; }
     state.buddy = { commitmentId: e.target.value || null }; buddyAutoDate = null; save(); render(); return;
@@ -4805,6 +5359,9 @@ document.addEventListener('submit', (e) => {
   else if (form === 'note-date') { const f = new FormData(e.target); pinNote(e.target.dataset.id, f.get('date') || todayISO(), f.get('time'), f.get('endDate') || null); }
   else if (form === 'test') saveTestForm(e.target);
   else if (form === 'buddy-create') createPact(e.target);
+  else if (form === 'project') saveProjectForm(e.target);
+  else if (form === 'step') saveStep(e.target);
+  else if (form === 'meeting') saveMeeting(e.target);
   else if (form === 'cal-invite') { calInvite(e.target); e.target.reset(); }
   else if (form === 'buddy-email') { inviteByEmail(new FormData(e.target).get('email')); e.target.reset(); }
   else if (form === 'buddy-note') buddyTick(true, String(new FormData(e.target).get('note') || '').trim());
@@ -4819,6 +5376,7 @@ document.addEventListener('submit', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$sheet.hidden) closeSheet();
   else if (e.key === 'Escape' && editingNote) closeNote();
+  else if (e.key === 'Escape' && editingCard) closeCard();
 });
 
 // Coming back to the app (e.g. next morning): refresh "today", and follow the week

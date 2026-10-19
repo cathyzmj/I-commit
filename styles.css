@@ -987,3 +987,96 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .cpeople .cp-who span { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cpeople select { width: auto; font-size: 13px; padding: 6px 8px; }
 .cpeople a.mini-btn { text-decoration: none; color: var(--ink); }
+
+/* ---------- Gallery: projects ---------- */
+.pgallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin: 14px 0; }
+.pgcard { display: flex; flex-direction: column; border-radius: 18px; overflow: hidden; text-decoration: none; color: var(--ink);
+  background: var(--card); border: 1px solid var(--glass-border); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); transition: transform .15s, box-shadow .15s; }
+.pgcard:hover { transform: translateY(-2px); box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.25); }
+.pg-cover { position: relative; height: 84px; display: flex; align-items: flex-end; padding: 10px 14px; font-size: 12px; font-weight: 650; }
+.pg-cover i { position: absolute; left: 0; bottom: 0; height: 4px; border-radius: 0 2px 2px 0; }
+.pg-body { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px 14px; }
+.pg-body b { font-size: 15.5px; line-height: 1.25; }
+.pg-body > span { font-size: 12.5px; color: var(--muted); }
+.pg-body .pg-next { font-weight: 600; }
+.pg-icons { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.pg-icons span { font-size: 11px; font-weight: 650; padding: 2px 7px; border-radius: 99px; background: var(--track); color: var(--muted); }
+
+.pmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 2px; }
+.pmeta a.mini-btn { text-decoration: none; color: var(--ink); }
+.ppill { font-size: 12.5px; font-weight: 650; padding: 4px 10px; border-radius: 99px; }
+.pcolors { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.pcolors input { position: absolute; opacity: 0; pointer-events: none; }
+.pcolors span { display: block; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; }
+.pcolors input:checked + span { outline: 2px solid var(--ink); outline-offset: 2px; }
+.pcolors input:focus-visible + span { outline: 2px dashed var(--ink); outline-offset: 2px; }
+
+/* Timeline: a column per week, step bars, and a meetings row (like a Gantt slide) */
+.ptl-scroll { overflow-x: auto; margin: 6px -4px 10px; padding: 0 4px 4px; }
+.ptl { --ptl-lab: 92px; display: grid; gap: 4px 0; min-width: max-content; font-size: 12px; }
+@media (max-width: 560px) { .ptl { --ptl-lab: 66px; } }
+/* the row labels stay put while the weeks scroll sideways */
+.ptl-lab, .ptl-head:first-child { position: sticky; left: 0; z-index: 2; background: linear-gradient(90deg, var(--card-solid) 85%, transparent); }
+.ptl-cell { padding: 4px 6px; }
+.ptl-head { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; border-left: 1px solid var(--line); }
+.ptl-head:first-child { border-left: 0; }
+.ptl-lab { font-weight: 700; color: var(--muted); display: flex; align-items: center; }
+.ptl-week { display: flex; flex-direction: column; border-left: 1px solid var(--line); border-radius: 8px; }
+.ptl-week b { font-size: 12.5px; }
+.ptl-week small { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ptl-week.now { background: var(--today); }
+.ptl-week.now b { color: var(--accent); }
+.ptl-bar { margin: 0 3px; border: 0; border-radius: 8px; padding: 6px 9px; font: inherit; font-weight: 650; text-align: left; cursor: pointer;
+  overflow: clip; white-space: nowrap; }
+.ptl-bar.done { opacity: .55; }
+.ptl-bar span { position: sticky; left: calc(var(--ptl-lab) + 14px); } /* the name stays readable when the bar starts off-screen */
+.ptl-sep { border-top: 1px dashed rgba(27, 31, 29, 0.18); padding-top: 8px; margin-top: 4px; }
+.ptl-meets { display: flex; flex-direction: column; gap: 4px; }
+.ptl-meet { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; border: 0; background: rgba(255, 255, 255, 0.6); border-radius: 7px; padding: 4px 6px;
+  font: inherit; font-size: 11.5px; font-weight: 600; text-align: left; cursor: pointer; color: var(--ink); }
+.ptl-meet span { font-size: 9px; color: #e2483a; }
+.ptl-meet small { font-size: 10.5px; color: var(--muted); font-weight: 500; }
+.ptl-meet.k-final { background: rgba(255, 215, 0, 0.3); }
+.ptl-meet.k-final span, .ptl-meet.k-kickoff span { color: #1e5fa8; }
+
+/* Task board: Brainstorm (free canvas with links) and Sort (an ordered list) */
+.pbrain { position: relative; margin: 10px 0 4px; border-radius: 14px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.45) radial-gradient(rgba(27, 31, 29, 0.13) 1px, transparent 1.2px) 0 0 / 18px 18px; border: 1px solid var(--line); }
+.pbrain-lines { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pbrain-lines line { stroke: rgba(27, 31, 29, 0.45); stroke-width: 2; stroke-linecap: round; pointer-events: stroke; cursor: pointer; }
+.pbrain-lines line:hover { stroke: var(--warn); stroke-width: 3.5; }
+.pbrain-lines .pbrain-temp { stroke-dasharray: 5 5; pointer-events: none; }
+.pbrain-empty { position: absolute; inset: 38% 24px auto; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.5; pointer-events: none; margin: 0; }
+.pcard { position: absolute; width: 150px; min-height: 60px; padding: 9px 10px 10px; border-radius: 10px; cursor: grab; touch-action: none; user-select: none;
+  font-size: 13px; line-height: 1.3; font-weight: 500; color: #2b2a26; box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08), 0 6px 14px -8px rgba(40, 30, 0, 0.35); }
+.pcard.c-amber { background: linear-gradient(170deg, #fff6b8, #ffec8a); }
+.pcard.c-coral { background: linear-gradient(170deg, #ffe0d8, #ffc7ba); }
+.pcard.c-teal { background: linear-gradient(170deg, #e4f9e1, #c7efc1); }
+.pcard.c-purple { background: linear-gradient(170deg, #f0e9fd, #ddd0fa); }
+.pcard.c-blue { background: linear-gradient(170deg, #e3f3fb, #c6e5f5); }
+.nc.c-amber { background: #ffec8a; } .nc.c-coral { background: #ffc7ba; } .nc.c-teal { background: #c7efc1; } .nc.c-purple { background: #ddd0fa; } .nc.c-blue { background: #c6e5f5; }
+.pcard.dragging { cursor: grabbing; z-index: 5; box-shadow: 0 18px 30px -12px rgba(40, 30, 0, 0.45); }
+.pcard.editing { z-index: 4; width: 200px; cursor: default; }
+.pcard-text { white-space: pre-wrap; word-break: break-word; }
+.pcard textarea { width: 100%; min-height: 70px; border: 0; background: transparent; resize: none; padding: 0; font: inherit; color: inherit; outline: none; }
+.pcard-tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.pcard-tools .mini-btn { padding: 2px 7px; font-size: 11.5px; }
+.pcard-tools .mini-btn:first-of-type { margin-left: auto; }
+.pcard-link { position: absolute; right: -7px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%;
+  background: #fff; border: 2px solid rgba(27, 31, 29, 0.5); cursor: crosshair; }
+.pcard-link:hover { background: var(--fill); }
+.psort { display: flex; flex-direction: column; margin-top: 4px; }
+.psort-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-top: 1px solid var(--line); }
+.psort-n { width: 20px; text-align: right; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.psort-move { display: flex; gap: 2px; }
+.psort-move .mini-btn { padding: 2px 7px; }
+.psort-text { flex: 1; min-width: 0; font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
+.psort-row select { width: auto; max-width: 42%; font-size: 12.5px; padding: 5px 6px; }
+.psort-row a.mini-btn { text-decoration: none; color: var(--accent); white-space: nowrap; }
+@media (max-width: 560px) { .psort-row { flex-wrap: wrap; } .psort-text { flex-basis: calc(100% - 100px); } .psort-row select { max-width: none; flex: 1; margin-left: 28px; } }
+
+/* Project meetings and deadlines on the calendar and Today */
+.dpill.projpill { border-color: var(--pc); text-decoration: none; }
+.dpill.projpill .pp-ic { font-size: 10px; color: var(--pc); flex: none; }
+.dpill.projpill .pp-name { font-weight: 500; }
