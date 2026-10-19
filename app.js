@@ -563,6 +563,9 @@ window.addEventListener('hashchange', () => {
   render();
   window.scrollTo(0, 0);
 });
+// Pages that are mostly a form being filled in: background refreshes leave them alone, so
+// switching to another window and back never wipes what you've typed.
+const formOpen = () => !!(route.edit || /-edit$/.test(route.page || '') || route.page === 'tests');
 function goBack(fallback = '#/today') {
   if (history.length > 1) history.back(); else location.hash = fallback;
 }
@@ -1172,7 +1175,7 @@ async function refreshApps({ force = false } = {}) {
   } finally {
     appsLoading = false;
     writeState().catch(() => {});
-    if (!route.edit && !sheetCtx && ['apps', 'cal', 'today'].includes(route.tab) && !route.id && !route.page) render();
+    if (!formOpen() && !sheetCtx && ['apps', 'cal', 'today'].includes(route.tab) && !route.id && !route.page) render();
   }
 }
 
@@ -3448,7 +3451,7 @@ async function syncAll({ quiet = false, force = false, feedId = null } = {}) {
     try { added += await syncFeed(f); } catch (e) { error = e; }
   }
   syncing = false;
-  if (!sheetCtx && !route.edit) render();
+  if (!sheetCtx && !formOpen()) render();
   const pending = pendingCount();
   if (error && !quiet) toast(error.message);
   else if (added) toast(`Added ${added} calendar event${added === 1 ? '' : 's'}`);
@@ -4062,7 +4065,7 @@ async function syncNow({ join = false } = {}) {
     writeState().catch(() => {});
     if (applied > 0) {
       scheduleWidgetPush();
-      if (!route.edit && !sheetCtx && !typing()) render();
+      if (!formOpen() && !sheetCtx && !typing()) render();
     } else if (route.page === 'sync') {
       render();
     }
@@ -4365,7 +4368,7 @@ async function loadProjects() {
     projectsError = /does not exist|could not find the table/i.test(e.message || '') ? 'The Gallery isn’t set up in the database yet.' : sbErr(e);
     projects = [];
   }
-  if (['gallery', 'cal', 'today'].includes(route.tab) && !typing()) render();
+  if (['gallery', 'cal', 'today'].includes(route.tab) && !formOpen() && !sheetCtx && !typing()) render();
 }
 async function loadBoard(id) {
   try { projBoards.set(id, await projDb.board(id)); } catch (e) { toast(sbErr(e)); return; }
@@ -5392,7 +5395,7 @@ function backToToday() {
 }
 document.addEventListener('visibilitychange', () => {
   if (!state) return; // still loading saved data
-  if (document.visibilityState === 'visible' && hiddenAt && Date.now() - hiddenAt > BACK_TO_TODAY_MS && !route.edit && !sheetCtx && !editingNote) backToToday();
+  if (document.visibilityState === 'visible' && hiddenAt && Date.now() - hiddenAt > BACK_TO_TODAY_MS && !formOpen() && !sheetCtx && !editingNote) backToToday();
   if (document.visibilityState === 'hidden') {
     hiddenAt = Date.now();
     flush();
@@ -5402,7 +5405,7 @@ document.addEventListener('visibilitychange', () => {
   }
   const cur = currentWeekKey();
   if (cur !== lastCurrentKey) { if (viewKey === lastCurrentKey) viewKey = cur; lastCurrentKey = cur; }
-  if (!sheetCtx && !route.edit) render();
+  if (!sheetCtx && !formOpen()) render();
   syncThenCalendars();
   refreshBuddy();
   if (loginWait) pollGoogle();
@@ -5459,7 +5462,7 @@ let reloadingForUpdate = false;
     // A new version took over: reload once so the page runs it (unless you're in the middle of something).
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController || reloadingForUpdate) return;
-      if (route.edit || sheetCtx) { toast('App updated. It will refresh next time you open it.'); return; }
+      if (formOpen() || sheetCtx) { toast('App updated. It will refresh next time you open it.'); return; }
       reloadingForUpdate = true;
       writeState().catch(() => {}).finally(() => location.reload());
     });
