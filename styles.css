@@ -1144,3 +1144,6 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks {
 .pm-step.done { opacity: .55; }
 @media (min-width: 561px) { .pm-ev { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; } }
 @media (max-width: 560px) { .pm-day { min-height: 52px; } .pm-ev { font-size: 9.5px; padding: 1px 2px; } .pm-ev small { display: none; } }
+.plogo-find { display: flex; gap: 8px; margin-top: 8px; max-width: 420px; }
+.plogo-find input { flex: 1; min-width: 0; font-size: 14px; }
+.plogo-find .mini-btn { flex: none; }

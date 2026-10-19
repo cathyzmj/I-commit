@@ -85,6 +85,15 @@ create table if not exists public.project_refs (
   created_at timestamptz not null default now()
 );
 
+-- Files (Drive, OneDrive, decks, PDFs…) are kept in the same list as references, marked 'file'.
+alter table public.project_refs add column if not exists kind text not null default 'ref';
+alter table public.project_refs drop constraint if exists project_refs_kind_check;
+alter table public.project_refs add constraint project_refs_kind_check check (kind in ('ref', 'file'));
+-- A project's old single "Drive or OneDrive folder" link becomes its first file.
+insert into public.project_refs (project_id, url, kind)
+  select id, drive_url, 'file' from public.projects where drive_url <> '';
+update public.projects set drive_url = '' where drive_url <> '';
+
 create or replace function public.can_use_project(p uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.projects where id = p and owner = auth.uid()) $$;

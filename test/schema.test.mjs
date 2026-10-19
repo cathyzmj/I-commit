@@ -133,6 +133,14 @@ const [{ id: c1 }] = await as('cathy', "insert into project_cards (project_id, t
 const [{ id: c2 }] = await as('cathy', "insert into project_cards (project_id, text) values ($1, 'Map pricing') returning id", [proj]);
 await as('cathy', 'insert into project_links (project_id, from_card, to_card) values ($1, $2, $3)', [proj, c1, c2]);
 await as('cathy', "insert into project_refs (project_id, title, url) values ($1, 'Castore annual report', 'https://example.com/report.pdf')", [proj]);
+await as('cathy', "insert into project_refs (project_id, url, kind) values ($1, 'https://drive.google.com/drive/folders/x', 'file')", [proj]);
+await fails('cathy', "insert into project_refs (project_id, url, kind) values ($1, 'https://x.com', 'other')", [proj], /check/);
+// running the setup again moves an old single Drive link into Files
+await as('cathy', "update projects set drive_url = 'https://onedrive.live.com/old' where id = $1", [proj]);
+await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.url), 'utf8'));
+assert.deepEqual((await as('cathy', "select url from project_refs where kind = 'file' order by created_at")).map((r) => r.url),
+  ['https://drive.google.com/drive/folders/x', 'https://onedrive.live.com/old']);
+assert.equal((await as('cathy', 'select drive_url from projects'))[0].drive_url, '', 'and clears the old field');
 assert.equal((await as('cathy', 'select * from project_cards')).length, 2);
 for (const table of ['projects', 'project_steps', 'project_meetings', 'project_cards', 'project_links', 'project_refs']) {
   assert.equal((await as('han', `select * from ${table}`)).length, 0, `others can't see ${table}`);

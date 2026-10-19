@@ -4,12 +4,14 @@
 //   /api/widget  widget summary mailbox         (server/widget.mjs)
 //   /api/apps    Notion application tracker     (server/apps.mjs; secret NOTION_TOKEN)
 //   /api/login   Sign in with Google            (server/login.mjs; secrets GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
+//   /api/logo    find a company's icon          (server/logo.mjs)
 // Storage is the D1 database bound as DB (server/schema.sql).
 import { handle as ics } from './ics.mjs';
 import { handle as sync } from './sync.mjs';
 import { handle as widget } from './widget.mjs';
 import { handle as apps } from './apps.mjs';
 import { handle as login } from './login.mjs';
+import { handle as logo } from './logo.mjs';
 import { d1Store } from './d1-store.mjs';
 
 export default {
@@ -25,6 +27,7 @@ export default {
         case '/api/ics': return await ics(req);
         case '/api/sync': return await sync(req, d1Store(env.DB, 'sync'));
         case '/api/widget': return await widget(req, d1Store(env.DB, 'widget'));
+        case '/api/logo': return await logo(req, { loginStore: d1Store(env.DB, 'login') });
         case '/api/apps': return await apps(req, {
           syncStore: d1Store(env.DB, 'sync'), loginStore: d1Store(env.DB, 'login'),
           env: { NOTION_TOKEN: env.NOTION_TOKEN, NOTION_APPS_DATABASE: env.NOTION_APPS_DATABASE, APPS_OWNER_EMAIL: env.APPS_OWNER_EMAIL },

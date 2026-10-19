@@ -4338,8 +4338,13 @@ const projDb = {
     const rf = await sb.from('project_refs').select('*').order('sort').order('created_at');
     refsMissing = !!rf.error;
     const refs = rf.error ? [] : rf.data;
-    return p.data.map((x) => ({ ...x, steps: s.data.filter((r) => r.project_id === x.id), meetings: m.data.filter((r) => r.project_id === x.id),
-      refs: refs.filter((r) => r.project_id === x.id) }));
+    return p.data.map((x) => {
+      const mine = refs.filter((r) => r.project_id === x.id);
+      const files = mine.filter((r) => r.kind === 'file');
+      if (x.drive_url) files.unshift({ id: 'old-drive', url: x.drive_url, title: '', kind: 'file' }); // from before Files existed
+      return { ...x, steps: s.data.filter((r) => r.project_id === x.id), meetings: m.data.filter((r) => r.project_id === x.id),
+        refs: mine.filter((r) => r.kind !== 'file'), files };
+    });
   },
   async board(id) {
     const [c, l] = await Promise.all([
@@ -4412,6 +4417,29 @@ function pickCustomColor(input) {
   const box = input.closest('.pc-custom');
   box.querySelector('input[type="radio"]').checked = true;
   box.querySelector('.pc-ring').style.background = input.value;
+}
+
+function setLogo(form, url) {
+  if (!safeLogo(url)) { toast('That picture is too big, try a smaller one'); return; }
+  form.logo.value = url;
+  document.getElementById('logoPrev').innerHTML = `<img src="${url}" alt="">`;
+  form.querySelector('[data-act="logo-remove"]').hidden = false;
+}
+// Fetches a company's icon from its website (through the server, see server/logo.mjs).
+async function findLogo(form, btn) {
+  const site = form.querySelector('#logoSite').value.trim();
+  if (!site) { toast('Type the company’s website, e.g. castore.com'); return; }
+  if (!state.sync.key) { toast('Sign in with Google to find logos'); return; }
+  btn.disabled = true; btn.textContent = 'Finding…';
+  try {
+    const res = await fetch('/api/logo', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${state.sync.key}` }, body: JSON.stringify({ site }) });
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok || !r.dataUrl) { toast(r.error || 'Couldn’t find a logo. Upload a picture instead.'); return; }
+    const [head, b64] = r.dataUrl.split(',');
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    setLogo(form, await logoDataUrl(new Blob([bytes], { type: head.slice(5, head.indexOf(';')) })));
+  } catch { toast('Couldn’t reach the server. Try again.'); }
+  finally { btn.disabled = false; btn.textContent = 'Find logo'; }
 }
 
 // ---- months (for projects shown as a monthly calendar)
@@ -4512,7 +4540,7 @@ function galleryHtml() {
         ${now ? `<i style="width:${Math.round((now / p.weeks) * 100)}%;background:${mid}"></i>` : ''}</div>
       <div class="pg-body"><b>${escapeHtml(p.name)}</b><span>${projStatus(p)}</span>
         ${next ? `<span class="pg-next" style="color:${ink}">Next: ${escapeHtml(next.m.title)} · ${fmtShort(next.d)}</span>` : ''}
-        <div class="pg-icons">${p.notion_url ? '<span title="Notion">N</span>' : ''}${p.drive_url ? `<span title="Files">${/onedrive|sharepoint|1drv/i.test(p.drive_url) ? 'OneDrive' : 'Drive'}</span>` : ''}<span>${p.steps.length} steps</span>${p.refs.length ? `<span>${p.refs.length} refs</span>` : ''}</div></div></a>`;
+        <div class="pg-icons">${p.notion_url ? '<span title="Notion">N</span>' : ''}${p.files.length ? `<span>${p.files.length} ${p.files.length === 1 ? 'file' : 'files'}</span>` : ''}<span>${p.steps.length} steps</span>${p.refs.length ? `<span>${p.refs.length} refs</span>` : ''}</div></div></a>`;
   }).join('')}</div>`;
 }
 
@@ -4526,16 +4554,38 @@ function refName(r) {
     return seg && !/^[0-9a-f]{20,}$/i.test(seg) && !/^(view|edit|preview|open|index|home|share|u|d|\d+)$/i.test(seg) ? seg[0].toUpperCase() + seg.slice(1) : hostOf(r.url);
   } catch { return r.url; }
 }
-function refsHtml(p) {
-  const rows = p.refs.map((r) => `<div class="pref">
+// What a file link is, from its address: "Google Slides", "OneDrive", "PDF"…
+function linkService(u) {
+  const h = hostOf(u), path = (() => { try { return new URL(u).pathname; } catch { return ''; } })();
+  if (h === 'docs.google.com') return /\/presentation\//.test(path) ? 'Google Slides' : /\/spreadsheets\//.test(path) ? 'Google Sheets' : /\/forms\//.test(path) ? 'Google Forms' : 'Google Docs';
+  if (h === 'drive.google.com') return /\/folders\//.test(path) ? 'Google Drive folder' : 'Google Drive';
+  if (/(^|\.)(onedrive\.live\.com|1drv\.ms)$/.test(h)) return 'OneDrive';
+  if (/sharepoint\.com$/.test(h)) return 'OneDrive / SharePoint';
+  if (/dropbox\.com$/.test(h)) return 'Dropbox';
+  if (/(^|\.)notion\.(so|site)$/.test(h)) return 'Notion';
+  if (/canva\.com$/.test(h)) return 'Canva';
+  if (/figma\.com$/.test(h)) return 'Figma';
+  if (/\.pdf$/i.test(path)) return `PDF · ${h}`;
+  return h;
+}
+// Files (Drive, OneDrive, decks…) and References (articles, reports…): the same kind of list.
+const LINK_LISTS = {
+  file: { section: 'Files', placeholder: 'Paste a Drive, OneDrive or any file link', none: 'files' },
+  ref: { section: 'References', placeholder: 'Paste a link', none: 'references' },
+};
+function linksHtml(p, kind) {
+  const list = kind === 'file' ? p.files : p.refs, L = LINK_LISTS[kind];
+  // Untitled Drive/OneDrive/Docs links have only IDs in their address, so they're named after the service.
+  const name = (r) => { const sv = linkService(r.url); return r.title || (sv !== hostOf(r.url) && !sv.startsWith('PDF') && sv !== 'Notion' ? sv : refName(r)); };
+  const rows = list.map((r) => `<div class="pref">
       <a class="pref-link" href="${escapeHtml(/notion\.so\//.test(r.url) ? notionAppUrl(r.url) : r.url)}" target="_blank" rel="noopener">
-        <b>${escapeHtml(refName(r))}</b><small>${escapeHtml(hostOf(r.url))} ↗</small></a>
-      <button class="mini-btn" data-act="ref-delete" data-id="${r.id}" aria-label="Remove ${escapeHtml(refName(r))}">×</button></div>`).join('');
-  return `<section class="card" data-section="References">
-    <div class="card-head"><h2>References</h2>${p.refs.length ? `<span class="hint">${p.refs.length}</span>` : ''}</div>
-    ${refsMissing ? '<p class="help">Run the Gallery setup in Supabase once more to turn references on.</p>' : `${rows}
-    <form class="pref-add" data-form="ref">
-      <input name="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="Paste a link" required>
+        <b>${escapeHtml(name(r))}</b><small>${escapeHtml(name(r) === linkService(r.url) ? hostOf(r.url) : linkService(r.url))} ↗</small></a>
+      <button class="mini-btn" data-act="ref-delete" data-id="${r.id}" aria-label="Remove ${escapeHtml(name(r))}">×</button></div>`).join('');
+  return `<section class="card" data-section="${L.section}">
+    <div class="card-head"><h2>${L.section}</h2>${list.length ? `<span class="hint">${list.length}</span>` : ''}</div>
+    ${refsMissing ? `<p class="help">Run the Gallery setup in Supabase once more to turn ${L.none} on.</p>` : `${rows}
+    <form class="pref-add" data-form="ref" data-kind="${kind}">
+      <input name="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="${L.placeholder}" required>
       <input name="title" maxlength="120" placeholder="Name (optional)">
       <button class="btn" type="submit">Add</button></form>`}
   </section>`;
@@ -4545,13 +4595,17 @@ async function addRef(form) {
   const url = cleanUrl(f.get('url'));
   if (!p || !url) { toast('Paste a full link (https://…)'); return; }
   try {
-    await projDb.save('project_refs', { project_id: p.id, url, title: String(f.get('title') || '').trim().slice(0, 120), sort: p.refs.length });
+    const kind = form.dataset.kind === 'file' ? 'file' : 'ref';
+    await projDb.save('project_refs', { project_id: p.id, url, kind, title: String(f.get('title') || '').trim().slice(0, 120), sort: (kind === 'file' ? p.files : p.refs).length });
     await loadProjects();
     render();
-  } catch (e) { toast(sbErr(e)); }
+  } catch (e) { toast(/schema cache|kind/i.test(e.message || '') ? 'Run the Gallery setup in Supabase once more to turn Files on.' : sbErr(e)); }
 }
 async function deleteRef(id) {
-  try { await projDb.remove('project_refs', { id }); } catch (e) { toast(sbErr(e)); return; }
+  try {
+    if (id === 'old-drive') await projDb.save('projects', { id: route.projId, drive_url: '' });
+    else await projDb.remove('project_refs', { id });
+  } catch (e) { toast(sbErr(e)); return; }
   await loadProjects();
   render();
 }
@@ -4671,15 +4725,13 @@ function projectPageHtml() {
   const p = projById(route.projId);
   if (!p) return `<header class="top">${topBar({ left: back, title: 'Not found' })}</header><section class="card empty"><p>This project no longer exists.</p><a class="btn" href="#/gallery">Gallery</a></section>`;
   const [ink, fill] = pcol(p), logo = safeLogo(p.logo);
-  const isOneDrive = /onedrive|sharepoint|1drv/i.test(p.drive_url);
   return `
     <header class="top">${topBar({ left: back, label: 'Project', title: escapeHtml(p.name), right: `<a class="txt-btn" href="#/gallery/${p.id}/edit">Edit</a>` })}
       <div class="pmeta">${logo ? `<img class="plogo" src="${logo}" alt="">` : ''}<span class="ppill" style="background:${fill};color:${ink}">${projStatus(p)}</span>
-        ${p.notion_url ? `<a class="mini-btn" href="${escapeHtml(notionAppUrl(p.notion_url))}" target="_blank" rel="noopener">N Notion page</a>` : ''}
-        ${p.drive_url ? `<a class="mini-btn" href="${escapeHtml(p.drive_url)}" target="_blank" rel="noopener">${isOneDrive ? 'OneDrive' : 'Drive'} folder ↗</a>` : ''}
-        ${!p.notion_url && !p.drive_url ? `<a class="mini-btn" href="#/gallery/${p.id}/edit">+ Add Notion or Drive link</a>` : ''}</div>
+        ${p.notion_url ? `<a class="mini-btn" href="${escapeHtml(notionAppUrl(p.notion_url))}" target="_blank" rel="noopener">N Notion page</a>` : `<a class="mini-btn" href="#/gallery/${p.id}/edit">+ Add Notion page</a>`}</div>
     </header>
-    ${refsHtml(p)}
+    ${linksHtml(p, 'file')}
+    ${linksHtml(p, 'ref')}
     <section class="card" data-section="${p.layout === 'months' ? 'Calendar' : 'Timeline'}">
       <div class="card-head"><h2>${p.layout === 'months' ? 'Calendar' : 'Timeline'}</h2><span class="hint">${projRange(p)}</span></div>
       ${p.layout === 'months' ? monthViewHtml(p) : timelineHtml(p)}
@@ -4715,7 +4767,9 @@ function projectEditHtml() {
       <div class="f">Logo<div class="plogo-row"><span class="plogo-prev" id="logoPrev">${logo ? `<img src="${logo}" alt="">` : '<span class="muted small">None</span>'}</span>
         <label class="mini-btn">Upload picture…<input type="file" id="logoFile" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
         <button type="button" class="mini-btn" data-act="logo-remove" ${logo ? '' : 'hidden'}>Remove</button>
-        <input type="hidden" name="logo" value="${logo}"></div></div>
+        <input type="hidden" name="logo" value="${logo}"></div>
+        <div class="plogo-find"><input id="logoSite" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="or a website, e.g. castore.com" aria-label="Company website">
+          <button type="button" class="mini-btn" data-act="logo-find">Find logo</button></div></div>
       <div class="f">Format<div class="pformat">
         <label><input type="radio" name="layout" value="weeks" ${p.layout !== 'months' ? 'checked' : ''}><span><b>Week by week</b><small>A column per week with step bars, like a consulting Gantt</small></span></label>
         <label><input type="radio" name="layout" value="months" ${p.layout === 'months' ? 'checked' : ''}><span><b>Monthly calendar</b><small>Month grids with your meetings, for longer things like a society</small></span></label></div></div>
@@ -4724,7 +4778,6 @@ function projectEditHtml() {
       <div class="f2 only-months"><label class="f">First month<select name="startMonth">${monthOpts}</select></label>
         <label class="f">Number of months<input type="number" name="months" min="1" max="12" step="1" value="${nMonths}"></label></div>
       <label class="f">Notion page<input name="notion" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(p.notion_url)}" placeholder="https://www.notion.so/…"></label>
-      <label class="f">Drive or OneDrive folder<input name="drive" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(p.drive_url)}" placeholder="https://drive.google.com/…"></label>
       ${isNew ? `<label class="toggle-row only-weeks"><input type="checkbox" name="meetings" checked><span>Add a kick-off, weekly check-ins, a mid-project check-in and a final presentation<small>You can change or delete them afterwards.</small></span></label>
       <div class="only-months"><label class="toggle-row"><input type="checkbox" name="weekly" checked><span>Weekly meeting<small>Same day and time every week; you can move or cancel single weeks later.</small></span></label>
         <div class="f2"><label class="f">Day<select name="wday">${DAY_NAMES.map((d, i) => `<option value="${i + 1}">${d}</option>`).join('')}</select></label>
@@ -4742,7 +4795,7 @@ async function saveProjectForm(form) {
   const row = {
     name, layout, logo: safeLogo(String(f.get('logo') || '')),
     color: f.get('color') === 'custom' && isHex(custom) ? custom : PROJ_COLORS[f.get('color')] ? f.get('color') : 'blue',
-    notion_url: cleanUrl(f.get('notion')), drive_url: cleanUrl(f.get('drive')),
+    notion_url: cleanUrl(f.get('notion')),
   };
   let span = null;
   if (layout === 'months') {
@@ -5294,6 +5347,7 @@ document.addEventListener('click', (e) => {
     case 'step-edit': openStepSheet(btn.dataset.id); break;
     case 'step-delete': removeFromSheet('project_steps'); break;
     case 'meet-new': openMeetSheet(null, btn.dataset.day || null); break;
+    case 'logo-find': findLogo(btn.closest('form'), btn); break;
     case 'logo-remove': {
       const f = btn.closest('form');
       f.logo.value = ''; document.getElementById('logoPrev').innerHTML = '<span class="muted small">None</span>'; btn.hidden = true; break;
@@ -5509,12 +5563,7 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'logoFile') {
     const file = e.target.files[0], f = e.target.closest('form');
     e.target.value = '';
-    if (file) logoDataUrl(file).then((url) => {
-      if (!safeLogo(url)) { toast('That picture is too big, try a smaller one'); return; }
-      f.logo.value = url;
-      document.getElementById('logoPrev').innerHTML = `<img src="${url}" alt="">`;
-      f.querySelector('[data-act="logo-remove"]').hidden = false;
-    }).catch(() => toast('Couldn’t read that picture. Try a PNG or JPG.'));
+    if (file) logoDataUrl(file).then((url) => setLogo(f, url)).catch(() => toast('Couldn’t read that picture. Try a PNG or JPG.'));
     return;
   }
   if (e.target.name === 'customColor') { pickCustomColor(e.target); return; }
@@ -5576,6 +5625,8 @@ document.addEventListener('submit', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  // Enter in the logo website box finds the logo instead of saving the project
+  if (e.key === 'Enter' && e.target.id === 'logoSite') { e.preventDefault(); e.target.form.querySelector('[data-act="logo-find"]').click(); return; }
   if (e.key === 'Escape' && !$sheet.hidden) closeSheet();
   else if (e.key === 'Escape' && editingNote) closeNote();
   else if (e.key === 'Escape' && editingCard) closeCard();
