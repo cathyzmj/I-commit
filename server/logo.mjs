@@ -1,4 +1,6 @@
 // POST /api/logo  { "site": "castore.com" }  ->  { "dataUrl": "data:image/png;base64,…" }
+// "site" can also be a direct link to a picture (e.g. a profile picture dragged in from Instagram
+// or LinkedIn, whose image links work without logging in even though their pages don't).
 // Finds a company's icon for a Gallery project. The browser can't read another site's images
 // (CORS), so this fetches it: first the site's own apple-touch-icon (the large app icon most
 // sites publish), then Google's public favicon service, which also works for sites that block
@@ -19,6 +21,14 @@ export function siteHost(raw) {
   const h = url.hostname.toLowerCase().replace(/^www\./, '');
   if (url.port || url.username || !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h) || /\.(local|internal|localhost)$/.test(h) || /^\d+(\.\d+){3}$/.test(h)) return null;
   return h;
+}
+
+// A full https link with a path (maybe a picture), as opposed to just a site name.
+function directLink(raw) {
+  try {
+    const url = new URL(String(raw || '').trim());
+    return url.protocol === 'https:' && url.pathname.length > 1 ? url.href : null;
+  } catch { return null; }
 }
 
 async function sha256Hex(s) {
@@ -83,7 +93,8 @@ export async function handle(req, { loginStore, fetchImpl = fetch }) {
   try { body = await req.json(); } catch { return json(400, { error: 'Expected JSON body' }); }
   const host = siteHost(body && body.site);
   if (!host) return json(400, { error: 'Type a website, e.g. castore.com' });
-  const dataUrl = await siteIcon(host, fetchImpl) ||
+  const direct = directLink(body.site);
+  const dataUrl = (direct && await fetchImage(direct, fetchImpl)) || await siteIcon(host, fetchImpl) ||
     await fetchImage(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=256`, fetchImpl);
   if (!dataUrl) return json(404, { error: `Couldn’t find a logo for ${host}. Upload a picture instead.` });
   return json(200, { dataUrl, host });

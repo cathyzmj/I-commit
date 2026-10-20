@@ -1147,3 +1147,6 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks {
 .plogo-find { display: flex; gap: 8px; margin-top: 8px; max-width: 420px; }
 .plogo-find input { flex: 1; min-width: 0; font-size: 14px; }
 .plogo-find .mini-btn { flex: none; }
+.plogo-field { border-radius: 12px; transition: background .15s, box-shadow .15s; }
+.plogo-field.drop-on { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); }
+.plogo-field .help b { font-weight: 650; }

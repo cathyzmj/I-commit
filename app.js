@@ -4420,10 +4420,69 @@ function pickCustomColor(input) {
 }
 
 function setLogo(form, url) {
-  if (!safeLogo(url)) { toast('That picture is too big, try a smaller one'); return; }
+  if (!safeLogo(url)) { toast('That picture is too big, try a smaller one'); return false; }
   form.logo.value = url;
   document.getElementById('logoPrev').innerHTML = `<img src="${url}" alt="">`;
   form.querySelector('[data-act="logo-remove"]').hidden = false;
+  form.querySelector('[data-act="logo-color"]').hidden = false;
+  matchLogoColor(form);
+  return true;
+}
+// Any picture (uploaded, pasted or dropped) becomes the logo.
+async function useLogoBlob(form, blob) {
+  try { setLogo(form, await logoDataUrl(blob)); } catch { toast('Couldn’t read that picture. Try a PNG or JPG.'); }
+}
+
+// The logo's main colour: the commonest clearly coloured shade, ignoring the white background and
+// see-through pixels. A black-and-white logo gives its dark ink colour. null if there's nothing to go on.
+async function logoMainColor(url) {
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  const N = 48, c = Object.assign(document.createElement('canvas'), { width: N, height: N }), g = c.getContext('2d');
+  g.drawImage(img, 0, 0, N, N);
+  const d = g.getImageData(0, 0, N, N).data, buckets = new Map();
+  for (let i = 0; i < d.length; i += 4) {
+    const [r, gr, b, a] = [d[i], d[i + 1], d[i + 2], d[i + 3]];
+    if (a < 160 || Math.min(r, gr, b) > 228) continue; // see-through or background white
+    const key = ((r >> 4) << 8) | ((gr >> 4) << 4) | (b >> 4);
+    const e = buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+    e.n++; e.r += r; e.g += gr; e.b += b;
+    buckets.set(key, e);
+  }
+  let best = null, bestScore = 0;
+  for (const e of buckets.values()) {
+    const r = e.r / e.n, gr = e.g / e.n, b = e.b / e.n, max = Math.max(r, gr, b), min = Math.min(r, gr, b);
+    const colourful = max > 40 && (max - min) / max > 0.25;
+    const score = e.n * (colourful ? 4 : 1); // a brand colour beats grey or black outlines
+    if (score > bestScore) { bestScore = score; best = [r, gr, b]; }
+  }
+  return best ? '#' + best.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('') : null;
+}
+async function matchLogoColor(form) {
+  const note = document.getElementById('logoColorNote');
+  let hex = null;
+  try { hex = form.logo.value && await logoMainColor(form.logo.value); } catch { /* unreadable picture */ }
+  if (!hex) { if (note) { note.hidden = false; note.textContent = 'Couldn’t find a main colour in this logo, so the colour stays as it was.'; } return; }
+  const input = form.customColor;
+  input.value = hex;
+  pickCustomColor(input);
+  if (note) { note.hidden = false; note.innerHTML = `Colour taken from the logo: <b>${hex}</b>. Pick another circle to change it.`; }
+}
+// The Paste button (for phones, where there's no ⌘V): reads a picture from the clipboard.
+async function pasteLogo(form) {
+  if (!navigator.clipboard || !navigator.clipboard.read) { toast('Copy the picture, then press ⌘V on this page'); return; }
+  try {
+    for (const item of await navigator.clipboard.read()) {
+      const type = item.types.find((t) => t.startsWith('image/'));
+      if (type) { await useLogoBlob(form, await item.getType(type)); return; }
+      if (item.types.includes('text/plain')) {
+        const text = (await (await item.getType('text/plain')).text()).trim();
+        if (/^https:\/\/\S+$/.test(text)) { form.querySelector('#logoSite').value = text; findLogo(form, form.querySelector('[data-act="logo-find"]')); return; }
+      }
+    }
+    toast('No picture on the clipboard yet. Copy one first (right-click it, then Copy Image).');
+  } catch { toast('Pasting wasn’t allowed. Press ⌘V on this page instead.'); }
 }
 // Fetches a company's icon from its website (through the server, see server/logo.mjs).
 async function findLogo(form, btn) {
@@ -4764,12 +4823,18 @@ function projectEditHtml() {
           <span class="pc-ring" style="${custom ? `background:${p.color}` : ''}"></span>
           <input type="color" name="customColor" value="${custom ? p.color : '#ffde01'}" aria-label="Pick any colour"></span></div>
         <span class="help">The last circle opens a picker for any colour.</span></div>
-      <div class="f">Logo<div class="plogo-row"><span class="plogo-prev" id="logoPrev">${logo ? `<img src="${logo}" alt="">` : '<span class="muted small">None</span>'}</span>
+      <div class="f plogo-field">Logo<div class="plogo-row"><span class="plogo-prev" id="logoPrev">${logo ? `<img src="${logo}" alt="">` : '<span class="muted small">None</span>'}</span>
         <label class="mini-btn">Upload picture…<input type="file" id="logoFile" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
+        <button type="button" class="mini-btn" data-act="logo-paste">Paste</button>
+        <button type="button" class="mini-btn" data-act="logo-color" ${logo ? '' : 'hidden'}>Match colour</button>
         <button type="button" class="mini-btn" data-act="logo-remove" ${logo ? '' : 'hidden'}>Remove</button>
         <input type="hidden" name="logo" value="${logo}"></div>
         <div class="plogo-find"><input id="logoSite" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="or a website, e.g. castore.com" aria-label="Company website">
-          <button type="button" class="mini-btn" data-act="logo-find">Find logo</button></div></div>
+          <button type="button" class="mini-btn" data-act="logo-find">Find logo</button></div>
+        <span class="help">You can also drag a picture onto this box, or copy one and paste it here. For an Instagram or LinkedIn
+          profile picture: right-click it and choose <b>Copy Image</b>, then press <b>⌘V</b> (on iPhone: press and hold the picture,
+          tap <b>Copy</b>, then tap <b>Paste</b> here). The project colour is taken from the logo; pick another circle to change it.</span>
+        <span class="help" id="logoColorNote" hidden></span></div>
       <div class="f">Format<div class="pformat">
         <label><input type="radio" name="layout" value="weeks" ${p.layout !== 'months' ? 'checked' : ''}><span><b>Week by week</b><small>A column per week with step bars, like a consulting Gantt</small></span></label>
         <label><input type="radio" name="layout" value="months" ${p.layout === 'months' ? 'checked' : ''}><span><b>Monthly calendar</b><small>Month grids with your meetings, for longer things like a society</small></span></label></div></div>
@@ -5348,9 +5413,12 @@ document.addEventListener('click', (e) => {
     case 'step-delete': removeFromSheet('project_steps'); break;
     case 'meet-new': openMeetSheet(null, btn.dataset.day || null); break;
     case 'logo-find': findLogo(btn.closest('form'), btn); break;
+    case 'logo-paste': pasteLogo(btn.closest('form')); break;
+    case 'logo-color': matchLogoColor(btn.closest('form')); break;
     case 'logo-remove': {
       const f = btn.closest('form');
-      f.logo.value = ''; document.getElementById('logoPrev').innerHTML = '<span class="muted small">None</span>'; btn.hidden = true; break;
+      f.logo.value = ''; document.getElementById('logoPrev').innerHTML = '<span class="muted small">None</span>'; btn.hidden = true;
+      f.querySelector('[data-act="logo-color"]').hidden = true; document.getElementById('logoColorNote').hidden = true; break;
     }
     case 'meet-edit': openMeetSheet(btn.dataset.id); break;
     case 'meet-delete': removeFromSheet('project_meetings'); break;
@@ -5563,7 +5631,7 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'logoFile') {
     const file = e.target.files[0], f = e.target.closest('form');
     e.target.value = '';
-    if (file) logoDataUrl(file).then((url) => setLogo(f, url)).catch(() => toast('Couldn’t read that picture. Try a PNG or JPG.'));
+    if (file) useLogoBlob(f, file);
     return;
   }
   if (e.target.name === 'customColor') { pickCustomColor(e.target); return; }
@@ -5622,6 +5690,42 @@ document.addEventListener('submit', (e) => {
     if (!c || !url) { toast('Paste a full link (https://…)'); return; }
     c.stageUrl = url; save(); render(); toast('Link saved');
   }
+});
+
+// ⌘V with a picture on the clipboard, anywhere on the project edit page, sets the logo
+// (pasting text into a field still works as normal).
+document.addEventListener('paste', (e) => {
+  if (route.page !== 'project-edit' || !e.clipboardData) return;
+  const item = [...e.clipboardData.items].find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+  if (!item) return;
+  e.preventDefault();
+  useLogoBlob(document.getElementById('pform'), item.getAsFile());
+});
+// Dragging a picture onto the Logo box: a file from the Mac, or a picture from a web page
+// (which arrives as its address, fetched through the server).
+document.addEventListener('dragover', (e) => {
+  const zone = e.target.closest && e.target.closest('.plogo-field');
+  if (!zone) return;
+  e.preventDefault();
+  zone.classList.add('drop-on');
+});
+document.addEventListener('dragleave', (e) => {
+  const zone = e.target.closest && e.target.closest('.plogo-field');
+  if (zone && !zone.contains(e.relatedTarget)) zone.classList.remove('drop-on');
+});
+document.addEventListener('drop', (e) => {
+  const zone = e.target.closest && e.target.closest('.plogo-field');
+  if (!zone) return;
+  e.preventDefault();
+  zone.classList.remove('drop-on');
+  const form = zone.closest('form'), dt = e.dataTransfer;
+  const file = [...dt.files].find((f) => f.type.startsWith('image/'));
+  if (file) { useLogoBlob(form, file); return; }
+  const html = dt.getData('text/html'), src = html && (html.match(/<img[^>]+src=["']([^"']+)/i) || [])[1];
+  const url = (src || dt.getData('text/uri-list') || dt.getData('text/plain') || '').split('\n')[0].trim().replace(/&amp;/g, '&');
+  if (!/^https:\/\//.test(url)) { toast('Drop a picture here'); return; }
+  form.querySelector('#logoSite').value = url;
+  findLogo(form, form.querySelector('[data-act="logo-find"]'));
 });
 
 document.addEventListener('keydown', (e) => {

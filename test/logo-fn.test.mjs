@@ -12,6 +12,7 @@ const pages = {
   'https://acme.com/apple.png': () => new Response(png(), { headers: { 'content-type': 'image/png' } }),
   'https://castore.com/': () => new Response('Attention Required! | Cloudflare', { status: 403, headers: { 'content-type': 'text/html' } }),
   'https://www.google.com/s2/favicons?domain=castore.com&sz=256': () => new Response(png(800), { headers: { 'content-type': 'image/png' } }),
+  'https://scontent.cdninstagram.com/v/t51/castore.jpg?sig=abc': () => new Response(png(900), { headers: { 'content-type': 'image/jpeg' } }),
   'https://huge.com/': () => new Response('<link rel="apple-touch-icon" href="https://huge.com/big.png">', { headers: { 'content-type': 'text/html' } }),
   'https://huge.com/big.png': () => new Response(png(400 * 1024), { headers: { 'content-type': 'image/png' } }),
 };
@@ -33,4 +34,8 @@ assert.equal((await r.json()).host, 'castore.com');
 r = await call('huge.com');
 assert.equal(r.status, 404, 'big files are refused (and the fallback had nothing)');
 assert.equal((await call('127.0.0.1')).status, 400);
+r = await call('https://scontent.cdninstagram.com/v/t51/castore.jpg?sig=abc');
+assert.equal(r.status, 200);
+assert.match((await r.json()).dataUrl, /^data:image\/jpeg;base64,/, 'a direct picture link (e.g. an Instagram profile picture) works');
+assert.equal((await call('https://127.0.0.1/x.png')).status, 400, 'but not to internal addresses');
 console.log('ALL LOGO FUNCTION TESTS PASSED');
