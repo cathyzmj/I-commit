@@ -20,7 +20,7 @@ create table if not exists public.projects (
 );
 
 -- Added later; these lines also upgrade a table made by an earlier version of this file.
-alter table public.projects add column if not exists layout text not null default 'weeks';  -- 'weeks' (Gantt) or 'months' (calendar)
+alter table public.projects add column if not exists layout text not null default 'weeks';  -- 'weeks' (Gantt), 'months' (calendar) or 'none' (ongoing)
 alter table public.projects add column if not exists logo text not null default '';         -- a small picture as a data: URL
 alter table public.projects drop constraint if exists projects_color_check;
 alter table public.projects add constraint projects_color_check
@@ -28,7 +28,7 @@ alter table public.projects add constraint projects_color_check
 alter table public.projects drop constraint if exists projects_weeks_check;
 alter table public.projects add constraint projects_weeks_check check (weeks between 1 and 60);
 alter table public.projects drop constraint if exists projects_layout_check;
-alter table public.projects add constraint projects_layout_check check (layout in ('weeks', 'months'));
+alter table public.projects add constraint projects_layout_check check (layout in ('weeks', 'months', 'none'));
 alter table public.projects drop constraint if exists projects_logo_check;
 alter table public.projects add constraint projects_logo_check
   check (logo = '' or (char_length(logo) <= 200000 and logo ~ '^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$'));

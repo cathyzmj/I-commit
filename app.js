@@ -4515,6 +4515,7 @@ function projMonths(p) {
 // The real first and last day: whole weeks, or whole months for a monthly project.
 const projSpan = (p) => (p.layout === 'months' ? [monthStart(projMonths(p)[0]), monthEnd(projMonths(p).at(-1))] : [p.start_date, projEnd(p)]);
 function projRange(p) {
+  if (noTime(p)) return 'Ongoing';
   if (p.layout !== 'months') return shortRange(p.start_date, projEnd(p));
   const ms = projMonths(p);
   return ms.length === 1 ? monthName(ms[0]) : `${monthName(ms[0], { month: 'short' })} to ${monthName(ms.at(-1), { month: 'short', year: 'numeric' })}`;
@@ -4529,11 +4530,15 @@ function shortRange(a, b) {
     : `${fmtDay(A, { day: 'numeric', month: 'short' })} to ${fmtDay(B, { day: 'numeric', month: 'short' })}`;
 }
 const weekDates = (p, w) => shortRange(projWeekStart(p, w), addDaysISO(projWeekStart(p, w), 6));
+// Projects with no timeline (ongoing, e.g. building an app) have no weeks, dates or meetings.
+const noTime = (p) => p.layout === 'none';
 function projNowWeek(p) {
+  if (noTime(p)) return null;
   const n = Math.floor((parseISO(todayISO()) - parseISO(p.start_date)) / (7 * 864e5)) + 1;
   return n >= 1 && n <= p.weeks ? n : null;
 }
 function projStatus(p) {
+  if (noTime(p)) { const open = p.steps.filter((x) => !x.done).length; return p.steps.length ? `Ongoing · ${open} of ${p.steps.length} steps to do` : 'Ongoing'; }
   const [a, z] = projSpan(p), t = todayISO();
   if (t < a) return `Starts ${fmtShort(a)}`;
   if (t > z) return `Finished ${fmtShort(z)}`;
@@ -4550,6 +4555,7 @@ const weekOptions = (p, cur, blank = false) => (blank ? `<option value="">No wee
 function projectItemsOn(iso) {
   const out = [];
   for (const p of projects || []) {
+    if (noTime(p)) continue;
     for (const m of p.meetings) if (meetingDate(p, m) === iso) out.push({ p, kind: m.kind, title: m.title, time: m.time ? m.time.slice(0, 5) : null });
     for (const s of p.steps) if (!s.done && stepDue(p, s) === iso) out.push({ p, kind: 'due', title: `${s.title} due`, time: null });
   }
@@ -4565,7 +4571,7 @@ function projPillHtml(x) {
 function projectTodayLine() {
   let best = null;
   for (const p of projects || []) for (const m of p.meetings) {
-    if (m.kind !== 'final') continue;
+    if (m.kind !== 'final' || noTime(p)) continue;
     const d = meetingDate(p, m), n = daysUntil(d);
     if (n >= 0 && n <= 7 && (!best || n < best.n)) best = { p, m, n };
   }
@@ -4592,7 +4598,7 @@ function galleryHtml() {
   }
   return head + `<div class="pgallery">${projects.map((p) => {
     const [ink, fill, mid, soft] = pcol(p), logo = safeLogo(p.logo);
-    const next = p.meetings.map((m) => ({ m, d: meetingDate(p, m) })).filter((x) => x.d >= todayISO()).sort((a, b) => a.d.localeCompare(b.d))[0];
+    const next = noTime(p) ? null : p.meetings.map((m) => ({ m, d: meetingDate(p, m) })).filter((x) => x.d >= todayISO()).sort((a, b) => a.d.localeCompare(b.d))[0];
     const now = projNowWeek(p);
     return `<a class="pgcard" href="#/gallery/${p.id}">
       <div class="pg-cover" style="background:linear-gradient(135deg, ${soft}, ${fill});color:${ink}">${logo ? `<img class="pg-logo" src="${logo}" alt="">` : ''}<span>${projRange(p)}</span>
@@ -4667,6 +4673,37 @@ async function deleteRef(id) {
   } catch (e) { toast(sbErr(e)); return; }
   await loadProjects();
   render();
+}
+
+// No-timeline projects: steps are a plain checklist (no weeks or deadlines).
+function stepsChecklistHtml(p) {
+  const [, , mid] = pcol(p);
+  return `<section class="card" data-section="Steps">
+    <div class="card-head"><h2>Steps</h2>${p.steps.length ? `<span class="hint">${p.steps.filter((x) => x.done).length} of ${p.steps.length} done</span>` : ''}</div>
+    ${p.steps.map((x) => `<div class="pcheck ${x.done ? 'done' : ''}">
+      <button class="pcheck-box" data-act="step-toggle" data-id="${x.id}" aria-pressed="${x.done}" aria-label="${escapeHtml(x.title)} done" style="--pc:${mid}">${x.done ? CHECK : ''}</button>
+      <button class="pcheck-title" data-act="step-edit" data-id="${x.id}">${escapeHtml(x.title)}</button></div>`).join('')}
+    <form class="pref-add" data-form="step-quick"><input name="title" maxlength="120" placeholder="Add a step, e.g. Ship the Gallery tab" required>
+      <button class="btn" type="submit">Add</button></form>
+  </section>`;
+}
+async function toggleStep(id) {
+  const p = projById(route.projId), st = p && p.steps.find((x) => x.id === id);
+  if (!st) return;
+  st.done = !st.done;
+  render();
+  try { await projDb.save('project_steps', { id, done: st.done }); } catch (e) { st.done = !st.done; render(); toast(sbErr(e)); }
+}
+async function quickStep(form) {
+  const p = projById(route.projId), title = String(new FormData(form).get('title') || '').trim();
+  if (!p || !title) return;
+  try {
+    await projDb.save('project_steps', { project_id: p.id, title: title.slice(0, 120), week_from: 1, week_to: 1, sort: p.steps.length });
+    await loadProjects();
+    render();
+    const box = $app.querySelector('form[data-form="step-quick"] input');
+    if (box) box.focus();
+  } catch (e) { toast(sbErr(e)); }
 }
 
 function timelineHtml(p) {
@@ -4754,7 +4791,7 @@ function boardHtml(p) {
       <span class="psort-n">${i + 1}</span>
       <div class="psort-move"><button class="mini-btn" data-act="card-up" data-id="${c.id}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="mini-btn" data-act="card-down" data-id="${c.id}" ${i === cards.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div>
       <span class="psort-text">${escapeHtml(c.text || 'Empty card')}</span>
-      <select data-card-week="${c.id}">${weekOptions(p, c.week, true)}</select>
+      ${noTime(p) ? '' : `<select data-card-week="${c.id}">${weekOptions(p, c.week, true)}</select>`}
       ${c.task_id && state.commitments.some((x) => x.id === c.task_id) ? `<a class="mini-btn" href="#/c/${c.task_id}">✓ Task</a>` : `<button class="mini-btn" data-act="card-task" data-id="${c.id}">To task</button>`}
     </div>`).join('')}</div>`;
   }
@@ -4791,15 +4828,15 @@ function projectPageHtml() {
     </header>
     ${linksHtml(p, 'file')}
     ${linksHtml(p, 'ref')}
-    <section class="card" data-section="${p.layout === 'months' ? 'Calendar' : 'Timeline'}">
+    ${noTime(p) ? stepsChecklistHtml(p) : `<section class="card" data-section="${p.layout === 'months' ? 'Calendar' : 'Timeline'}">
       <div class="card-head"><h2>${p.layout === 'months' ? 'Calendar' : 'Timeline'}</h2><span class="hint">${projRange(p)}</span></div>
       ${p.layout === 'months' ? monthViewHtml(p) : timelineHtml(p)}
       <div class="btn-row"><button class="btn" data-act="step-new">+ Step</button><button class="btn" data-act="meet-new">+ Meeting</button></div>
-    </section>
+    </section>`}
     <section class="card" data-section="Task board">
       <div class="card-head"><h2>Task board</h2>
         <div class="seg-mini"><button data-act="board-brain" class="${boardMode === 'brain' ? 'on' : ''}">Brainstorm</button><button data-act="board-sort" class="${boardMode === 'sort' ? 'on' : ''}">Sort</button></div></div>
-      ${boardMode === 'brain' ? '<div class="btn-row"><button class="btn" data-act="card-new">+ Card</button></div>' : '<p class="help">Put the cards in order, give each a week, and turn them into tasks.</p>'}
+      ${boardMode === 'brain' ? '<div class="btn-row"><button class="btn" data-act="card-new">+ Card</button></div>' : `<p class="help">Put the cards in order${noTime(p) ? '' : ', give each a week,'} and turn them into tasks.</p>`}
       ${boardHtml(p)}
     </section>`;
 }
@@ -4816,7 +4853,7 @@ function projectEditHtml() {
   return `
     <header class="top">${topBar({ left: '<button class="txt-btn" data-act="back">Cancel</button>', title: isNew ? 'New project' : 'Edit project',
       right: '<button class="txt-btn strong" type="submit" form="pform">Save</button>' })}</header>
-    <form id="pform" class="card form" data-form="project" data-id="${isNew ? '' : p.id}" data-layout="${p.layout === 'months' ? 'months' : 'weeks'}">
+    <form id="pform" class="card form" data-form="project" data-id="${isNew ? '' : p.id}" data-layout="${['months', 'none'].includes(p.layout) ? p.layout : 'weeks'}">
       <label class="f">Name<input name="name" required maxlength="80" value="${escapeHtml(p.name)}" placeholder="e.g. Castore consulting project"></label>
       <div class="f">Colour<div class="pcolors">${Object.entries(PROJ_COLORS).map(([k, c]) => `<label><input type="radio" name="color" value="${k}" ${p.color === k ? 'checked' : ''}><span style="background:${c[2]}"></span></label>`).join('')}
         <span class="pc-custom" title="Pick any colour"><input type="radio" name="color" value="custom" ${custom ? 'checked' : ''} tabindex="-1" aria-hidden="true">
@@ -4836,8 +4873,9 @@ function projectEditHtml() {
           tap <b>Copy</b>, then tap <b>Paste</b> here). The project colour is taken from the logo; pick another circle to change it.</span>
         <span class="help" id="logoColorNote" hidden></span></div>
       <div class="f">Format<div class="pformat">
-        <label><input type="radio" name="layout" value="weeks" ${p.layout !== 'months' ? 'checked' : ''}><span><b>Week by week</b><small>A column per week with step bars, like a consulting Gantt</small></span></label>
-        <label><input type="radio" name="layout" value="months" ${p.layout === 'months' ? 'checked' : ''}><span><b>Monthly calendar</b><small>Month grids with your meetings, for longer things like a society</small></span></label></div></div>
+        <label><input type="radio" name="layout" value="weeks" ${!['months', 'none'].includes(p.layout) ? 'checked' : ''}><span><b>Week by week</b><small>A column per week with step bars, like a consulting Gantt</small></span></label>
+        <label><input type="radio" name="layout" value="months" ${p.layout === 'months' ? 'checked' : ''}><span><b>Monthly calendar</b><small>Month grids with your meetings, for longer things like a society</small></span></label>
+        <label><input type="radio" name="layout" value="none" ${p.layout === 'none' ? 'checked' : ''}><span><b>No timeline</b><small>Ongoing, with no dates, like building an app</small></span></label></div></div>
       <div class="f2 only-weeks"><label class="f">Week 1 starts<input type="date" name="start" value="${p.start_date}"><span class="help">Any day in that week; weeks run Monday to Sunday.</span></label>
         <label class="f">Number of weeks<input type="number" name="weeks" min="1" max="52" step="1" value="${p.weeks}"></label></div>
       <div class="f2 only-months"><label class="f">First month<select name="startMonth">${monthOpts}</select></label>
@@ -4855,7 +4893,7 @@ async function saveProjectForm(form) {
   const f = new FormData(form);
   const name = String(f.get('name') || '').trim();
   if (!name) { toast('Give it a name'); return; }
-  const layout = f.get('layout') === 'months' ? 'months' : 'weeks';
+  const layout = ['months', 'none'].includes(f.get('layout')) ? f.get('layout') : 'weeks';
   const custom = String(f.get('customColor') || '').toLowerCase();
   const row = {
     name, layout, logo: safeLogo(String(f.get('logo') || '')),
@@ -4870,6 +4908,11 @@ async function saveProjectForm(form) {
     span = [monthStart(first), monthEnd(addMonthKey(first, n - 1))];
     row.start_date = weekOf(span[0]);
     row.weeks = Math.ceil((Math.round((parseISO(span[1]) - parseISO(row.start_date)) / 864e5) + 1) / 7);
+  } else if (layout === 'none') {
+    // no dates: keep whatever was there (so switching back restores the old timeline)
+    const old = form.dataset.id && projById(form.dataset.id);
+    row.start_date = old ? old.start_date : currentWeekKey();
+    row.weeks = old ? old.weeks : 8;
   } else {
     row.start_date = weekOf(f.get('start') || todayISO());
     row.weeks = Math.min(52, Math.max(1, Math.round(num(f.get('weeks'), 8)) || 8));
@@ -4893,7 +4936,7 @@ async function saveProjectForm(form) {
     }
     await loadProjects();
     location.replace(`#/gallery/${saved.id}`);
-  } catch (e) { toast(/schema cache|does not exist/i.test(e.message || '') ? 'Run the Gallery setup in Supabase once more to turn on formats, logos and any colour.' : sbErr(e)); }
+  } catch (e) { toast(/schema cache|does not exist|layout_check/i.test(e.message || '') ? 'Run the Gallery setup in Supabase once more to turn on formats, logos and any colour.' : sbErr(e)); }
 }
 async function deleteProject() {
   const p = projById(route.projId);
@@ -4912,10 +4955,10 @@ function openStepSheet(id) {
   openSheet(`<div class="sheet-head"><h3>${id ? 'Step' : 'New step'}</h3></div>
     <form class="form flat" data-form="step" data-id="${id || ''}">
       <label class="f">Name<input name="title" required maxlength="120" value="${escapeHtml(s.title)}" placeholder="e.g. Step 1A: customer interviews"></label>
-      <div class="f2"><label class="f">From<select name="from">${weekOptions(p, s.week_from)}</select></label>
-        <label class="f">To<select name="to">${weekOptions(p, s.week_to)}</select></label></div>
+      ${noTime(p) ? `<input type="hidden" name="from" value="${s.week_from}"><input type="hidden" name="to" value="${s.week_to}">` : `<div class="f2"><label class="f">From<select name="from">${weekOptions(p, s.week_from)}</select></label>
+        <label class="f">To<select name="to">${weekOptions(p, s.week_to)}</select></label></div>`}
       ${id ? `<label class="toggle-row"><input type="checkbox" name="done" ${s.done ? 'checked' : ''}><span>Done</span></label>` : ''}
-      <p class="help">Due on the Friday of its last week; it shows on your calendar then.</p>
+      ${noTime(p) ? '' : '<p class="help">Due on the Friday of its last week; it shows on your calendar then.</p>'}
       <button class="btn primary" type="submit">Save</button>
       ${id ? '<button type="button" class="btn warn" data-act="step-delete">Delete step</button>' : ''}
     </form>`, { step: id || 'new' });
@@ -5025,7 +5068,7 @@ async function moveCardRank(id, dir) {
 async function cardToTask(id) {
   const p = projById(route.projId), c = findCard(id);
   if (!p || !c || !c.text.trim()) { toast('Write something on the card first'); return; }
-  const date = c.week ? (projNowWeek(p) === c.week ? todayISO() : projWeekStart(p, c.week)) : null;
+  const date = c.week && !noTime(p) ? (projNowWeek(p) === c.week ? todayISO() : projWeekStart(p, c.week)) : null;
   const t = normaliseCommitment(newCommitment({ name: c.text.trim().split('\n')[0].slice(0, 120), section: p.name.slice(0, 40), freq: 'once', kind: 'task',
     date, hours: 1, notes: c.text.trim().includes('\n') ? c.text.trim().split('\n').slice(1).join('\n').trim() : '', notionUrl: p.notion_url || '', order: nextOrder() }));
   state.commitments.push(t);
@@ -5412,6 +5455,7 @@ document.addEventListener('click', (e) => {
     case 'step-edit': openStepSheet(btn.dataset.id); break;
     case 'step-delete': removeFromSheet('project_steps'); break;
     case 'meet-new': openMeetSheet(null, btn.dataset.day || null); break;
+    case 'step-toggle': toggleStep(btn.dataset.id); break;
     case 'logo-find': findLogo(btn.closest('form'), btn); break;
     case 'logo-paste': pasteLogo(btn.closest('form')); break;
     case 'logo-color': matchLogoColor(btn.closest('form')); break;
@@ -5679,6 +5723,7 @@ document.addEventListener('submit', (e) => {
   else if (form === 'buddy-create') createPact(e.target);
   else if (form === 'project') saveProjectForm(e.target);
   else if (form === 'step') saveStep(e.target);
+  else if (form === 'step-quick') quickStep(e.target);
   else if (form === 'ref') addRef(e.target);
   else if (form === 'meeting') saveMeeting(e.target);
   else if (form === 'cal-invite') { calInvite(e.target); e.target.reset(); }
