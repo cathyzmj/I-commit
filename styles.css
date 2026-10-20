@@ -1115,7 +1115,7 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .pformat input:checked + span { border-color: var(--accent); background: var(--accent-soft); }
 .pformat input:focus-visible + span { outline: 2px dashed var(--ink); outline-offset: 2px; }
 @media (max-width: 600px) { .pformat { grid-template-columns: 1fr; } }
-form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, form[data-layout="none"] .only-weeks, form[data-layout="none"] .only-months { display: none; }
+form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, form[data-layout="none"] .only-weeks, form[data-layout="none"] .only-months, form[data-layout="none"] .only-dated { display: none; }
 
 /* Monthly calendar format */
 .pmonths { display: flex; flex-direction: column; gap: 16px; margin: 6px 0 10px; }

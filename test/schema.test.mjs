@@ -156,6 +156,8 @@ await fails('cathy', "update projects set color = 'red; drop' where id = $1", [p
 await fails('cathy', "update projects set logo = 'javascript:alert(1)' where id = $1", [proj], /check/);
 await fails('cathy', "update projects set layout = 'years' where id = $1", [proj], /check/);
 await as('cathy', "update projects set layout = 'none' where id = $1", [proj]); // ongoing, no timeline
+await as('cathy', "update projects set starts_on = '2026-09-30', ends_on = '2026-11-20' where id = $1", [proj]);
+await fails('cathy', "update projects set starts_on = '2026-12-01', ends_on = '2026-11-20' where id = $1", [proj], /check/);
 await fails('han', "insert into project_refs (project_id, url) values ($1, 'https://x.com')", [proj], /row-level security/);
 await as('cathy', 'delete from projects where id = $1', [proj]);
 assert.equal((await db.query('select count(*)::int as n from project_cards')).rows[0].n, 0, 'deleting a project removes its board');

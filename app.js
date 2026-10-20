@@ -4508,14 +4508,22 @@ const monthEnd = (mk) => { const [y, m] = mk.split('-').map(Number); return isoD
 const addMonthKey = (mk, n) => { const [y, m] = mk.split('-').map(Number); return isoDate(new Date(y, m - 1 + n, 1)).slice(0, 7); };
 const monthName = (mk, opts = { month: 'long', year: 'numeric' }) => fmtDay(parseISO(monthStart(mk)), opts);
 function projMonths(p) {
-  const first = addDaysISO(p.start_date, 6).slice(0, 7), last = addDaysISO(projEnd(p), -6).slice(0, 7), out = [];
+  const first = (p.starts_on || addDaysISO(p.start_date, 6)).slice(0, 7), last = (p.ends_on || addDaysISO(projEnd(p), -6)).slice(0, 7), out = [];
   for (let mk = first; mk <= last && out.length < 24; mk = addMonthKey(mk, 1)) out.push(mk);
   return out;
 }
-// The real first and last day: whole weeks, or whole months for a monthly project.
-const projSpan = (p) => (p.layout === 'months' ? [monthStart(projMonths(p)[0]), monthEnd(projMonths(p).at(-1))] : [p.start_date, projEnd(p)]);
+// The real first and last day: the dates you set, or (for projects made before you could set them)
+// whole weeks, or whole months for a monthly project.
+const projSpan = (p) => (p.starts_on && p.ends_on ? [p.starts_on, p.ends_on]
+  : p.layout === 'months' ? [monthStart(projMonths(p)[0]), monthEnd(projMonths(p).at(-1))] : [p.start_date, projEnd(p)]);
+// "30 Sep to 20 Nov", with the year when it isn't this year
+function dateRange(a, b) {
+  const y = todayISO().slice(0, 4);
+  return shortRange(a, b) + (b.slice(0, 4) !== y || a.slice(0, 4) !== y ? ` ${b.slice(0, 4)}` : '');
+}
 function projRange(p) {
   if (noTime(p)) return 'Ongoing';
+  if (p.starts_on && p.ends_on) return dateRange(p.starts_on, p.ends_on);
   if (p.layout !== 'months') return shortRange(p.start_date, projEnd(p));
   const ms = projMonths(p);
   return ms.length === 1 ? monthName(ms[0]) : `${monthName(ms[0], { month: 'short' })} to ${monthName(ms.at(-1), { month: 'short', year: 'numeric' })}`;
@@ -4529,7 +4537,11 @@ function shortRange(a, b) {
   return A.getMonth() === B.getMonth() ? `${A.getDate()} to ${fmtDay(B, { day: 'numeric', month: 'short' })}`
     : `${fmtDay(A, { day: 'numeric', month: 'short' })} to ${fmtDay(B, { day: 'numeric', month: 'short' })}`;
 }
-const weekDates = (p, w) => shortRange(projWeekStart(p, w), addDaysISO(projWeekStart(p, w), 6));
+// A week's dates, trimmed to the project's own start and end (e.g. a Wednesday start).
+function weekDates(p, w) {
+  const [a, z] = projSpan(p), from = projWeekStart(p, w), to = addDaysISO(from, 6);
+  return shortRange(from < a ? a : from, to > z ? z : to);
+}
 // Projects with no timeline (ongoing, e.g. building an app) have no weeks, dates or meetings.
 const noTime = (p) => p.layout === 'none';
 function projNowWeek(p) {
@@ -4547,7 +4559,8 @@ function projStatus(p) {
   return `Week ${w} of ${p.weeks} · ${weekDates(p, w)}`;
 }
 const meetingDate = (p, m) => addDaysISO(projWeekStart(p, m.week), (m.weekday || 1) - 1);
-const stepDue = (p, s) => addDaysISO(projWeekStart(p, s.week_to), 4); // the Friday of its last week
+// The Friday of its last week, or the project's end date if that comes first.
+const stepDue = (p, s) => { const fri = addDaysISO(projWeekStart(p, s.week_to), 4), end = projSpan(p)[1]; return fri > end ? end : fri; };
 const weekOptions = (p, cur, blank = false) => (blank ? `<option value="">No week</option>` : '') +
   Array.from({ length: p.weeks }, (_, i) => i + 1).map((w) => `<option value="${w}" ${w === cur ? 'selected' : ''}>Week ${w} · ${weekDates(p, w)}</option>`).join('');
 
@@ -4841,15 +4854,21 @@ function projectPageHtml() {
     </section>`;
 }
 
+// "8 weeks · Week 1 is 28 Sep to 4 Oct" under the start and end dates.
+function projLengthLabel(a, b) {
+  if (!a || !b) return 'Pick both dates.';
+  if (b < a) return 'The end date is before the start date.';
+  const days = Math.round((parseISO(b) - parseISO(a)) / 864e5) + 1, weeks = Math.ceil((Math.round((parseISO(b) - parseISO(weekOf(a))) / 864e5) + 1) / 7);
+  const len = days < 14 ? `${days} days` : days % 7 === 0 ? `${days / 7} weeks` : `${Math.floor(days / 7)} weeks ${days % 7} days`;
+  const sun = addDaysISO(weekOf(a), 6);
+  return `${len} · Week 1 is ${shortRange(a, sun < b ? sun : b)}${weeks > 60 ? ' · too long (60 weeks at most)' : ''}`;
+}
 function projectEditHtml() {
   const isNew = route.projId === 'new';
   const p = isNew ? { name: '', color: 'blue', layout: 'weeks', logo: '', start_date: currentWeekKey(), weeks: 8, notion_url: '', drive_url: '' } : projById(route.projId);
   if (!p) return projectPageHtml();
   const custom = isHex(p.color), logo = safeLogo(p.logo);
-  const months = isNew ? [todayISO().slice(0, 7), addMonthKey(todayISO().slice(0, 7), 2)] : [projMonths(p)[0], projMonths(p).at(-1)];
-  const nMonths = Math.max(1, (+months[1].slice(0, 4) - +months[0].slice(0, 4)) * 12 + (+months[1].slice(5) - +months[0].slice(5)) + 1);
-  const monthOpts = Array.from({ length: 37 }, (_, i) => addMonthKey(todayISO().slice(0, 7), i - 12))
-    .map((mk) => `<option value="${mk}" ${mk === months[0] ? 'selected' : ''}>${monthName(mk)}</option>`).join('');
+  const [from, to] = isNew ? [todayISO(), addDaysISO(todayISO(), 8 * 7 - 1)] : projSpan(p);
   return `
     <header class="top">${topBar({ left: '<button class="txt-btn" data-act="back">Cancel</button>', title: isNew ? 'New project' : 'Edit project',
       right: '<button class="txt-btn strong" type="submit" form="pform">Save</button>' })}</header>
@@ -4876,10 +4895,9 @@ function projectEditHtml() {
         <label><input type="radio" name="layout" value="weeks" ${!['months', 'none'].includes(p.layout) ? 'checked' : ''}><span><b>Week by week</b><small>A column per week with step bars, like a consulting Gantt</small></span></label>
         <label><input type="radio" name="layout" value="months" ${p.layout === 'months' ? 'checked' : ''}><span><b>Monthly calendar</b><small>Month grids with your meetings, for longer things like a society</small></span></label>
         <label><input type="radio" name="layout" value="none" ${p.layout === 'none' ? 'checked' : ''}><span><b>No timeline</b><small>Ongoing, with no dates, like building an app</small></span></label></div></div>
-      <div class="f2 only-weeks"><label class="f">Week 1 starts<input type="date" name="start" value="${p.start_date}"><span class="help">Any day in that week; weeks run Monday to Sunday.</span></label>
-        <label class="f">Number of weeks<input type="number" name="weeks" min="1" max="52" step="1" value="${p.weeks}"></label></div>
-      <div class="f2 only-months"><label class="f">First month<select name="startMonth">${monthOpts}</select></label>
-        <label class="f">Number of months<input type="number" name="months" min="1" max="12" step="1" value="${nMonths}"></label></div>
+      <div class="only-dated"><div class="f2"><label class="f">Start date<input type="date" name="starts" value="${from}" required></label>
+        <label class="f">End date<input type="date" name="ends" value="${to}" required></label></div>
+        <span class="help" id="projLength">${projLengthLabel(from, to)}</span></div>
       <label class="f">Notion page<input name="notion" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(p.notion_url)}" placeholder="https://www.notion.so/…"></label>
       ${isNew ? `<label class="toggle-row only-weeks"><input type="checkbox" name="meetings" checked><span>Add a kick-off, weekly check-ins, a mid-project check-in and a final presentation<small>You can change or delete them afterwards.</small></span></label>
       <div class="only-months"><label class="toggle-row"><input type="checkbox" name="weekly" checked><span>Weekly meeting<small>Same day and time every week; you can move or cancel single weeks later.</small></span></label>
@@ -4901,21 +4919,21 @@ async function saveProjectForm(form) {
     notion_url: cleanUrl(f.get('notion')),
   };
   let span = null;
-  if (layout === 'months') {
-    // whole months: from the Monday on or before the 1st to the week holding the last day
-    const first = /^\d{4}-\d{2}$/.test(f.get('startMonth')) ? f.get('startMonth') : todayISO().slice(0, 7);
-    const n = Math.min(12, Math.max(1, Math.round(num(f.get('months'), 3)) || 3));
-    span = [monthStart(first), monthEnd(addMonthKey(first, n - 1))];
-    row.start_date = weekOf(span[0]);
-    row.weeks = Math.ceil((Math.round((parseISO(span[1]) - parseISO(row.start_date)) / 864e5) + 1) / 7);
-  } else if (layout === 'none') {
+  if (layout !== 'none') {
+    // exact dates; weeks are counted Monday to Sunday from the week holding the start date
+    const a = String(f.get('starts') || ''), b = String(f.get('ends') || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(a) || !/^\d{4}-\d{2}-\d{2}$/.test(b)) { toast('Pick a start date and an end date'); return; }
+    if (b < a) { toast('The end date is before the start date'); return; }
+    span = [a, b];
+    row.starts_on = a; row.ends_on = b;
+    row.start_date = weekOf(a);
+    row.weeks = Math.ceil((Math.round((parseISO(b) - parseISO(row.start_date)) / 864e5) + 1) / 7);
+    if (row.weeks > 60) { toast('Projects can be up to 60 weeks long'); return; }
+  } else {
     // no dates: keep whatever was there (so switching back restores the old timeline)
     const old = form.dataset.id && projById(form.dataset.id);
     row.start_date = old ? old.start_date : currentWeekKey();
     row.weeks = old ? old.weeks : 8;
-  } else {
-    row.start_date = weekOf(f.get('start') || todayISO());
-    row.weeks = Math.min(52, Math.max(1, Math.round(num(f.get('weeks'), 8)) || 8));
   }
   try {
     const saved = await projDb.save('projects', { ...(form.dataset.id ? { id: form.dataset.id } : { sort: (projects || []).length }), ...row });
@@ -4924,7 +4942,9 @@ async function saveProjectForm(form) {
       const mid = Math.max(2, Math.round(row.weeks / 2));
       for (let w = 2; w < row.weeks; w++) plan.push(w === mid ? { title: 'Mid-project check-in', kind: 'mid', week: w } : { title: 'Weekly check-in', kind: 'checkin', week: w });
       if (row.weeks > 1) plan.push({ title: 'Final presentation', kind: 'final', week: row.weeks });
-      await projDb.insertMany('project_meetings', plan.map((m) => ({ project_id: saved.id, weekday: 1, ...m })));
+      // Mondays, except that none falls before the start or after the end date
+      const dayIn = (w) => { const mon = addDaysISO(row.start_date, (w - 1) * 7), d = mon < span[0] ? span[0] : mon > span[1] ? span[1] : mon; return (parseISO(d).getDay() + 6) % 7 + 1; };
+      await projDb.insertMany('project_meetings', plan.map((m) => ({ project_id: saved.id, weekday: dayIn(m.week), ...m })));
     }
     if (!form.dataset.id && layout === 'months' && f.get('weekly') === 'on') {
       const wd = Math.min(7, Math.max(1, +f.get('wday') || 1)), rows = [];
@@ -4936,7 +4956,7 @@ async function saveProjectForm(form) {
     }
     await loadProjects();
     location.replace(`#/gallery/${saved.id}`);
-  } catch (e) { toast(/schema cache|does not exist|layout_check/i.test(e.message || '') ? 'Run the Gallery setup in Supabase once more to turn on formats, logos and any colour.' : sbErr(e)); }
+  } catch (e) { toast(/schema cache|does not exist|layout_check|starts_on|ends_on/i.test(e.message || '') ? 'Run the Gallery setup in Supabase once more to turn on formats, logos and any colour.' : sbErr(e)); }
 }
 async function deleteProject() {
   const p = projById(route.projId);
@@ -5659,6 +5679,10 @@ document.addEventListener('input', (e) => {
   const tf = e.target.closest('form[data-form="test"]');
   if (tf && e.target.name === 'mode') { tf.dataset.mode = e.target.value; return; }
   if (e.target.name === 'customColor') { pickCustomColor(e.target); return; }
+  if ((e.target.name === 'starts' || e.target.name === 'ends') && e.target.form && e.target.form.dataset.form === 'project') {
+    document.getElementById('projLength').textContent = projLengthLabel(e.target.form.starts.value, e.target.form.ends.value);
+    return;
+  }
   if (e.target.id === 'bgStrength') {
     bg.strength = Number(e.target.value) / 100;
     document.getElementById('bgpic').style.opacity = bg.strength;

@@ -22,6 +22,10 @@ create table if not exists public.projects (
 -- Added later; these lines also upgrade a table made by an earlier version of this file.
 alter table public.projects add column if not exists layout text not null default 'weeks';  -- 'weeks' (Gantt), 'months' (calendar) or 'none' (ongoing)
 alter table public.projects add column if not exists logo text not null default '';         -- a small picture as a data: URL
+alter table public.projects add column if not exists starts_on date;  -- the exact first and last day, when set
+alter table public.projects add column if not exists ends_on date;    -- (start_date and weeks still number the weeks)
+alter table public.projects drop constraint if exists projects_dates_check;
+alter table public.projects add constraint projects_dates_check check (ends_on is null or starts_on is null or ends_on >= starts_on);
 alter table public.projects drop constraint if exists projects_color_check;
 alter table public.projects add constraint projects_color_check
   check (color in ('blue', 'purple', 'teal', 'coral', 'pink', 'amber', 'green', 'gray') or color ~ '^#[0-9a-f]{6}$');
