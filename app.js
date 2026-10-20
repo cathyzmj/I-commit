@@ -4769,6 +4769,15 @@ function scrollTimeline() {
   tlScroll = { id: route.projId, left: box.scrollLeft };
 }
 
+const projMonthView = new Map(); // project id -> the month shown
+// Folded Timeline/Calendar cards, remembered per project on this device.
+let foldedCal = new Set();
+try { foldedCal = new Set(JSON.parse(localStorage.getItem('foldedProjCal') || '[]')); } catch {}
+function toggleProjFold(id) {
+  if (foldedCal.has(id)) foldedCal.delete(id); else foldedCal.add(id);
+  try { localStorage.setItem('foldedProjCal', JSON.stringify([...foldedCal])); } catch {}
+  render();
+}
 // Monthly format: a calendar grid per month with meetings and step deadlines on their days,
 // and the steps listed underneath. Tap a date to add a meeting on it.
 function monthViewHtml(p) {
@@ -4779,7 +4788,11 @@ function monthViewHtml(p) {
     add(meetingDate(p, m), `<button class="pm-ev k-${m.kind}" data-act="meet-edit" data-id="${m.id}" title="${escapeHtml(m.title)}">${m.time ? `<small>${m.time.slice(0, 5)}</small> ` : ''}${escapeHtml(m.title)}</button>`);
   }
   for (const s of p.steps) add(stepDue(p, s), `<button class="pm-ev due ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" title="${escapeHtml(s.title)} due">⚑ ${escapeHtml(s.title)}</button>`);
-  const months = projMonths(p).map((mk) => {
+  // one month at a time: the month you moved to, else this month (or the nearest end of the project)
+  const all = projMonths(p), now = today.slice(0, 7);
+  const mk = all.includes(projMonthView.get(p.id)) ? projMonthView.get(p.id) : all.includes(now) ? now : now < all[0] ? all[0] : all.at(-1);
+  const i = all.indexOf(mk);
+  const months = [mk].map((mk) => {
     const end = monthEnd(mk);
     let cells = '';
     for (let d = weekOf(monthStart(mk)); !(d > end && parseISO(d).getDay() === 1); d = addDaysISO(d, 1)) {
@@ -4787,7 +4800,12 @@ function monthViewHtml(p) {
       cells += `<div class="pm-day ${inMonth ? '' : 'out'} ${d === today ? 'today' : ''} ${d < a || d > z ? 'off' : ''}">
         ${inMonth ? `<button class="pm-num" data-act="meet-new" data-day="${d}" aria-label="Add a meeting on ${fmtShort(d)}">${parseISO(d).getDate()}</button>${on[d] || ''}` : ''}</div>`;
     }
-    return `<div class="pm-month"><h3>${monthName(mk)}</h3><div class="pm-grid">${DAY_NAMES.map((n) => `<div class="pm-dn">${n}</div>`).join('')}${cells}</div></div>`;
+    return `<div class="pm-month"><div class="pm-nav">
+        <button class="icon-btn" data-act="pm-month" data-mk="${all[i - 1] || ''}" ${i > 0 ? '' : 'disabled'} aria-label="Previous month">‹</button>
+        <h3>${monthName(mk)}<small>Month ${i + 1} of ${all.length}</small></h3>
+        <button class="icon-btn" data-act="pm-month" data-mk="${all[i + 1] || ''}" ${i < all.length - 1 ? '' : 'disabled'} aria-label="Next month">›</button>
+        ${mk !== now && all.includes(now) ? `<button class="mini-btn" data-act="pm-month" data-mk="${now}">This month</button>` : ''}</div>
+      <div class="pm-grid">${DAY_NAMES.map((n) => `<div class="pm-dn">${n}</div>`).join('')}${cells}</div></div>`;
   }).join('');
   const steps = p.steps.map((s) => `<button class="pm-step ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" style="--pc:${mid};background:${fill};color:${ink}">
     <b>${s.done ? '✓ ' : ''}${escapeHtml(s.title)}</b><small>${shortRange(projWeekStart(p, s.week_from), stepDue(p, s))}</small></button>`).join('');
@@ -4841,10 +4859,12 @@ function projectPageHtml() {
     </header>
     ${linksHtml(p, 'file')}
     ${linksHtml(p, 'ref')}
-    ${noTime(p) ? stepsChecklistHtml(p) : `<section class="card" data-section="${p.layout === 'months' ? 'Calendar' : 'Timeline'}">
-      <div class="card-head"><h2>${p.layout === 'months' ? 'Calendar' : 'Timeline'}</h2><span class="hint">${projRange(p)}</span></div>
-      ${p.layout === 'months' ? monthViewHtml(p) : timelineHtml(p)}
-      <div class="btn-row"><button class="btn" data-act="step-new">+ Step</button><button class="btn" data-act="meet-new">+ Meeting</button></div>
+    ${noTime(p) ? stepsChecklistHtml(p) : `<section class="card ${foldedCal.has(p.id) ? 'folded' : ''}" data-section="${p.layout === 'months' ? 'Calendar' : 'Timeline'}">
+      <div class="card-head"><h2>${p.layout === 'months' ? 'Calendar' : 'Timeline'}</h2>
+        <span class="hint push">${projRange(p)}</span>
+        <button class="mini-btn" data-act="proj-fold" aria-expanded="${!foldedCal.has(p.id)}">${foldedCal.has(p.id) ? 'Show' : 'Hide'}</button></div>
+      ${foldedCal.has(p.id) ? '' : `${p.layout === 'months' ? monthViewHtml(p) : timelineHtml(p)}
+      <div class="btn-row"><button class="btn" data-act="step-new">+ Step</button><button class="btn" data-act="meet-new">+ Meeting</button></div>`}
     </section>`}
     <section class="card" data-section="Task board">
       <div class="card-head"><h2>Task board</h2>
@@ -5476,6 +5496,8 @@ document.addEventListener('click', (e) => {
     case 'step-delete': removeFromSheet('project_steps'); break;
     case 'meet-new': openMeetSheet(null, btn.dataset.day || null); break;
     case 'step-toggle': toggleStep(btn.dataset.id); break;
+    case 'pm-month': if (btn.dataset.mk) { projMonthView.set(route.projId, btn.dataset.mk); render(); } break;
+    case 'proj-fold': toggleProjFold(route.projId); break;
     case 'logo-find': findLogo(btn.closest('form'), btn); break;
     case 'logo-paste': pasteLogo(btn.closest('form')); break;
     case 'logo-color': matchLogoColor(btn.closest('form')); break;

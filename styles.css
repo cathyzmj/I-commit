@@ -1159,3 +1159,13 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, 
 .pcheck.done .pcheck-box { background: var(--pc); }
 .pcheck-title { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0; font: inherit; font-size: 14px; text-align: left; color: var(--ink); cursor: pointer; }
 .pcheck.done .pcheck-title { color: var(--muted); text-decoration: line-through; }
+
+/* Project calendar: one month at a time, and a foldable card */
+.pm-nav { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.pm-nav h3 { margin: 0; font-size: 15px; display: flex; flex-direction: column; min-width: 130px; text-align: center; }
+.pm-nav h3 small { font-size: 11.5px; font-weight: 500; color: var(--muted); }
+.pm-nav .icon-btn:disabled { opacity: .3; }
+.pm-nav .mini-btn { margin-left: auto; }
+.card.folded .card-head { margin-bottom: 0; }
+.card-head .hint.push { margin-left: auto; }
+.card-head .hint + .mini-btn { margin-left: 8px; }
