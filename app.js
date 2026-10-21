@@ -1040,7 +1040,7 @@ function calendarTabHtml() {
     const evs = layoutDay(timed[d]).map((e) => {
       if (e.buddy) {
         const top = ((e.start - startHour * 60) / 60) * HOUR_PX, height = Math.max(22, ((e.end - e.start) / 60) * HOUR_PX - 2);
-        return `<div class="cev buddy ${height < 40 ? 'short' : ''}" title="${escapeHtml(`${e.buddy.name}: ${e.label} · ${fmtTime(e.start)}–${fmtTime(e.end)}`)}"
+        return `<div class="cev buddy ${height < 40 ? 'short' : ''}" role="button" tabindex="0" data-act="buddy-ev" data-who="${escapeHtml(e.buddy.name)}" data-what="${escapeHtml(e.label)}" data-day="${d}" data-s="${e.start}" data-e="${e.end}" title="${escapeHtml(`${e.buddy.name}: ${e.label} · ${fmtTime(e.start)}–${fmtTime(e.end)}`)}"
           style="top:${top}px;height:${height}px;left:calc(${(e.lane / e.lanes) * 100}% + 2px);width:calc(${100 / e.lanes}% - 4px)">
           <div class="cev-body"><b><span class="who">${escapeHtml(e.buddy.name.slice(0, 1).toUpperCase())}</span>${escapeHtml(e.label)}</b></div></div>`;
       }
@@ -1063,7 +1063,7 @@ function calendarTabHtml() {
 
   const hasAllDay = days.some((d) => untimed[d].length);
   const allDay = days.map((d) => `<div class="call ${d === calViewDay ? 'sel' : ''}">
-      ${untimed[d].map((x) => { if (x.buddy) return `<div class="cuntimed buddy" title="${escapeHtml(`${x.buddy.name}: ${x.label}`)}"><span><span class="who">${escapeHtml(x.buddy.name.slice(0, 1).toUpperCase())}</span>${escapeHtml(x.label)}</span></div>`;
+      ${untimed[d].map((x) => { if (x.buddy) return `<div class="cuntimed buddy" role="button" tabindex="0" data-act="buddy-ev" data-who="${escapeHtml(x.buddy.name)}" data-what="${escapeHtml(x.label)}" data-day="${d}" title="${escapeHtml(`${x.buddy.name}: ${x.label}`)}"><span><span class="who">${escapeHtml(x.buddy.name.slice(0, 1).toUpperCase())}</span>${escapeHtml(x.label)}</span></div>`;
         const [id, it] = x; const sched = !!it.schedule; const done = !sched && periodDone(it); return `<div class="cuntimed ${sched ? 'sched' : ''} ${done ? 'done' : ''}" data-open="#/c/${id}" style="--ev:${eventColor(id)}">
         ${sched ? '' : `<button class="cev-chk" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-label="${escapeHtml(it.name)} done">${done ? CHECK : ''}</button>`}
         <span>${escapeHtml(it.name)}</span></div>`; }).join('')}
@@ -2518,6 +2518,28 @@ function sharedPeople(wk) {
     ...p,
     cal: { events: list.filter((x) => x.user_id === p.id).map((x) => ({ d: x.day, s: x.starts ? x.starts.slice(0, 5) : null, e: x.ends ? x.ends.slice(0, 5) : null, n: x.title || '' })) },
   }));
+}
+// Tapping an event on someone's shared calendar: what it is, when, and what you have on then.
+function openBuddyEvent(ds) {
+  const day = ds.day, s = ds.s ? +ds.s : null, e = ds.e ? +ds.e : null;
+  const busy = ds.what === 'Busy';
+  const w = getWeek(weekOf(day));
+  const mineThen = (w ? itemsOf(w, 'once') : []).filter(([, it]) => it.date === day).map(([id, it]) => {
+    const a = it.time ? toMinutes(it.time) : null;
+    const b = a == null ? null : it.endTime && toMinutes(it.endTime) > a ? toMinutes(it.endTime) : a + Math.max(30, Math.round((it.hours || 1) * 60));
+    return { id, it, a, b };
+  }).filter((x) => (s == null ? true : x.a == null ? false : x.a < e && x.b > s));
+  const len = s != null && e != null ? e - s : null;
+  openSheet(`<div class="sheet-head"><h3>${escapeHtml(busy ? `${ds.who} is busy` : ds.what)}</h3></div>
+    <div class="sev">
+      <p><b>${escapeHtml(ds.who)}’s calendar</b>${busy ? '<br><span class="muted small">They share times only, not what it is.</span>' : ''}</p>
+      <p>${fmtDay(parseISO(day), { weekday: 'long', day: 'numeric', month: 'long' })}<br>
+        ${s != null ? `${fmtTime(s)} to ${fmtTime(e)}<span class="muted"> · ${len >= 60 ? `${Math.floor(len / 60)}h${len % 60 ? ` ${len % 60}m` : ''}` : `${len}m`}</span>` : 'All day'}</p>
+      <h4>${s != null ? 'You at the same time' : 'You that day'}</h4>
+      ${mineThen.length ? mineThen.map((x) => `<a class="sev-mine" href="#/c/${x.id}">${x.a != null ? `<small>${fmtTime(x.a)}</small> ` : ''}${escapeHtml(x.it.name)}</a>`).join('')
+        : `<p class="muted small">${s != null ? 'Nothing on your calendar then, so you’re free.' : 'Nothing on your calendar that day.'}</p>`}
+    </div>
+    <button class="btn" data-act="close">Close</button>`);
 }
 // The switch in the calendar bar: Only me · each person · Ours, and the Share button.
 function calBarHtml(people, who) {
@@ -4321,8 +4343,6 @@ const CARD_COLORS = ['amber', 'coral', 'teal', 'purple', 'blue'];
 const MEETING_KINDS = { kickoff: 'Kick-off', checkin: 'Check-in', mid: 'Mid-project', final: 'Final', other: 'Other' };
 let projects = null;                 // [{ ...project, steps, meetings }] once loaded
 const projBoards = new Map();        // project id -> { cards, links }
-let boardMode = 'brain';
-try { boardMode = localStorage.getItem('boardMode') === 'sort' ? 'sort' : 'brain'; } catch {}
 
 // The database calls, in one place.
 const projDb = {
@@ -4751,6 +4771,12 @@ function timelineHtml(p) {
     html += `<div class="ptl-cell ptl-sep ptl-meets" style="grid-row:${mr};grid-column:${w + 1}">${ms.map((m) =>
       `<button class="ptl-meet k-${m.kind}" data-act="meet-edit" data-id="${m.id}"><span>▲</span>${escapeHtml(m.title)}<small>${DAY_NAMES[(m.weekday || 1) - 1]}${m.time ? ` ${m.time.slice(0, 5)}` : ''}</small></button>`).join('')}</div>`;
   }
+  html += `<div class="ptl-cell ptl-lab ptl-sep" style="grid-row:${mr + 1};grid-column:1">Tasks</div>`;
+  for (let w = 1; w <= p.weeks; w++) {
+    const from = projWeekStart(p, w);
+    const chips = Array.from({ length: 7 }, (_, k) => cardChipsOn(p, addDaysISO(from, k), true)).join('');
+    html += `<div class="ptl-cell ptl-sep ptl-tasks" data-drop-week="${w}" style="grid-row:${mr + 1};grid-column:${w + 1}">${chips}</div>`;
+  }
   return `<div class="ptl-scroll"><div class="ptl" style="grid-template-columns:${cols}">${html}</div></div>`;
 }
 
@@ -4780,52 +4806,54 @@ function toggleProjFold(id) {
 }
 // Monthly format: a calendar grid per month with meetings and step deadlines on their days,
 // and the steps listed underneath. Tap a date to add a meeting on it.
+// Cards scheduled on a day, as small stickies you can drag elsewhere (tap opens the task).
+function cardChipsOn(p, iso, short = false) {
+  const b = projBoards.get(p.id);
+  if (!b) return '';
+  return b.cards.filter((c) => cardDate(c) === iso).map((c) => {
+    const done = cardDone(c), text = c.text.trim().split('\n')[0];
+    return `<div class="pm-card c-${CARD_COLORS.includes(c.color) ? c.color : 'amber'} ${done ? 'done' : ''}" data-dragcard="${c.id}" title="${escapeHtml(text)} · drag to move, tap to open">
+      ${short ? `<small>${DAY_NAMES[(parseISO(iso).getDay() + 6) % 7]}</small> ` : ''}${done ? '✓ ' : ''}${escapeHtml(text)}</div>`;
+  }).join('');
+}
 function monthViewHtml(p) {
-  const today = todayISO(), [a, z] = projSpan(p), [ink, fill, mid] = pcol(p);
+  const today = todayISO(), open = noTime(p), [a, z] = open ? ['0000-00-00', '9999-12-31'] : projSpan(p), [ink, fill, mid] = pcol(p);
   const on = {};
   const add = (d, h) => { on[d] = (on[d] || '') + h; };
-  for (const m of [...p.meetings].sort((x, y) => (x.time || '99').localeCompare(y.time || '99'))) {
-    add(meetingDate(p, m), `<button class="pm-ev k-${m.kind}" data-act="meet-edit" data-id="${m.id}" title="${escapeHtml(m.title)}">${m.time ? `<small>${m.time.slice(0, 5)}</small> ` : ''}${escapeHtml(m.title)}</button>`);
-  }
-  for (const s of p.steps) add(stepDue(p, s), `<button class="pm-ev due ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" title="${escapeHtml(s.title)} due">⚑ ${escapeHtml(s.title)}</button>`);
-  // one month at a time: the month you moved to, else this month (or the nearest end of the project)
-  const all = projMonths(p), now = today.slice(0, 7);
-  const mk = all.includes(projMonthView.get(p.id)) ? projMonthView.get(p.id) : all.includes(now) ? now : now < all[0] ? all[0] : all.at(-1);
-  const i = all.indexOf(mk);
-  const months = [mk].map((mk) => {
-    const end = monthEnd(mk);
-    let cells = '';
-    for (let d = weekOf(monthStart(mk)); !(d > end && parseISO(d).getDay() === 1); d = addDaysISO(d, 1)) {
-      const inMonth = d.slice(0, 7) === mk;
-      cells += `<div class="pm-day ${inMonth ? '' : 'out'} ${d === today ? 'today' : ''} ${d < a || d > z ? 'off' : ''}">
-        ${inMonth ? `<button class="pm-num" data-act="meet-new" data-day="${d}" aria-label="Add a meeting on ${fmtShort(d)}">${parseISO(d).getDate()}</button>${on[d] || ''}` : ''}</div>`;
+  if (!open) {
+    for (const m of [...p.meetings].sort((x, y) => (x.time || '99').localeCompare(y.time || '99'))) {
+      add(meetingDate(p, m), `<button class="pm-ev k-${m.kind}" data-act="meet-edit" data-id="${m.id}" title="${escapeHtml(m.title)}">${m.time ? `<small>${m.time.slice(0, 5)}</small> ` : ''}${escapeHtml(m.title)}</button>`);
     }
-    return `<div class="pm-month"><div class="pm-nav">
-        <button class="icon-btn" data-act="pm-month" data-mk="${all[i - 1] || ''}" ${i > 0 ? '' : 'disabled'} aria-label="Previous month">‹</button>
-        <h3>${monthName(mk)}<small>Month ${i + 1} of ${all.length}</small></h3>
-        <button class="icon-btn" data-act="pm-month" data-mk="${all[i + 1] || ''}" ${i < all.length - 1 ? '' : 'disabled'} aria-label="Next month">›</button>
-        ${mk !== now && all.includes(now) ? `<button class="mini-btn" data-act="pm-month" data-mk="${now}">This month</button>` : ''}</div>
-      <div class="pm-grid">${DAY_NAMES.map((n) => `<div class="pm-dn">${n}</div>`).join('')}${cells}</div></div>`;
-  }).join('');
-  const steps = p.steps.map((s) => `<button class="pm-step ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" style="--pc:${mid};background:${fill};color:${ink}">
+    for (const s of p.steps) add(stepDue(p, s), `<button class="pm-ev due ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" title="${escapeHtml(s.title)} due">⚑ ${escapeHtml(s.title)}</button>`);
+  }
+  // one month at a time: the month you moved to, else this month (or the nearest end of the project);
+  // an ongoing project has no first or last month
+  const now = today.slice(0, 7), all = open ? null : projMonths(p);
+  const picked = projMonthView.get(p.id);
+  const mk = open ? (picked || now) : all.includes(picked) ? picked : all.includes(now) ? now : now < all[0] ? all[0] : all.at(-1);
+  const i = open ? 0 : all.indexOf(mk);
+  const prev = open ? addMonthKey(mk, -1) : all[i - 1], next = open ? addMonthKey(mk, 1) : all[i + 1];
+  const end = monthEnd(mk);
+  let cells = '';
+  for (let d = weekOf(monthStart(mk)); !(d > end && parseISO(d).getDay() === 1); d = addDaysISO(d, 1)) {
+    const inMonth = d.slice(0, 7) === mk;
+    cells += `<div class="pm-day ${inMonth ? '' : 'out'} ${d === today ? 'today' : ''} ${d < a || d > z ? 'off' : ''}" ${inMonth ? `data-drop-day="${d}"` : ''}>
+      ${inMonth ? `${open ? `<span class="pm-num">${parseISO(d).getDate()}</span>` : `<button class="pm-num" data-act="meet-new" data-day="${d}" aria-label="Add a meeting on ${fmtShort(d)}">${parseISO(d).getDate()}</button>`}${on[d] || ''}${cardChipsOn(p, d)}` : ''}</div>`;
+  }
+  const month = `<div class="pm-month"><div class="pm-nav">
+      <button class="icon-btn" data-act="pm-month" data-mk="${prev || ''}" ${prev ? '' : 'disabled'} aria-label="Previous month">‹</button>
+      <h3>${monthName(mk)}${open ? '' : `<small>Month ${i + 1} of ${all.length}</small>`}</h3>
+      <button class="icon-btn" data-act="pm-month" data-mk="${next || ''}" ${next ? '' : 'disabled'} aria-label="Next month">›</button>
+      ${mk !== now && (open || all.includes(now)) ? `<button class="mini-btn" data-act="pm-month" data-mk="${now}">This month</button>` : ''}</div>
+    <div class="pm-grid">${DAY_NAMES.map((n) => `<div class="pm-dn">${n}</div>`).join('')}${cells}</div></div>`;
+  const steps = open ? '' : p.steps.map((s) => `<button class="pm-step ${s.done ? 'done' : ''}" data-act="step-edit" data-id="${s.id}" style="--pc:${mid};background:${fill};color:${ink}">
     <b>${s.done ? '✓ ' : ''}${escapeHtml(s.title)}</b><small>${shortRange(projWeekStart(p, s.week_from), stepDue(p, s))}</small></button>`).join('');
-  return `<div class="pmonths">${months}</div>${steps ? `<div class="pm-steps"><h3>Steps</h3>${steps}</div>` : ''}`;
+  return `<div class="pmonths">${month}</div>${steps ? `<div class="pm-steps"><h3>Steps</h3>${steps}</div>` : ''}`;
 }
 
 function boardHtml(p) {
   const b = projBoards.get(p.id);
   if (!b) { loadBoard(p.id); return '<p class="muted pad small">Loading the board…</p>'; }
-  if (boardMode === 'sort') {
-    const cards = [...b.cards].sort((x, y) => x.rank - y.rank);
-    if (!cards.length) return '<p class="muted pad small">No cards yet. Add your thoughts in Brainstorm first.</p>';
-    return `<div class="psort">${cards.map((c, i) => `<div class="psort-row">
-      <span class="psort-n">${i + 1}</span>
-      <div class="psort-move"><button class="mini-btn" data-act="card-up" data-id="${c.id}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button class="mini-btn" data-act="card-down" data-id="${c.id}" ${i === cards.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div>
-      <span class="psort-text">${escapeHtml(c.text || 'Empty card')}</span>
-      ${noTime(p) ? '' : `<select data-card-week="${c.id}">${weekOptions(p, c.week, true)}</select>`}
-      ${c.task_id && state.commitments.some((x) => x.id === c.task_id) ? `<a class="mini-btn" href="#/c/${c.task_id}">✓ Task</a>` : `<button class="mini-btn" data-act="card-task" data-id="${c.id}">To task</button>`}
-    </div>`).join('')}</div>`;
-  }
   const h = Math.max(340, ...b.cards.map((c) => c.y + 150));
   const byId = new Map(b.cards.map((c) => [c.id, c]));
   const lines = b.links.map((l) => {
@@ -4838,10 +4866,12 @@ function boardHtml(p) {
     ${b.cards.map((c) => `<div class="pcard c-${CARD_COLORS.includes(c.color) ? c.color : 'amber'} ${editingCard === c.id ? 'editing' : ''}" data-card="${c.id}" style="left:${c.x}px;top:${c.y}px">
       ${editingCard === c.id ? `<textarea data-card-text="${c.id}" maxlength="400" placeholder="Type a thought…">${escapeHtml(c.text)}</textarea>
         <div class="pcard-tools">${CARD_COLORS.map((k) => `<button class="nc c-${k}" data-act="card-color" data-id="${c.id}" data-color="${k}" aria-label="${k}"></button>`).join('')}
-        <button class="mini-btn" data-act="card-done">Done</button><button class="mini-btn" data-act="card-delete" data-id="${c.id}" aria-label="Delete card">×</button></div>`
-        : `<div class="pcard-text">${c.text ? escapeHtml(c.text) : '<span class="muted">Empty</span>'}</div>`}
+        <button class="mini-btn" data-act="card-done">Done</button><button class="mini-btn" data-act="card-delete" data-id="${c.id}" aria-label="Delete card">×</button></div>
+        <label class="pcard-when">Day <input type="date" data-card-date="${c.id}" value="${cardDate(c) || ''}"></label>`
+        : `<div class="pcard-text">${c.text ? escapeHtml(c.text) : '<span class="muted">Empty</span>'}</div>
+        ${cardDate(c) ? `<span class="pcard-date ${cardDone(c) ? 'done' : ''}">${cardDone(c) ? '✓' : '📅'} ${fmtShort(cardDate(c))}</span>` : ''}`}
       <span class="pcard-link" data-link-from="${c.id}" title="Drag to another card to connect"></span></div>`).join('')}
-    ${b.cards.length ? '' : '<p class="pbrain-empty">Double-click (or tap + Card) to write a thought. Drag the dot on a card onto another card to connect them.</p>'}
+    ${b.cards.length ? '' : '<p class="pbrain-empty">Double-click (or tap + Card) to write a thought. Drag the dot on a card onto another card to connect them, or drag a card onto a day in the calendar above to schedule it.</p>'}
   </div>`;
 }
 
@@ -4859,17 +4889,17 @@ function projectPageHtml() {
     </header>
     ${linksHtml(p, 'file')}
     ${linksHtml(p, 'ref')}
-    ${noTime(p) ? stepsChecklistHtml(p) : `<section class="card ${foldedCal.has(p.id) ? 'folded' : ''}" data-section="${p.layout === 'months' ? 'Calendar' : 'Timeline'}">
-      <div class="card-head"><h2>${p.layout === 'months' ? 'Calendar' : 'Timeline'}</h2>
+    ${noTime(p) ? stepsChecklistHtml(p) : ''}
+    <section class="card ${foldedCal.has(p.id) ? 'folded' : ''}" data-section="${p.layout === 'weeks' ? 'Timeline' : 'Calendar'}">
+      <div class="card-head"><h2>${p.layout === 'weeks' ? 'Timeline' : 'Calendar'}</h2>
         <span class="hint push">${projRange(p)}</span>
         <button class="mini-btn" data-act="proj-fold" aria-expanded="${!foldedCal.has(p.id)}">${foldedCal.has(p.id) ? 'Show' : 'Hide'}</button></div>
-      ${foldedCal.has(p.id) ? '' : `${p.layout === 'months' ? monthViewHtml(p) : timelineHtml(p)}
-      <div class="btn-row"><button class="btn" data-act="step-new">+ Step</button><button class="btn" data-act="meet-new">+ Meeting</button></div>`}
-    </section>`}
+      ${foldedCal.has(p.id) ? '' : `${p.layout === 'weeks' ? timelineHtml(p) : monthViewHtml(p)}
+      ${noTime(p) ? '' : '<div class="btn-row"><button class="btn" data-act="step-new">+ Step</button><button class="btn" data-act="meet-new">+ Meeting</button></div>'}`}
+    </section>
     <section class="card" data-section="Task board">
-      <div class="card-head"><h2>Task board</h2>
-        <div class="seg-mini"><button data-act="board-brain" class="${boardMode === 'brain' ? 'on' : ''}">Brainstorm</button><button data-act="board-sort" class="${boardMode === 'sort' ? 'on' : ''}">Sort</button></div></div>
-      ${boardMode === 'brain' ? '<div class="btn-row"><button class="btn" data-act="card-new">+ Card</button></div>' : `<p class="help">Put the cards in order${noTime(p) ? '' : ', give each a week,'} and turn them into tasks.</p>`}
+      <div class="card-head"><h2>Task board</h2><span class="hint">Drag a card onto a day to schedule it</span></div>
+      <div class="btn-row"><button class="btn" data-act="card-new">+ Card</button></div>
       ${boardHtml(p)}
     </section>`;
 }
@@ -5082,6 +5112,8 @@ async function closeCard() {
   editingCard = null;
   if (c) {
     clearTimeout(cardSaveTimer);
+    const t = cardTask(c), name = c.text.trim().split('\n')[0].slice(0, 120);
+    if (t && name && t.name !== name) { t.name = name; save(); } // the task keeps the card's wording
     try { await projDb.save('project_cards', { id: c.id, text: c.text, color: c.color }); } catch (e) { toast(sbErr(e)); }
   }
   render();
@@ -5094,50 +5126,120 @@ async function deleteCard(id) {
   if (editingCard === id) editingCard = null;
   render();
 }
-async function moveCardRank(id, dir) {
-  const b = projBoards.get(route.projId);
-  const cards = [...b.cards].sort((x, y) => x.rank - y.rank);
-  const i = cards.findIndex((c) => c.id === id), j = i + dir;
-  if (i < 0 || j < 0 || j >= cards.length) return;
-  [cards[i], cards[j]] = [cards[j], cards[i]];
-  cards.forEach((c, k) => { c.rank = k; });
-  render();
-  try { await Promise.all([cards[i], cards[j]].map((c) => projDb.save('project_cards', { id: c.id, rank: c.rank }))); } catch (e) { toast(sbErr(e)); }
+// A scheduled card is a one-off task (so it's on Today and in My plan); the task's date is the
+// card's day, so changing the date on the task moves the card too.
+const cardTask = (c) => (c && c.task_id && state.commitments.find((x) => x.id === c.task_id && x.freq === 'once')) || null;
+const cardDate = (c) => { const t = cardTask(c); return t ? t.date : null; };
+function cardDone(c) {
+  const t = cardTask(c);
+  const it = t && t.date && state.weeks[weekOf(t.date)] && state.weeks[weekOf(t.date)].items[t.id];
+  return !!(it && periodDone(it));
 }
-// A sorted card becomes a one-off task on the Monday of its week (or "date to be confirmed").
-async function cardToTask(id) {
+async function scheduleCard(id, date) {
   const p = projById(route.projId), c = findCard(id);
-  if (!p || !c || !c.text.trim()) { toast('Write something on the card first'); return; }
-  const date = c.week && !noTime(p) ? (projNowWeek(p) === c.week ? todayISO() : projWeekStart(p, c.week)) : null;
-  const t = normaliseCommitment(newCommitment({ name: c.text.trim().split('\n')[0].slice(0, 120), section: p.name.slice(0, 40), freq: 'once', kind: 'task',
-    date, hours: 1, notes: c.text.trim().includes('\n') ? c.text.trim().split('\n').slice(1).join('\n').trim() : '', notionUrl: p.notion_url || '', order: nextOrder() }));
+  if (!p || !c || !/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return;
+  if (!c.text.trim()) { toast('Write something on the card first'); return; }
+  let t = cardTask(c);
+  if (t) {
+    if (t.date === date) return;
+    moveOnceItem(t.id, t.date, date);
+    t.date = date;
+    save(); render();
+    toast(`Moved to ${fmtShort(date)}`);
+    return;
+  }
+  const [first, ...rest] = c.text.trim().split('\n');
+  t = normaliseCommitment(newCommitment({ name: first.slice(0, 120), section: p.name.slice(0, 40), freq: 'once', kind: 'task',
+    date, hours: 1, notes: rest.join('\n').trim(), notionUrl: p.notion_url || '', order: nextOrder() }));
   state.commitments.push(t);
-  renumber();
-  save();
+  renumber(); save();
   c.task_id = t.id;
-  try { await projDb.save('project_cards', { id: c.id, task_id: t.id }); } catch (e) { toast(sbErr(e)); }
   render();
-  toast(date ? `Now a task on ${fmtShort(date)}` : 'Now a task (date to be confirmed)');
+  toast(`Scheduled for ${fmtShort(date)} · it’s on Today then`);
+  try { await projDb.save('project_cards', { id: c.id, task_id: t.id }); } catch (e) { toast(sbErr(e)); }
+}
+// Back to the board: the task it made goes away (unless it's already been ticked off).
+async function unscheduleCard(id) {
+  const c = findCard(id), t = cardTask(c);
+  if (!t) return;
+  const it = t.date && state.weeks[weekOf(t.date)] && state.weeks[weekOf(t.date)].items[t.id];
+  if (it && hasData(it)) { toast('It’s already ticked off, so it stays on that day'); return; }
+  removeCommitment(t.id);
+  renumber(); save();
+  c.task_id = null;
+  render();
+  toast('Back on the board, not scheduled');
+  try { await projDb.save('project_cards', { id: c.id, task_id: null }); } catch (e) { toast(sbErr(e)); }
+}
+// Dropped on a week of the week-by-week timeline: pick the day.
+function openDayPicker(cardId, week) {
+  const p = projById(route.projId), [a, z] = projSpan(p), from = projWeekStart(p, week), cur = cardDate(findCard(cardId));
+  openSheet(`<div class="sheet-head"><h3>Which day in week ${week}?</h3></div>
+    <div class="daypick">${DAY_NAMES.map((n, i) => {
+      const d = addDaysISO(from, i);
+      return `<button class="mini-btn ${d === cur ? 'on' : ''}" data-act="card-day" data-day="${d}" ${d < a || d > z ? 'disabled' : ''}><b>${n}</b><small>${fmtDay(parseISO(d), { day: 'numeric', month: 'short' })}</small></button>`;
+    }).join('')}</div>`, { card: cardId });
 }
 
 // Dragging on the brainstorm board: move a card, or drag its dot onto another card to link them.
+// Dragged out of the board, a card floats with the pointer and can be dropped on a day of the project
+// calendar (or a week of the timeline) to schedule it. Cards already on the calendar can be dragged
+// to another day, or back onto the board to unschedule them.
 let cardDrag = null;
 document.addEventListener('pointerdown', (e) => {
+  if (e.button > 0) return;
+  const chip = e.target.closest('[data-dragcard]');
+  if (chip) {
+    cardDrag = { chip: true, el: chip, id: chip.dataset.dragcard, sx: e.clientX, sy: e.clientY, moved: false };
+    chip.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return;
+  }
   const board = e.target.closest('.pbrain');
-  if (!board || e.button > 0) return;
+  if (!board) return;
   const linkFrom = e.target.closest('[data-link-from]');
   const el = e.target.closest('.pcard');
-  if (!el || (!linkFrom && e.target.closest('button, textarea, a'))) return;
-  const br = board.getBoundingClientRect(), r = el.getBoundingClientRect();
-  cardDrag = { board, el, id: el.dataset.card, link: !!linkFrom, dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moved: false, br };
+  if (!el || (!linkFrom && e.target.closest('button, textarea, a, input, label'))) return;
+  const r = el.getBoundingClientRect();
+  cardDrag = { board, el, id: el.dataset.card, link: !!linkFrom, dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moved: false };
   el.setPointerCapture(e.pointerId);
   e.preventDefault();
 });
+const dropTargetAt = (x, y) => document.elementsFromPoint(x, y).map((el) => el.closest && el.closest('[data-drop-day], [data-drop-week], .pbrain')).find(Boolean) || null;
+function floatCard(d, e) {
+  if (!d.ghost) {
+    const c = findCard(d.id);
+    d.ghost = Object.assign(document.createElement('div'), { className: `pcard-ghost c-${c && CARD_COLORS.includes(c.color) ? c.color : 'amber'}`, textContent: (c && c.text) || '' });
+    document.body.appendChild(d.ghost);
+    d.el.classList.add('lifted');
+    d.scroll = setInterval(() => { // scroll the page when held near the top or bottom
+      if (d.y < 70) window.scrollBy(0, -14); else if (d.y > innerHeight - 70) window.scrollBy(0, 14);
+      markDrop(d);
+    }, 16);
+  }
+  d.x = e.clientX; d.y = e.clientY;
+  d.ghost.style.transform = `translate(${e.clientX - 60}px, ${e.clientY - 20}px)`;
+  markDrop(d);
+}
+function markDrop(d) {
+  const t = dropTargetAt(d.x, d.y);
+  if (t === d.target) return;
+  if (d.target) d.target.classList.remove('drop-on');
+  d.target = t && !t.classList.contains('pbrain') ? t : null;
+  if (d.target) d.target.classList.add('drop-on');
+}
+function endFloat(d) {
+  clearInterval(d.scroll);
+  if (d.ghost) d.ghost.remove();
+  if (d.target) d.target.classList.remove('drop-on');
+  if (d.el) d.el.classList.remove('lifted');
+}
 document.addEventListener('pointermove', (e) => {
   const d = cardDrag;
   if (!d) return;
   if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 6) return;
   d.moved = true;
+  if (d.chip) { floatCard(d, e); return; }
   const br = d.board.getBoundingClientRect();
   if (d.link) {
     const c = findCard(d.id), temp = d.board.querySelector('.pbrain-temp');
@@ -5146,6 +5248,8 @@ document.addEventListener('pointermove', (e) => {
     temp.setAttribute('x2', e.clientX - br.left); temp.setAttribute('y2', e.clientY - br.top);
     return;
   }
+  const outside = e.clientX < br.left || e.clientX > br.right || e.clientY < br.top || e.clientY > br.bottom;
+  if (outside || d.ghost) { floatCard(d, e); d.el.classList.remove('dragging'); return; }
   d.el.classList.add('dragging');
   d.el.style.left = `${Math.max(0, Math.min(br.width - 60, e.clientX - br.left - d.dx))}px`;
   d.el.style.top = `${Math.max(0, e.clientY - br.top - d.dy)}px`;
@@ -5155,6 +5259,16 @@ document.addEventListener('pointerup', async (e) => {
   cardDrag = null;
   if (!d) return;
   const c = findCard(d.id);
+  if (d.ghost) {
+    const t = dropTargetAt(e.clientX, e.clientY);
+    endFloat(d);
+    if (t && t.dataset.dropDay) scheduleCard(d.id, t.dataset.dropDay);
+    else if (t && t.dataset.dropWeek) openDayPicker(d.id, +t.dataset.dropWeek);
+    else if (t && t.classList.contains('pbrain') && d.chip) unscheduleCard(d.id);
+    else render();
+    return;
+  }
+  if (d.chip) { if (!d.moved) { const task = cardTask(c); if (task) location.hash = `#/c/${task.id}`; } return; }
   if (!c) return;
   if (d.link) {
     const target = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest && x.closest('.pcard')).find((x) => x && x.dataset.card !== d.id);
@@ -5173,6 +5287,7 @@ document.addEventListener('pointerup', async (e) => {
   render();
   try { await projDb.save('project_cards', { id: c.id, x: c.x, y: c.y }); } catch (err) { toast(sbErr(err)); }
 });
+document.addEventListener('pointercancel', () => { if (cardDrag) { endFloat(cardDrag); cardDrag = null; render(); } });
 document.addEventListener('dblclick', (e) => {
   const board = e.target.closest('.pbrain');
   if (!board || e.target.closest('.pcard')) return;
@@ -5496,6 +5611,7 @@ document.addEventListener('click', (e) => {
     case 'step-delete': removeFromSheet('project_steps'); break;
     case 'meet-new': openMeetSheet(null, btn.dataset.day || null); break;
     case 'step-toggle': toggleStep(btn.dataset.id); break;
+    case 'buddy-ev': openBuddyEvent(btn.dataset); break;
     case 'pm-month': if (btn.dataset.mk) { projMonthView.set(route.projId, btn.dataset.mk); render(); } break;
     case 'proj-fold': toggleProjFold(route.projId); break;
     case 'logo-find': findLogo(btn.closest('form'), btn); break;
@@ -5508,10 +5624,6 @@ document.addEventListener('click', (e) => {
     }
     case 'meet-edit': openMeetSheet(btn.dataset.id); break;
     case 'meet-delete': removeFromSheet('project_meetings'); break;
-    case 'board-brain': case 'board-sort':
-      boardMode = act === 'board-sort' ? 'sort' : 'brain'; editingCard = null;
-      try { localStorage.setItem('boardMode', boardMode); } catch {}
-      render(); break;
     case 'card-new': {
       // the next free spot, left to right, in rows that fit the board's width
       const b = projBoards.get(route.projId), n = b ? b.cards.length : 0, board = $app.querySelector('.pbrain');
@@ -5521,9 +5633,8 @@ document.addEventListener('click', (e) => {
     case 'card-done': closeCard(); break;
     case 'card-delete': deleteCard(btn.dataset.id); break;
     case 'card-color': { const c = findCard(btn.dataset.id); if (c) { c.color = btn.dataset.color; saveCardSoon(c); render(); } break; }
-    case 'card-up': moveCardRank(btn.dataset.id, -1); break;
-    case 'card-down': moveCardRank(btn.dataset.id, 1); break;
-    case 'card-task': cardToTask(btn.dataset.id); break;
+    case 'card-unschedule': unscheduleCard(btn.dataset.id); break;
+    case 'card-day': scheduleCard(sheetCtx && sheetCtx.card, btn.dataset.day); closeSheet(); break;
     case 'invite-accept': acceptInvite(btn.dataset.id); break;
     case 'invite-decline': declineInvite(btn.dataset.id); break;
     case 'invite-takeback': takeBackInvite(btn.dataset.email); break;
@@ -5726,9 +5837,8 @@ document.addEventListener('change', (e) => {
   }
   if (e.target.name === 'customColor') { pickCustomColor(e.target); return; }
   if (e.target.name === 'layout' && e.target.form && e.target.form.dataset.form === 'project') { e.target.form.dataset.layout = e.target.value; return; }
-  if (e.target.dataset && e.target.dataset.cardWeek) {
-    const c = findCard(e.target.dataset.cardWeek);
-    if (c) { c.week = e.target.value ? +e.target.value : null; projDb.save('project_cards', { id: c.id, week: c.week }).catch((err) => toast(sbErr(err))); }
+  if (e.target.dataset && e.target.dataset.cardDate) { // the date box on a card being edited
+    if (e.target.value) scheduleCard(e.target.dataset.cardDate, e.target.value); else unscheduleCard(e.target.dataset.cardDate);
     return;
   }
   if (e.target.closest('form[data-form="buddy-routine"]')) {

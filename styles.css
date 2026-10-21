@@ -1066,15 +1066,6 @@ button.dbox { padding: 0; cursor: pointer; color: var(--fill-ink); }
 .pcard-link { position: absolute; right: -7px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%;
   background: #fff; border: 2px solid rgba(27, 31, 29, 0.5); cursor: crosshair; }
 .pcard-link:hover { background: var(--fill); }
-.psort { display: flex; flex-direction: column; margin-top: 4px; }
-.psort-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-top: 1px solid var(--line); }
-.psort-n { width: 20px; text-align: right; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
-.psort-move { display: flex; gap: 2px; }
-.psort-move .mini-btn { padding: 2px 7px; }
-.psort-text { flex: 1; min-width: 0; font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
-.psort-row select { width: auto; max-width: 42%; font-size: 12.5px; padding: 5px 6px; }
-.psort-row a.mini-btn { text-decoration: none; color: var(--accent); white-space: nowrap; }
-@media (max-width: 560px) { .psort-row { flex-wrap: wrap; } .psort-text { flex-basis: calc(100% - 100px); } .psort-row select { max-width: none; flex: 1; margin-left: 28px; } }
 
 /* Project meetings and deadlines on the calendar and Today */
 .dpill.projpill { border-color: var(--pc); text-decoration: none; }
@@ -1169,3 +1160,34 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, 
 .card.folded .card-head { margin-bottom: 0; }
 .card-head .hint.push { margin-left: auto; }
 .card-head .hint + .mini-btn { margin-left: 8px; }
+
+/* Scheduling cards: drag from the task board onto a day (or a week of the timeline) */
+.pcard-date { display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 650; padding: 1px 7px; border-radius: 99px; background: rgba(255, 255, 255, 0.65); }
+.pcard-date.done { color: var(--accent); }
+.pcard-when { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11.5px; font-weight: 600; }
+.pcard-when input { flex: 1; min-width: 0; font-size: 12px; padding: 3px 6px; }
+.pcard.lifted { opacity: .35; }
+.pcard-ghost { position: fixed; left: 0; top: 0; z-index: 1000; width: 140px; padding: 8px 10px; border-radius: 10px; pointer-events: none;
+  font-size: 12.5px; font-weight: 600; line-height: 1.25; color: #2b2a26; box-shadow: 0 16px 30px -10px rgba(0, 0, 0, 0.4); transform-origin: center;
+  max-height: 64px; overflow: hidden; rotate: -2deg; }
+.pcard-ghost.c-amber, .pm-card.c-amber { background: #ffec8a; } .pcard-ghost.c-coral, .pm-card.c-coral { background: #ffc7ba; }
+.pcard-ghost.c-teal, .pm-card.c-teal { background: #c7efc1; } .pcard-ghost.c-purple, .pm-card.c-purple { background: #ddd0fa; }
+.pcard-ghost.c-blue, .pm-card.c-blue { background: #c6e5f5; }
+.pm-card { border-radius: 5px; padding: 2px 5px; font-size: 11px; font-weight: 600; color: #2b2a26; cursor: grab; touch-action: none; user-select: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.pm-card small { font-size: 10px; font-weight: 700; opacity: .7; }
+.pm-card.done { opacity: .55; text-decoration: line-through; }
+.pm-day.drop-on, .ptl-tasks.drop-on { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
+.ptl-tasks { display: flex; flex-direction: column; gap: 3px; min-height: 34px; border-radius: 8px; }
+.daypick { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 4px 0 8px; }
+.daypick .mini-btn { display: flex; flex-direction: column; align-items: center; padding: 8px 2px; }
+.daypick .mini-btn small { font-size: 11px; color: var(--muted); }
+.daypick .mini-btn.on { box-shadow: inset 0 0 0 2px var(--accent); }
+.daypick .mini-btn:disabled { opacity: .35; }
+@media (max-width: 420px) { .daypick { grid-template-columns: repeat(4, 1fr); } }
+/* A shared-calendar event's details */
+.sev p { margin: 0 0 10px; font-size: 15px; line-height: 1.4; }
+.sev h4 { margin: 14px 0 6px; }
+.sev-mine { display: block; padding: 7px 10px; border-radius: 10px; background: var(--track); color: var(--ink); text-decoration: none; margin-bottom: 5px; font-size: 14px; font-weight: 600; }
+.sev-mine small { color: var(--muted); font-weight: 500; }
+.cev.buddy, .cuntimed.buddy { cursor: pointer; }
