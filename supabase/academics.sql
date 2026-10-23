@@ -33,6 +33,10 @@ alter table public.academic_courses add column if not exists week_offset int not
 alter table public.academic_courses drop constraint if exists academic_courses_week_offset_check;
 alter table public.academic_courses add constraint academic_courses_week_offset_check check (week_offset between 0 and 30);
 
+alter table public.academic_courses add column if not exists lectures_per_week int not null default 0;  -- 0 = work it out
+alter table public.academic_courses drop constraint if exists academic_courses_lpw_check;
+alter table public.academic_courses add constraint academic_courses_lpw_check check (lectures_per_week between 0 and 4);
+
 create table if not exists public.academic_settings (
   user_id uuid primary key references public.profiles on delete cascade default auth.uid(),
   term_start date not null default '2026-09-28'      -- the Monday of week 1 (LSE Michaelmas Term 2026)

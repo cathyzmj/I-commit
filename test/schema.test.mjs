@@ -169,6 +169,8 @@ await as('cathy', "insert into academic_courses (course_id, notes_url) values (1
 await as('cathy', "update academic_courses set kind = 'qual', lanes = '{\"11042\": \"reading\"}' where course_id = 11");
 await fails('cathy', "update academic_courses set kind = 'weird' where course_id = 11", [], /check/);
 await as('cathy', "update academic_courses set week_offset = 2 where course_id = 11");
+await as('cathy', "update academic_courses set lectures_per_week = 2 where course_id = 11");
+await fails('cathy', "update academic_courses set lectures_per_week = 9 where course_id = 11", [], /check/);
 await fails('cathy', "update academic_courses set week_offset = -1 where course_id = 11", [], /check/);
 await fails('cathy', "update academic_courses set lanes = '[1]' where course_id = 11", [], /check/);
 await db.exec(fs.readFileSync(new URL('../supabase/academics.sql', import.meta.url), 'utf8')); // safe to run again
