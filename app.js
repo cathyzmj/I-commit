@@ -66,6 +66,7 @@ const ICONS = {
   week: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 12h17M9.2 4.5v15M14.8 4.5v15" stroke="currentColor" stroke-width="1.8"/></svg>',
   apps: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="7" width="17" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M3.5 12.5h17" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
   cal: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="7" y="13" width="4" height="3" rx="1" fill="currentColor"/></svg>',
+  academics: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5L2.8 9 12 13.5 21.2 9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M6.5 11.3v4.4c0 1.3 2.5 2.8 5.5 2.8s5.5-1.5 5.5-2.8v-4.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21.2 9v5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   gallery: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2" fill="currentColor"/></svg>',
   commitments: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6.5h11M9 12h11M9 17.5h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="4.5" cy="6.5" r="1.4" fill="currentColor"/><circle cx="4.5" cy="12" r="1.4" fill="currentColor"/><circle cx="4.5" cy="17.5" r="1.4" fill="currentColor"/></svg>',
 };
@@ -525,7 +526,7 @@ function countLabel(it, n) {
 }
 
 // ---------- Routing ----------
-// #/today  #/cal  #/routine (was #/week)  #/apps  #/buddy  #/gallery  #/gallery/<id>[/edit]  #/commitments  #/c/<id>  #/c/<id>/edit  #/new/<freq>
+// #/today  #/cal  #/routine (was #/week)  #/academics  #/academics/<course id>  #/apps  #/buddy  #/gallery  #/gallery/<id>[/edit]  #/commitments  #/c/<id>  #/c/<id>/edit  #/new/<freq>
 function parseHash() {
   const [a, b, c] = location.hash.replace(/^#\/?/, '').split('/');
   if (a === 'c' && b) return { tab: 'commitments', id: b, edit: c === 'edit' };
@@ -539,9 +540,10 @@ function parseHash() {
   if (a === 'knowledge') return b === 'new' || c === 'edit' ? { tab: 'routine', page: 'tree-edit', treeId: b } : { tab: 'routine', page: 'knowledge', focus: b || null };
   if (a === 'tests') return { tab: 'routine', page: 'tests', testId: b || null };
   if (a === 'board') return { tab: 'cal', page: 'board' };
+  if (a === 'academics') return /^\d+$/.test(b || '') ? { tab: 'academics', page: 'course', courseId: +b } : { tab: 'academics' };
   if (a === 'gallery' && b) return { tab: 'gallery', page: b === 'new' || c === 'edit' ? 'project-edit' : 'project', projId: b };
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
-  return { tab: ['today', 'routine', 'cal', 'buddy', 'gallery', 'commitments'].includes(a) ? a : 'today' };
+  return { tab: ['today', 'routine', 'cal', 'buddy', 'gallery', 'academics', 'commitments'].includes(a) ? a : 'today' };
 }
 // The app always opens on Today (an invite link still opens its page). A refresh stays where you were.
 const isReload = (() => { try { return performance.getEntriesByType('navigation')[0].type === 'reload'; } catch { return false; } })();
@@ -553,6 +555,7 @@ window.addEventListener('hashchange', () => {
   editingCard = null;
   if (route.tab === 'buddy') refreshBuddy();
   if (route.tab === 'gallery' && projects !== null && !route.page) loadProjects();
+  if (route.tab === 'academics') acadLoad();
   if (route.page === 'account') loadLoginConfig();
   if (route.page === 'knowledge' && route.focus) focusTree(route.focus);
   if (route.tab === 'apps') {
@@ -565,7 +568,7 @@ window.addEventListener('hashchange', () => {
 });
 // Pages that are mostly a form being filled in: background refreshes leave them alone, so
 // switching to another window and back never wipes what you've typed.
-const formOpen = () => !!(route.edit || /-edit$/.test(route.page || '') || route.page === 'tests');
+const formOpen = () => !!(route.edit || /-edit$/.test(route.page || '') || route.page === 'tests' || (route.tab === 'academics' && !route.page && acad.conn === false));
 function goBack(fallback = '#/today') {
   if (history.length > 1) history.back(); else location.hash = fallback;
 }
@@ -587,6 +590,7 @@ function render() {
   else if (route.page === 'tests') html = testsPageHtml();
   else if (route.page === 'board') html = boardPageHtml();
   else if (route.page === 'project') html = projectPageHtml();
+  else if (route.page === 'course') html = courseHtml();
   else if (route.page === 'project-edit') html = projectEditHtml();
   else if (route.id && route.edit) html = editPageHtml();
   else if (route.id) html = detailPageHtml(route.id);
@@ -595,6 +599,7 @@ function render() {
   else if (route.tab === 'cal') html = calendarTabHtml();
   else if (route.tab === 'apps') html = appsTabHtml();
   else if (route.tab === 'gallery') html = galleryHtml();
+  else if (route.tab === 'academics') html = academicsHtml();
   else if (route.tab === 'commitments') html = commitmentsTabHtml();
   else html = todayTabHtml();
   $app.dataset.tab = route.id || route.page ? 'page' : route.tab;
@@ -611,7 +616,7 @@ function render() {
 // Phones keep the bottom tab bar instead (CSS switches at 900px).
 // [route, full name, short name for the phone tab bar]
 const NAV_PAGES = [['today', 'Today', 'Today'], ['cal', 'Calendar', 'Calendar'], ['routine', 'Routine', 'Routine'],
-  ['apps', 'Applications', 'Apps'], ['buddy', 'Work Buddy', 'Buddy'],
+  ['academics', 'Academics', 'Study'], ['apps', 'Applications', 'Apps'], ['buddy', 'Work Buddy', 'Buddy'],
   ['gallery', 'Gallery', 'Gallery'], ['commitments', 'All commitments', 'All']];
 function sideNavHtml() {
   const extra = [['#/calendar', 'Calendars'], ['#/account', state.account ? 'Account' : 'Sign in'], ['#/widget', 'Phone widget']];
@@ -829,6 +834,7 @@ function todayTabHtml() {
       <div class="card-head"><h2>Routine</h2><a class="txt-btn" href="#/routine">Record ›</a></div>
       ${routine}
     </section>
+    ${studyTodayHtml()}
     <section class="card" data-section="Today only">
       <div class="card-head"><h2>Today only</h2><a class="txt-btn" href="#/new/once">+ Add</a></div>
       ${onceToday.length ? onceToday.map(([id, it]) => periodRowHtml(wk, id, it)).join('') : notesOn(iso).length || projectItemsOn(iso).length ? '' : '<p class="muted pad small">No one-off tasks today.</p>'}
@@ -2290,7 +2296,7 @@ async function sbSignIn(idToken) {
 async function sbSignOut() {
   if (sb) { try { await sb.auth.signOut(); } catch { /* offline */ } }
   sbUser = null; myProfile = null; buddyView = null; myInvites = []; calPeople = []; sharedCache.clear(); unsubscribeBuddy();
-  projects = null; projectsError = null; projBoards.clear();
+  projects = null; projectsError = null; projBoards.clear(); acadReset();
 }
 const sbErr = (error) => (error && error.message ? error.message.replace(/^.*?exception:\s*/i, '') : 'Something went wrong.');
 
@@ -2335,6 +2341,7 @@ async function refreshBuddy() {
     }
     buddyError = null;
     if (projects === null) loadProjects();
+    acadEnsure();
     buddyAutoTick();
     scheduleShare(500);
   } catch (e) { buddyError = sbErr(e); }
@@ -5304,6 +5311,365 @@ document.addEventListener('click', async (e) => {
   try { await projDb.remove('project_links', { from_card: line.dataset.from, to_card: line.dataset.to }); } catch (err) { toast(sbErr(err)); }
 });
 
+// ---------- Academics (Moodle) ----------
+// Reads your courses from Moodle (through the server, see server/moodle.mjs) so you never have to log
+// in and hunt for things: each course shows where the course has got to this term vs what you've
+// finished, a progress tree, and a catch-up list. Every item has an Open button (files open straight
+// away) and your notes link for the course (e.g. OneNote). Your ticks, notes links and term dates are
+// kept in Supabase (supabase/academics.sql); the course contents are only read, never copied.
+const ACAD_KEYS = ['blue', 'purple', 'teal', 'coral', 'pink', 'amber', 'green'];
+const ACAD_STALE_MS = 3 * 3600e3;          // reload course contents when older than this
+const acad = {
+  conn: null,            // null = not known yet, false = not connected, true = connected
+  name: '', courses: null, contents: new Map(), errors: new Map(),
+  progress: new Map(),   // item id -> when you ticked it
+  tracked: new Set(), notes: new Map(), termStart: '2026-09-28', haveRows: false,
+  at: 0, failAt: 0, loading: false, error: '', expired: false, dbMissing: false, choosing: false, just: null,
+};
+const acadOpenWeeks = new Map(); // "course:week" -> opened or folded by you
+
+// ---- the database calls and the server calls
+const acadDb = {
+  async mine() {
+    const [p, c, s] = await Promise.all([
+      sb.from('academic_progress').select('item_id, done_at'),
+      sb.from('academic_courses').select('course_id, notes_url, tracked'),
+      sb.from('academic_settings').select('term_start').maybeSingle(),
+    ]);
+    const err = p.error || c.error || s.error;
+    if (err) throw err;
+    return { progress: p.data, courses: c.data, term: s.data };
+  },
+  async tick(item, course) {
+    const { error } = await sb.from('academic_progress').upsert({ user_id: sbUser.id, item_id: item, course_id: course }, { onConflict: 'user_id,item_id' });
+    if (error) throw error;
+  },
+  async untick(item) {
+    const { error } = await sb.from('academic_progress').delete().eq('item_id', item);
+    if (error) throw error;
+  },
+  async course(row) {
+    const { error } = await sb.from('academic_courses').upsert({ user_id: sbUser.id, ...row }, { onConflict: 'user_id,course_id' });
+    if (error) throw error;
+  },
+  async term(date) {
+    const { error } = await sb.from('academic_settings').upsert({ user_id: sbUser.id, term_start: date }, { onConflict: 'user_id' });
+    if (error) throw error;
+  },
+};
+async function moodleApi(body) {
+  const res = await fetch('/api/moodle', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${state.sync.key}` }, body: JSON.stringify(body) });
+  const r = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(r.error || 'Couldn’t reach the server.'), { status: res.status, data: r });
+  return r;
+}
+
+// ---- remembered between visits, so the tab opens at once (links are refreshed after a few hours)
+function acadSaveCache() {
+  try {
+    localStorage.setItem('acadCache', JSON.stringify({ at: acad.at, name: acad.name, courses: acad.courses, contents: [...acad.contents] }));
+  } catch { /* storage full or blocked */ }
+}
+(function acadRestore() {
+  try {
+    const c = JSON.parse(localStorage.getItem('acadCache') || 'null');
+    if (!c || !Array.isArray(c.courses)) return;
+    acad.conn = true; acad.name = c.name || ''; acad.courses = c.courses; acad.contents = new Map(c.contents || []); acad.at = c.at || 0;
+  } catch { /* nothing usable */ }
+})();
+function acadReset() {
+  Object.assign(acad, { conn: null, name: '', courses: null, error: '', expired: false, dbMissing: false, at: 0, failAt: 0 });
+  acad.contents.clear(); acad.errors.clear(); acad.progress.clear(); acad.tracked.clear(); acad.notes.clear();
+  try { localStorage.removeItem('acadCache'); } catch {}
+}
+const rerenderAcad = () => { if (['academics', 'today'].includes(route.tab) && !sheetCtx && !typing()) render(); };
+
+// ---- loading: your choices from Supabase, then Moodle
+async function acadLoad({ force = false } = {}) {
+  if (acad.loading || !sbUser || !state.sync.key) return;
+  if (!force && acad.at && Date.now() - acad.at < ACAD_STALE_MS) return;
+  if (!force && acad.failAt && Date.now() - acad.failAt < 10 * 60e3) return;
+  acad.loading = true; acad.error = ''; acad.expired = false;
+  rerenderAcad();
+  try {
+    const [st, mine] = await Promise.all([
+      moodleApi({ action: 'status' }),
+      acadDb.mine().catch((e) => { if (/does not exist|schema cache/i.test(e.message || '')) { acad.dbMissing = true; return null; } throw e; }),
+    ]);
+    if (mine) {
+      acad.dbMissing = false;
+      acad.progress = new Map(mine.progress.map((r) => [+r.item_id, r.done_at]));
+      acad.notes = new Map(mine.courses.map((r) => [+r.course_id, r.notes_url || '']));
+      acad.tracked = new Set(mine.courses.filter((r) => r.tracked).map((r) => +r.course_id));
+      acad.haveRows = mine.courses.length > 0;
+      if (mine.term && mine.term.term_start) acad.termStart = mine.term.term_start;
+    }
+    acad.conn = st.connected; acad.name = st.name || ''; acad.site = st.site || acad.site;
+    if (!st.connected) { acad.courses = null; acad.contents.clear(); try { localStorage.removeItem('acadCache'); } catch {} }
+    else {
+      acad.courses = (await moodleApi({ action: 'courses' })).courses;
+      if (mine && !acad.haveRows) await acadAutoTrack(); // first time: the courses that started recently
+      await acadLoadContents();
+    }
+    acad.at = Date.now(); acad.failAt = 0;
+    if (st.connected) acadSaveCache();
+  } catch (e) {
+    acad.error = e.message; acad.expired = !!(e.data && e.data.expired); acad.failAt = Date.now();
+    if (e.data && e.data.notConnected) acad.conn = false;
+  } finally { acad.loading = false; rerenderAcad(); }
+}
+async function acadLoadContents(ids = [...acad.tracked]) {
+  await Promise.all(ids.map(async (id) => {
+    try { acad.contents.set(id, await moodleApi({ action: 'contents', courseId: id })); acad.errors.delete(id); }
+    catch (e) { acad.errors.set(id, e.message); }
+  }));
+}
+// First connection: track the courses that began in the last five months and haven't ended; the
+// chooser (Choose courses) is where you change that.
+async function acadAutoTrack() {
+  const now = Date.now() / 1000;
+  const pick = acad.courses.filter((c) => c.start && c.start > now - 150 * 86400 && c.start < now + 14 * 86400 && (!c.end || c.end > now));
+  for (const c of pick) { acad.tracked.add(c.id); try { await acadDb.course({ course_id: c.id, tracked: true }); } catch { /* shown next load */ } }
+  acad.haveRows = pick.length > 0;
+  if (!pick.length) acad.choosing = true;
+}
+// Today and the Academics tab keep a connected account's courses fresh in the background.
+function acadEnsure() { if (acad.conn === true && !acad.loading) acadLoad(); }
+
+// ---- the numbers: where the course is vs where you are
+const termWeek = () => Math.floor((parseISO(todayISO()) - parseISO(acad.termStart)) / (7 * 864e5)) + 1; // <= 0 before term
+const acadKeyOf = (cid) => ACAD_KEYS[Math.max(0, (acad.courses || []).findIndex((c) => c.id === cid)) % ACAD_KEYS.length];
+const acadColor = (cid) => PROJ_COLORS[acadKeyOf(cid)];
+const acadDone = (i) => acad.progress.has(i.id) || i.moodleDone;
+function acadCourse(cid) {
+  const data = acad.contents.get(cid), meta = (acad.courses || []).find((c) => c.id === cid);
+  if (!data || !meta) return null;
+  const cur = termWeek();
+  const items = data.sections.flatMap((s, si) => s.items.map((i, ii) => ({ ...i, week: s.week, section: s.name, courseId: cid, order: si * 1000 + ii })));
+  const weekly = items.filter((i) => i.week != null);
+  const past = weekly.filter((i) => i.week < cur && !acadDone(i)).sort((a, b) => a.week - b.week || a.order - b.order);
+  const now = weekly.filter((i) => i.week === cur && !acadDone(i)).sort((a, b) => a.order - b.order);
+  const due = weekly.filter((i) => i.week <= cur);
+  const behind = past.length ? cur - past[0].week : 0;
+  return { meta, cur, items, weekly, catchUp: past, thisWeek: now, behind, next: past[0] || now[0] || null,
+    doneSoFar: due.filter(acadDone).length, totalSoFar: due.length, done: items.filter(acadDone).length, sections: data.sections };
+}
+function acadStatus(c) {
+  if (!c) return { text: 'Couldn’t load', cls: 'err' };
+  if (c.cur <= 0) return { text: `Term starts ${fmtShort(acad.termStart)}`, cls: '' };
+  if (c.behind > 0) return { text: `${c.behind} week${c.behind === 1 ? '' : 's'} behind · ${c.catchUp.length} to catch up`, cls: 'late' };
+  if (c.thisWeek.length) return { text: `Week ${c.cur} · ${c.thisWeek.length} to do`, cls: 'now' };
+  return { text: 'On track ✓', cls: 'ok' };
+}
+const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : n ? `${n} B` : '');
+
+// ---- pieces: an item row (used on the course page, in the catch-up list and on Today)
+function acadItemHtml(i, { compact = false } = {}) {
+  const done = acadDone(i), moodle = i.moodleDone && !acad.progress.has(i.id);
+  const notes = acad.notes.get(i.courseId);
+  const f = i.files || [];
+  const open = f.length ? `<a class="mini-btn go" href="${escapeHtml(f[0].link)}" target="_blank" rel="noopener">Open</a>${f.length > 1 ? f.slice(1, 4).map((x, k) => `<a class="mini-btn" href="${escapeHtml(x.link)}" target="_blank" rel="noopener" title="${escapeHtml(x.name)}">${k + 2}</a>`).join('') : ''}`
+    : i.link ? `<a class="mini-btn ${/moodle/.test(hostOf(i.link)) ? '' : 'go'}" href="${escapeHtml(i.link)}" target="_blank" rel="noopener">${/moodle/.test(hostOf(i.link)) ? 'Moodle ↗' : 'Open ↗'}</a>` : '';
+  const meta = [i.week != null ? `Week ${i.week}` : i.section, i.label, f.length === 1 ? fmtBytes(f[0].size) : f.length > 1 ? `${f.length} files` : '', i.due ? `due ${fmtShort(isoDate(new Date(i.due * 1000)))}` : ''].filter(Boolean).join(' · ');
+  return `<div class="aitem ${done ? 'done' : ''}">
+    <button class="acheck" data-act="acad-tick" data-id="${i.id}" data-course="${i.courseId}" aria-pressed="${done}" ${moodle ? 'disabled title="Done in Moodle"' : ''}
+      aria-label="${escapeHtml(i.name)} ${done ? 'done' : 'not done'}">${done ? CHECK : ''}</button>
+    <div class="aitem-main"><b>${escapeHtml(i.name)}</b><small>${escapeHtml(meta)}</small></div>
+    <div class="aitem-go">${open}${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener" title="Your notes for this course">Notes</a>` : ''}</div>
+  </div>`;
+}
+
+// The tree: the course as a trunk, a branch per week, a dot per item that lights when you finish it.
+function acadTreeHtml(c) {
+  const [ink, fill, mid, soft] = acadColor(c.meta.id), byWeek = new Map();
+  for (const i of c.weekly) (byWeek.get(i.week) || byWeek.set(i.week, []).get(i.week)).push(i);
+  const weeks = [...byWeek.keys()].sort((a, b) => a - b);
+  if (!weeks.length) return '<p class="muted small">This course doesn’t label its sections by week, so there’s no tree yet. Everything is in the list below.</p>';
+  return `<div class="atree" style="--ac:${mid};--acs:${soft};--ack:${ink}">
+    <div class="atree-root"><b>${escapeHtml(c.meta.shortname || c.meta.fullname)}</b><small>${c.done} of ${c.items.length} done</small></div>
+    <ol>${weeks.map((w) => {
+      const its = byWeek.get(w), left = its.filter((i) => !acadDone(i)).length;
+      const st = left === 0 ? 'full' : w < c.cur ? 'late' : w === c.cur ? 'now' : 'ahead';
+      return `<li class="atw ${st}">
+        <div class="atw-head"><span class="atw-n">Week ${w}</span>${w === c.cur ? '<span class="atw-here">◀ course is here</span>' : ''}<small>${its.length - left}/${its.length}</small></div>
+        <div class="atw-dots">${its.map((i) => `<button class="adot ${acadDone(i) ? 'lit' : ''} ${acad.just === i.id ? 'just' : ''}" data-act="acad-tick" data-id="${i.id}" data-course="${c.meta.id}"
+          ${i.moodleDone && !acad.progress.has(i.id) ? 'disabled' : ''} title="${escapeHtml(i.name)}" aria-label="${escapeHtml(i.name)}"></button>`).join('')}</div></li>`;
+    }).join('')}</ol></div>`;
+}
+
+// ---- the pages
+const acadSignIn = (head) => head + `<section class="card banner-card"><b>${state.account ? 'One more Google sign-in' : 'Sign in with Google to use Academics'}</b>
+  <p class="small">Your courses are read from Moodle and your progress is saved to your account, so it’s the same on your phone and Mac.</p>
+  <div class="btn-row">${state.account ? '<button class="btn primary" data-act="google-signin">Continue with Google</button>' : '<a class="btn primary" href="#/account">Sign in with Google</a>'}</div></section>`;
+
+function acadConnectHtml() {
+  return `<section class="card" data-section="Connect Moodle">
+    <div class="card-head"><h2>Connect Moodle</h2></div>
+    <p class="small">Once connected, your courses, weekly materials and files show up here by themselves, and every item opens in one tap. No more logging in and hunting.</p>
+    <ol class="asteps">
+      <li>In Moodle, open your name (top right) → <b>Preferences</b> → <b>Security keys</b>.</li>
+      <li>Copy the key for <b>Moodle mobile web service</b>.</li>
+      <li>Paste it below. It goes straight to your private server, never back to your screen, and the app only ever <b>reads</b> from Moodle.</li>
+    </ol>
+    ${acad.error ? `<p class="aerr">${escapeHtml(acad.error)}</p>` : ''}
+    <form class="pref-add" data-form="acad-connect" autocomplete="off">
+      <input name="token" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste your Moodle key" required>
+      <button class="btn primary" type="submit">Connect</button></form>
+    <p class="help">You can cancel the key at any time with <b>Reset</b> on that same Moodle page, or press Disconnect here.</p>
+  </section>`;
+}
+
+function acadChooserHtml() {
+  return `<section class="card" data-section="Choose courses">
+    <div class="card-head"><h2>Which courses are you studying?</h2><button class="mini-btn" data-act="acad-choose">Done</button></div>
+    <p class="help">Only the ticked ones are read and tracked. You can change this any time.</p>
+    ${(acad.courses || []).map((c) => `<label class="toggle-row"><input type="checkbox" data-acad-track="${c.id}" ${acad.tracked.has(c.id) ? 'checked' : ''}>
+      <span><b>${escapeHtml(c.shortname ? `${c.shortname} · ${c.fullname}` : c.fullname)}</b>${c.start ? `<small>from ${fmtShort(isoDate(new Date(c.start * 1000)))}</small>` : ''}</span></label>`).join('') || '<p class="muted small">No courses found in Moodle.</p>'}
+  </section>`;
+}
+
+function academicsHtml() {
+  const refresh = acad.conn ? `<button class="icon-btn ${acad.loading ? 'spin' : ''}" data-act="acad-refresh" aria-label="Refresh from Moodle">↻</button>` : menuBtn;
+  const head = `<header class="top">${topBar({ label: 'Study', title: 'Academics', right: refresh })}</header>`;
+  if (!sbUser) return acadSignIn(head);
+  if (acad.dbMissing) return head + `<section class="card empty"><p><b>One setup step left</b></p><p class="small muted">Run the Academics setup in Supabase once (SQL Editor), then come back.</p>
+    <button class="btn" data-act="acad-refresh">Check again</button></section>`;
+  if (acad.conn === null) { acadLoad(); return head + '<section class="card"><p class="muted pad">Loading…</p></section>'; }
+  if (acad.conn === false) return head + acadConnectHtml();
+  acadEnsure();
+  const cur = termWeek(), tracked = (acad.courses || []).filter((c) => acad.tracked.has(c.id));
+  const termLine = `<div class="aterm"><span>${cur <= 0 ? `Term starts ${fmtShort(acad.termStart)}` : `<b>Term week ${cur}</b>`}</span>
+    <label>Week 1 starts <input type="date" data-acad-term value="${acad.termStart}"></label></div>`;
+  const cards = tracked.map((meta) => {
+    const c = acadCourse(meta.id), st = acadStatus(c), [ink, fill, mid, soft] = acadColor(meta.id);
+    const pct = c && c.totalSoFar ? Math.round((c.doneSoFar / c.totalSoFar) * 100) : 0;
+    return `<a class="acard" href="#/academics/${meta.id}" style="--ac:${mid};--acs:${soft};--acf:${fill};--ack:${ink}">
+      <div class="acard-top"><b>${escapeHtml(meta.shortname || meta.fullname)}</b><span class="achip ${st.cls}">${escapeHtml(st.text)}</span></div>
+      <span class="acard-name">${escapeHtml(meta.fullname)}</span>
+      ${c ? `<div class="abar" aria-label="${pct}% of what's been taught so far"><i style="width:${pct}%"></i></div>
+        <small>${c.doneSoFar} of ${c.totalSoFar} done so far${c.next ? ` · next: ${escapeHtml(c.next.name)}` : ''}</small>`
+        : `<small class="muted">${escapeHtml(acad.errors.get(meta.id) || 'Loading…')}</small>`}</a>`;
+  }).join('');
+  return head + `
+    ${acad.error ? `<p class="aerr card">${escapeHtml(acad.error)}${acad.expired ? ' <a href="#/academics">Reconnect</a>' : ''}</p>` : ''}
+    ${acad.choosing ? acadChooserHtml() : ''}
+    ${termLine}
+    ${tracked.length ? `<div class="agrid">${cards}</div>` : acad.choosing ? '' : `<section class="card empty"><p><b>No courses tracked yet</b></p><button class="btn primary" data-act="acad-choose">Choose courses</button></section>`}
+    <div class="btn-row acard-foot">${acad.choosing ? '' : '<button class="btn" data-act="acad-choose">Choose courses</button>'}<button class="btn" data-act="acad-disconnect">Disconnect Moodle</button></div>
+    <p class="help acard-foot">Connected as ${escapeHtml(acad.name || 'your Moodle account')}${acad.at ? ` · updated ${new Date(acad.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : ''}</p>`;
+}
+
+function courseHtml() {
+  const back = '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>';
+  if (!sbUser) return acadSignIn(`<header class="top">${topBar({ left: back, title: 'Course' })}</header>`);
+  if (acad.conn === null) { acadLoad(); return `<header class="top">${topBar({ left: back, title: 'Course' })}</header><section class="card"><p class="muted pad">Loading…</p></section>`; }
+  const meta = (acad.courses || []).find((c) => c.id === route.courseId);
+  if (!meta) return `<header class="top">${topBar({ left: back, title: 'Not found' })}</header><section class="card empty"><p>This course isn’t in your Moodle list.</p><a class="btn" href="#/academics">Academics</a></section>`;
+  const c = acadCourse(meta.id), st = acadStatus(c), [ink, fill, mid] = acadColor(meta.id), notes = acad.notes.get(meta.id);
+  const header = `<header class="top">${topBar({ left: back, label: 'Course', title: escapeHtml(meta.shortname || meta.fullname), right: '<button class="txt-btn" data-act="acad-course-settings">Settings</button>' })}
+    <p class="amuted">${escapeHtml(meta.fullname)}</p>
+    <div class="pmeta"><span class="ppill achip ${st.cls}">${escapeHtml(st.text)}</span>
+      <a class="mini-btn" href="${escapeHtml(`${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${meta.id}`)}" target="_blank" rel="noopener">Moodle page ↗</a>
+      ${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener">Notes ↗</a>` : '<button class="mini-btn" data-act="acad-course-settings">+ Notes link</button>'}</div></header>`;
+  if (!c) return header + `<section class="card"><p class="muted pad">${escapeHtml(acad.errors.get(meta.id) || (acad.tracked.has(meta.id) ? 'Loading…' : 'This course isn’t tracked. Choose it on the Academics page.'))}</p></section>`;
+  const weeks = c.sections.filter((s) => s.items.length);
+  const isOpen = (s) => { const k = `${meta.id}:${s.id}`; return acadOpenWeeks.has(k) ? acadOpenWeeks.get(k) : s.week === c.cur || (s.week != null && s.week < c.cur && s.items.some((i) => !acadDone({ ...i }))); };
+  return header + `
+    <section class="card" data-section="Progress">
+      <div class="card-head"><h2>Progress</h2><span class="hint">${c.done} of ${c.items.length} done</span></div>
+      ${acadTreeHtml(c)}
+    </section>
+    ${c.catchUp.length ? `<section class="card" data-section="Catch up">
+      <div class="card-head"><h2>Catch up</h2><span class="hint">${c.catchUp.length} item${c.catchUp.length === 1 ? '' : 's'}, oldest first</span></div>
+      ${c.catchUp.map((i) => acadItemHtml(i)).join('')}</section>` : ''}
+    <section class="card" data-section="Weeks">
+      <div class="card-head"><h2>Weeks</h2></div>
+      ${weeks.map((s) => `<details class="asec" data-asec="${meta.id}:${s.id}" ${isOpen(s) ? 'open' : ''}>
+        <summary><span>${escapeHtml(s.name)}</span><small>${s.items.filter((i) => acadDone({ ...i })).length}/${s.items.length}</small></summary>
+        ${s.items.map((i) => acadItemHtml({ ...i, week: s.week, section: s.name, courseId: meta.id })).join('')}</details>`).join('') || '<p class="muted small">Nothing in this course yet.</p>'}
+    </section>`;
+}
+
+// Today: the next thing to study in each course (a catch-up item if you're behind), one tap to open.
+function studyTodayHtml() {
+  if (!sbUser || acad.conn !== true || !acad.courses) return '';
+  acadEnsure();
+  const rows = (acad.courses || []).filter((m) => acad.tracked.has(m.id)).map((m) => acadCourse(m.id)).filter(Boolean)
+    .sort((a, b) => b.behind - a.behind || a.meta.id - b.meta.id);
+  if (!rows.length) return '';
+  const next = rows.filter((c) => c.next);
+  return `<section class="card" data-section="Study">
+    <div class="card-head"><h2>Study</h2><a class="txt-btn" href="#/academics">Academics ›</a></div>
+    ${next.length ? next.slice(0, 4).map((c) => {
+      const st = acadStatus(c);
+      return `<div class="astudy"><a class="achip ${st.cls}" href="#/academics/${c.meta.id}" style="--ac:${acadColor(c.meta.id)[2]}">${escapeHtml(c.meta.shortname || c.meta.fullname)} · ${escapeHtml(st.text)}</a>${acadItemHtml(c.next)}</div>`;
+    }).join('') : '<p class="muted pad small">You’re on track in every course. ✓</p>'}
+  </section>`;
+}
+
+// ---- actions
+async function acadTick(itemId, courseId) {
+  const done = acad.progress.has(itemId);
+  if (done) acad.progress.delete(itemId); else { acad.progress.set(itemId, new Date().toISOString()); acad.just = itemId; setTimeout(() => { acad.just = null; }, 900); }
+  render();
+  try { if (done) await acadDb.untick(itemId); else await acadDb.tick(itemId, courseId); }
+  catch (e) { if (done) acad.progress.set(itemId, new Date().toISOString()); else acad.progress.delete(itemId); render(); toast(sbErr(e)); }
+}
+async function acadConnect(form) {
+  const token = String(new FormData(form).get('token') || '').trim();
+  form.reset();
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); // so the screen can move on
+  acad.error = '';
+  try {
+    const r = await moodleApi({ action: 'connect', token });
+    acad.conn = true; acad.name = r.name; acad.at = 0; acad.failAt = 0; acad.haveRows = false;
+    toast(`Connected as ${r.name}`);
+    await acadLoad({ force: true });
+  } catch (e) { acad.error = e.message; render(); }
+}
+async function acadDisconnect() {
+  if (!confirm('Disconnect Moodle? Your ticks stay saved. The key is removed from the server.')) return;
+  try { await moodleApi({ action: 'disconnect' }); } catch (e) { toast(e.message); return; }
+  // forget the connection and the course contents, but keep your ticks, notes links and tracked courses
+  Object.assign(acad, { conn: false, name: '', courses: null, error: '', expired: false, at: 0, failAt: 0, choosing: false });
+  acad.contents.clear(); acad.errors.clear();
+  try { localStorage.removeItem('acadCache'); } catch {}
+  render();
+}
+async function acadSetTracked(id, on) {
+  if (on) acad.tracked.add(id); else acad.tracked.delete(id);
+  try { await acadDb.course({ course_id: id, tracked: on }); } catch (e) { toast(sbErr(e)); return; }
+  if (on && !acad.contents.has(id)) await acadLoadContents([id]);
+  acadSaveCache();
+  render();
+}
+function cleanNotesUrl(u) {
+  u = String(u || '').trim();
+  if (!u) return '';
+  if (/^onenote:/i.test(u)) return /^onenote:https:\/\//i.test(u) ? u : '';
+  return cleanUrl(u);
+}
+function openCourseSettings() {
+  const id = route.courseId, notes = acad.notes.get(id) || '';
+  openSheet(`<div class="sheet-head"><h3>Course settings</h3></div>
+    <form class="form flat" data-form="acad-course" data-id="${id}">
+      <label class="f">Notes link<input name="notes" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(notes)}" placeholder="Link to your OneNote section"></label>
+      <p class="help">In OneNote, right-click this course’s section → <b>Copy Link to Section</b>, and paste it here. Every item then has a <b>Notes</b> button that opens it. Using paper for this course? Leave it empty.</p>
+      <button class="btn primary" type="submit">Save</button>
+      <button type="button" class="btn warn" data-act="acad-untrack">Stop tracking this course</button>
+    </form>`, { acad: id });
+}
+async function acadSaveCourse(form) {
+  const id = +form.dataset.id, raw = String(new FormData(form).get('notes') || '').trim(), url = cleanNotesUrl(raw);
+  if (raw && !url) { toast('Paste the full link (https://… or onenote:https://…)'); return; }
+  if (url.length > 2000) { toast('That link is too long to save'); return; }
+  try { await acadDb.course({ course_id: id, notes_url: url, tracked: acad.tracked.has(id) }); } catch (e) { toast(sbErr(e)); return; }
+  acad.notes.set(id, url);
+  closeSheet(); render();
+}
+// Weeks you open or fold on a course page stay that way when the page redraws.
+document.addEventListener('toggle', (e) => { const d = e.target; if (d.dataset && d.dataset.asec) acadOpenWeeks.set(d.dataset.asec, d.open); }, true);
+
 // ---------- Sheets (bottom modals) ----------
 let sheetCtx = null;
 function openSheet(html, ctx = null) {
@@ -5611,6 +5977,12 @@ document.addEventListener('click', (e) => {
     case 'step-delete': removeFromSheet('project_steps'); break;
     case 'meet-new': openMeetSheet(null, btn.dataset.day || null); break;
     case 'step-toggle': toggleStep(btn.dataset.id); break;
+    case 'acad-tick': acadTick(+btn.dataset.id, +btn.dataset.course); break;
+    case 'acad-refresh': acad.dbMissing = false; acadLoad({ force: true }); break;
+    case 'acad-disconnect': acadDisconnect(); break;
+    case 'acad-choose': acad.choosing = !acad.choosing; render(); break;
+    case 'acad-course-settings': openCourseSettings(); break;
+    case 'acad-untrack': { const id = route.courseId; closeSheet(); acadSetTracked(id, false).then(() => { location.hash = '#/academics'; }); break; }
     case 'buddy-ev': openBuddyEvent(btn.dataset); break;
     case 'pm-month': if (btn.dataset.mk) { projMonthView.set(route.projId, btn.dataset.mk); render(); } break;
     case 'proj-fold': toggleProjFold(route.projId); break;
@@ -5837,6 +6209,12 @@ document.addEventListener('change', (e) => {
   }
   if (e.target.name === 'customColor') { pickCustomColor(e.target); return; }
   if (e.target.name === 'layout' && e.target.form && e.target.form.dataset.form === 'project') { e.target.form.dataset.layout = e.target.value; return; }
+  if (e.target.dataset && e.target.dataset.acadTrack) { acadSetTracked(+e.target.dataset.acadTrack, e.target.checked); return; }
+  if (e.target.dataset && e.target.dataset.acadTerm !== undefined) {
+    const v = e.target.value;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { acad.termStart = v; render(); acadDb.term(v).catch((err) => toast(sbErr(err))); }
+    return;
+  }
   if (e.target.dataset && e.target.dataset.cardDate) { // the date box on a card being edited
     if (e.target.value) scheduleCard(e.target.dataset.cardDate, e.target.value); else unscheduleCard(e.target.dataset.cardDate);
     return;
@@ -5880,6 +6258,8 @@ document.addEventListener('submit', (e) => {
   else if (form === 'project') saveProjectForm(e.target);
   else if (form === 'step') saveStep(e.target);
   else if (form === 'step-quick') quickStep(e.target);
+  else if (form === 'acad-connect') acadConnect(e.target);
+  else if (form === 'acad-course') acadSaveCourse(e.target);
   else if (form === 'ref') addRef(e.target);
   else if (form === 'meeting') saveMeeting(e.target);
   else if (form === 'cal-invite') { calInvite(e.target); e.target.reset(); }

@@ -20,6 +20,7 @@ await db.exec(fs.readFileSync(new URL('../supabase/schema.sql', import.meta.url)
 await db.exec(fs.readFileSync(new URL('../supabase/calendar-sharing.sql', import.meta.url), 'utf8'));
 await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.url), 'utf8'));
 await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.url), 'utf8')); // safe to run again
+await db.exec(fs.readFileSync(new URL('../supabase/academics.sql', import.meta.url), 'utf8'));
 
 const ids = { cathy: '00000000-0000-0000-0000-00000000000c', han: '00000000-0000-0000-0000-00000000000a', eve: '00000000-0000-0000-0000-00000000000e' };
 const emails = { cathy: 'Cathy@Gmail.com', han: 'han@gmail.com', eve: 'eve@gmail.com' };
@@ -162,4 +163,18 @@ await fails('han', "insert into project_refs (project_id, url) values ($1, 'http
 await as('cathy', 'delete from projects where id = $1', [proj]);
 assert.equal((await db.query('select count(*)::int as n from project_cards')).rows[0].n, 0, 'deleting a project removes its board');
 assert.equal((await db.query('select count(*)::int as n from project_refs')).rows[0].n, 0, 'and its references');
+// --- Academics: private to you
+await as('cathy', "insert into academic_progress (item_id, course_id) values (1001, 11)");
+await as('cathy', "insert into academic_courses (course_id, notes_url) values (11, 'onenote:https://d.docs.live.net/abc/Microeconomics')");
+await as('cathy', "insert into academic_settings (term_start) values ('2026-09-28')");
+for (const table of ['academic_progress', 'academic_courses', 'academic_settings']) {
+  assert.equal((await as('han', `select * from ${table}`)).length, 0, `others can't see ${table}`);
+  assert.equal((await as('cathy', `select * from ${table}`)).length, 1);
+}
+await fails('han', "insert into academic_progress (user_id, item_id, course_id) values ($1, 5, 1)", [ids.cathy], /row-level security/);
+await as('han', "delete from academic_progress");
+assert.equal((await as('cathy', 'select * from academic_progress')).length, 1, 'nobody else can untick your items');
+await as('cathy', "insert into academic_progress (item_id, course_id) values (1001, 11) on conflict (user_id, item_id) do nothing"); // ticking twice is fine
+assert.equal((await as('cathy', 'select * from academic_progress')).length, 1);
+assert.equal((await as(null, 'select * from academic_progress')).length, 0, 'signed-out visitors see nothing');
 console.log('ALL DATABASE RULE TESTS PASSED');

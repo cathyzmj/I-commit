@@ -5,6 +5,7 @@
 //   /api/apps    Notion application tracker     (server/apps.mjs; secret NOTION_TOKEN)
 //   /api/login   Sign in with Google            (server/login.mjs; secrets GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
 //   /api/logo    find a company's icon          (server/logo.mjs)
+//   /api/moodle  read courses from Moodle       (server/moodle.mjs; optional env MOODLE_URL)
 // Storage is the D1 database bound as DB (server/schema.sql).
 import { handle as ics } from './ics.mjs';
 import { handle as sync } from './sync.mjs';
@@ -12,6 +13,7 @@ import { handle as widget } from './widget.mjs';
 import { handle as apps } from './apps.mjs';
 import { handle as login } from './login.mjs';
 import { handle as logo } from './logo.mjs';
+import { handle as moodle } from './moodle.mjs';
 import { d1Store } from './d1-store.mjs';
 
 export default {
@@ -22,6 +24,9 @@ export default {
         return await login(req, { store: d1Store(env.DB, 'login'), syncStore: d1Store(env.DB, 'sync'),
           env: { GOOGLE_CLIENT_ID: (env.GOOGLE_CLIENT_ID || '').trim(), GOOGLE_CLIENT_SECRET: (env.GOOGLE_CLIENT_SECRET || '').trim(),
             SUPABASE_URL: (env.SUPABASE_URL || '').trim(), SUPABASE_KEY: (env.SUPABASE_KEY || '').trim() } });
+      }
+      if (pathname === '/api/moodle' || pathname === '/api/moodle/f') {
+        return await moodle(req, { loginStore: d1Store(env.DB, 'login'), store: d1Store(env.DB, 'moodle'), env: { MOODLE_URL: (env.MOODLE_URL || '').trim() } });
       }
       switch (pathname) {
         case '/api/ics': return await ics(req);
