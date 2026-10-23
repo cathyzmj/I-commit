@@ -21,6 +21,14 @@ create table if not exists public.academic_courses (
   primary key (user_id, course_id)
 );
 
+-- Added later (running this file again upgrades an existing table): how the course is studied, and
+-- any item you've moved to a different category (reading / lecture / practice / other).
+alter table public.academic_courses add column if not exists kind text not null default 'quant';
+alter table public.academic_courses drop constraint if exists academic_courses_kind_check;
+alter table public.academic_courses add constraint academic_courses_kind_check check (kind in ('quant', 'qual'));
+alter table public.academic_courses add column if not exists lanes jsonb not null default '{}'
+  check (jsonb_typeof(lanes) = 'object' and pg_column_size(lanes) < 60000);
+
 create table if not exists public.academic_settings (
   user_id uuid primary key references public.profiles on delete cascade default auth.uid(),
   term_start date not null default '2026-09-28'      -- the Monday of week 1 (LSE Michaelmas Term 2026)

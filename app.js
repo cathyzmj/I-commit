@@ -553,6 +553,7 @@ window.addEventListener('hashchange', () => {
   route = parseHash();
   treeDraft = null;
   editingCard = null;
+  if (route.page !== 'tree-edit') treeNewCourse = null;
   if (route.tab === 'buddy') refreshBuddy();
   if (route.tab === 'gallery' && projects !== null && !route.page) loadProjects();
   if (route.tab === 'academics') acadLoad();
@@ -606,7 +607,7 @@ function render() {
   $app.dataset.page = route.page || '';
   $app.innerHTML = html + tabBarHtml() + sideNavHtml();
   fillSideSections();
-  if (route.page === 'knowledge') initMaps();
+  if (route.page === 'knowledge' || route.page === 'course') initMaps();
   if (route.page === 'board') layoutBoard();
   if (route.page === 'project') scrollTimeline();
 }
@@ -1652,7 +1653,7 @@ function normaliseNodes(ns, depth = 0) {
     ...(n.lit ? { lit: true, at: /^\d{4}-\d{2}-\d{2}$/.test(n.at || '') ? n.at : todayISO() } : {}) }));
 }
 const normaliseTree = (t) => ({ id: String(t.id || uid()), name: String(t.name || 'Knowledge tree'), source: String(t.source || ''),
-  commitmentId: t.commitmentId || null, created: t.created || todayISO(), nodes: normaliseNodes(t.nodes), map: normaliseNodes(t.map) });
+  commitmentId: t.commitmentId || null, courseId: t.courseId ? +t.courseId : null, created: t.created || todayISO(), nodes: normaliseNodes(t.nodes), map: normaliseNodes(t.map) });
 
 // Knowledge map: the tree drawn left to right as dots joined by curves. Tap a topic to light it;
 // tap a branch dot to fold or unfold it. Lit topics glow and light the links leading to them.
@@ -1900,7 +1901,7 @@ let lastNarrow = narrowMap();
 window.addEventListener('resize', () => {
   if (narrowMap() === lastNarrow) return;
   lastNarrow = narrowMap();
-  if (route.page === 'knowledge' && !typing()) render();
+  if ((route.page === 'knowledge' || route.page === 'course') && !typing()) render();
 });
 function treeBodyHtml(t) {
   if (treeView === 'list' && t.nodes.length) return treeNodesHtml(t, t.nodes);
@@ -1980,12 +1981,18 @@ function treeEditHtml() {
   const isNew = route.treeId === 'new';
   const t = isNew ? normaliseTree({ name: '', nodes: [] }) : state.trees.find((x) => x.id === route.treeId);
   if (!t) return knowledgePageHtml();
+  const course = isNew ? (acad.courses || []).find((c) => c.id === treeNewCourse) : (acad.courses || []).find((c) => c.id === t.courseId);
+  if (isNew && course) {
+    t.name = course.shortname ? `${course.shortname} · ${course.fullname}` : course.fullname;
+    t.source = `${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${course.id}`;
+  }
   const outline = treeDraft ? treeDraft.outline : outlineOf(t.nodes);
   const mapText = treeDraft ? treeDraft.map : outlineOf(t.map);
   return `
     <header class="top">${topBar({ left: '<button class="txt-btn" data-act="back">Cancel</button>', title: isNew ? 'New knowledge tree' : 'Edit tree',
       right: '<button class="txt-btn strong" type="submit" form="tform">Save</button>' })}</header>
     <form id="tform" class="card form" data-form="tree" data-id="${isNew ? '' : t.id}">
+      ${course ? `<input type="hidden" name="courseId" value="${course.id}"><p class="help">For your Moodle course <b>${escapeHtml(course.shortname || course.fullname)}</b>. The prompt below already includes what Moodle lists for it.</p>` : ''}
       <label class="f">Name<input name="name" required value="${escapeHtml(t.name)}" placeholder="e.g. Felix technicals"></label>
       <label class="f">What it covers<input name="source" value="${escapeHtml(t.source)}" placeholder="Course page link, or e.g. “self-study: VC fund basics”"></label>
       <label class="f">Linked routine<span class="help">Its page shows how much of the course is done.</span>${routineSelect('commitmentId', t.commitmentId)}</label>
@@ -2013,12 +2020,13 @@ function saveTreeForm(form) {
   if (!name) { toast('Give it a name'); return; }
   if (!nodes.length && !map.length) { toast('Paste the course list or a map first'); return; }
   const fields = { name, source: String(f.get('source') || '').trim(), commitmentId: f.get('commitmentId') || null };
+  if (f.get('courseId')) fields.courseId = +f.get('courseId');
   let t = state.trees.find((x) => x.id === form.dataset.id);
   if (t) Object.assign(t, fields, { nodes: carryLit(nodes, t.nodes), map: carryLit(map, t.map) });
   else { t = normaliseTree({ ...fields, nodes, map }); state.trees.push(t); }
-  treeDraft = null;
+  treeDraft = null; treeNewCourse = null;
   save();
-  location.replace('#/knowledge');
+  location.replace(t.courseId ? `#/academics/${t.courseId}` : '#/knowledge');
 }
 // Tapping a map skill that covers course topics ticks them all (or clears them if all were done).
 function toggleCover(treeId, nodeId) {
@@ -5323,7 +5331,7 @@ const acad = {
   conn: null,            // null = not known yet, false = not connected, true = connected
   name: '', courses: null, contents: new Map(), errors: new Map(),
   progress: new Map(),   // item id -> when you ticked it
-  tracked: new Set(), notes: new Map(), termStart: '2026-09-28', haveRows: false,
+  tracked: new Set(), notes: new Map(), kinds: new Map(), lanes: new Map(), termStart: '2026-09-28', haveRows: false,
   at: 0, failAt: 0, loading: false, error: '', expired: false, dbMissing: false, choosing: false, just: null,
 };
 const acadOpenWeeks = new Map(); // "course:week" -> opened or folded by you
@@ -5333,7 +5341,7 @@ const acadDb = {
   async mine() {
     const [p, c, s] = await Promise.all([
       sb.from('academic_progress').select('item_id, done_at'),
-      sb.from('academic_courses').select('course_id, notes_url, tracked'),
+      sb.from('academic_courses').select('course_id, notes_url, tracked, kind, lanes'),
       sb.from('academic_settings').select('term_start').maybeSingle(),
     ]);
     const err = p.error || c.error || s.error;
@@ -5346,6 +5354,16 @@ const acadDb = {
   },
   async untick(item) {
     const { error } = await sb.from('academic_progress').delete().eq('item_id', item);
+    if (error) throw error;
+  },
+  async tickMany(items, course) {
+    if (!items.length) return;
+    const { error } = await sb.from('academic_progress').upsert(items.map((item) => ({ user_id: sbUser.id, item_id: item, course_id: course })), { onConflict: 'user_id,item_id' });
+    if (error) throw error;
+  },
+  async untickMany(items) {
+    if (!items.length) return;
+    const { error } = await sb.from('academic_progress').delete().in('item_id', items);
     if (error) throw error;
   },
   async course(row) {
@@ -5379,7 +5397,7 @@ function acadSaveCache() {
 })();
 function acadReset() {
   Object.assign(acad, { conn: null, name: '', courses: null, error: '', expired: false, dbMissing: false, at: 0, failAt: 0 });
-  acad.contents.clear(); acad.errors.clear(); acad.progress.clear(); acad.tracked.clear(); acad.notes.clear();
+  acad.contents.clear(); acad.errors.clear(); acad.progress.clear(); acad.tracked.clear(); acad.notes.clear(); acad.kinds.clear(); acad.lanes.clear();
   try { localStorage.removeItem('acadCache'); } catch {}
 }
 const rerenderAcad = () => { if (['academics', 'today'].includes(route.tab) && !sheetCtx && !typing()) render(); };
@@ -5400,6 +5418,8 @@ async function acadLoad({ force = false } = {}) {
       acad.dbMissing = false;
       acad.progress = new Map(mine.progress.map((r) => [+r.item_id, r.done_at]));
       acad.notes = new Map(mine.courses.map((r) => [+r.course_id, r.notes_url || '']));
+      acad.kinds = new Map(mine.courses.map((r) => [+r.course_id, r.kind === 'qual' ? 'qual' : 'quant']));
+      acad.lanes = new Map(mine.courses.map((r) => [+r.course_id, r.lanes && typeof r.lanes === 'object' ? r.lanes : {}]));
       acad.tracked = new Set(mine.courses.filter((r) => r.tracked).map((r) => +r.course_id));
       acad.haveRows = mine.courses.length > 0;
       if (mine.term && mine.term.term_start) acad.termStart = mine.term.term_start;
@@ -5440,18 +5460,57 @@ function acadEnsure() { if (acad.conn === true && !acad.loading) acadLoad(); }
 const termWeek = () => Math.floor((parseISO(todayISO()) - parseISO(acad.termStart)) / (7 * 864e5)) + 1; // <= 0 before term
 const acadKeyOf = (cid) => ACAD_KEYS[Math.max(0, (acad.courses || []).findIndex((c) => c.id === cid)) % ACAD_KEYS.length];
 const acadColor = (cid) => PROJ_COLORS[acadKeyOf(cid)];
+// Each week's items fall into lanes: Reading, Lecture, Problem set & quiz (and Other). They're sorted
+// by what Moodle calls them, and you can move any item (the choice is remembered for the course).
+const LANES = [['reading', 'Reading'], ['lecture', 'Lecture'], ['practice', 'Problem set & quiz'], ['other', 'Other']];
+const LANE_NAME = Object.fromEntries(LANES);
+const LANE_SHORT = { reading: 'Reading', lecture: 'Lecture', practice: 'Problems', other: 'Other' };
+function autoLane(i) {
+  const n = String(i.name || '').toLowerCase();
+  if (['assign', 'quiz', 'workshop', 'lesson'].includes(i.type) || /problem|exercise|quiz|homework|worksheet|assignment|formative|summative|past paper|mock|\bpset\b|\bps ?\d/.test(n)) return 'practice';
+  if (i.type === 'lti' || /lecture|slides|recording|panopto|echo ?360|video|webinar|podcast/.test(n)) return 'lecture';
+  if (['url', 'book'].includes(i.type) || /\bread|chapter|\bch\.? ?\d|article|paper|textbook|journal|case study|essay|\bbook\b/.test(n)) return 'reading';
+  return 'other';
+}
+function laneOf(i) {
+  const o = (acad.lanes.get(i.courseId) || {})[i.id];
+  return o && LANE_NAME[o] ? o : autoLane(i);
+}
+// "Qualitative" courses (essays, cases) treat the reading as part of the week; for "quantitative" ones it's
+// optional, so it isn't counted when working out how far behind you are.
+const acadKind = (cid) => acad.kinds.get(cid) || 'quant';
+const lanesFor = (cid) => (acadKind(cid) === 'qual' ? ['reading', 'lecture', 'practice', 'other'] : ['lecture', 'practice', 'reading', 'other']);
+const countsFor = (i) => !(acadKind(i.courseId) === 'quant' && i.lane === 'reading');
 const acadDone = (i) => acad.progress.has(i.id) || i.moodleDone;
 function acadCourse(cid) {
   const data = acad.contents.get(cid), meta = (acad.courses || []).find((c) => c.id === cid);
   if (!data || !meta) return null;
   const cur = termWeek();
-  const items = data.sections.flatMap((s, si) => s.items.map((i, ii) => ({ ...i, week: s.week, section: s.name, courseId: cid, order: si * 1000 + ii })));
-  const weekly = items.filter((i) => i.week != null);
-  const past = weekly.filter((i) => i.week < cur && !acadDone(i)).sort((a, b) => a.week - b.week || a.order - b.order);
-  const now = weekly.filter((i) => i.week === cur && !acadDone(i)).sort((a, b) => a.order - b.order);
-  const due = weekly.filter((i) => i.week <= cur);
+  const items = data.sections.flatMap((s, si) => s.items.map((i, ii) => {
+    const it = { ...i, week: s.week, section: s.name, courseId: cid, order: si * 1000 + ii };
+    it.lane = laneOf(it);
+    return it;
+  }));
+  const weekly = items.filter((i) => i.week != null), counted = weekly.filter(countsFor);
+  const past = counted.filter((i) => i.week < cur && !acadDone(i)).sort((a, b) => a.week - b.week || a.order - b.order);
+  const now = counted.filter((i) => i.week === cur && !acadDone(i)).sort((a, b) => a.order - b.order);
+  const due = counted.filter((i) => i.week <= cur);
   const behind = past.length ? cur - past[0].week : 0;
-  return { meta, cur, items, weekly, catchUp: past, thisWeek: now, behind, next: past[0] || now[0] || null,
+  // one entry per week, with its items split into lanes
+  const byWeek = new Map();
+  for (const s of data.sections) {
+    if (s.week == null) continue;
+    const w = byWeek.get(s.week) || byWeek.set(s.week, { week: s.week, topic: '', items: [] }).get(s.week);
+    if (!w.topic) w.topic = String(s.name).replace(/^\s*weeks?\s*\d+\s*[:.\-–—]?\s*/i, '').trim();
+    for (const i of items.filter((x) => x.section === s.name && x.week === s.week)) if (!w.items.includes(i)) w.items.push(i);
+  }
+  const weeks = [...byWeek.values()].sort((a, b) => a.week - b.week).map((w) => {
+    const lanes = Object.fromEntries(LANES.map(([k]) => [k, w.items.filter((i) => i.lane === k)]));
+    const left = w.items.filter((i) => countsFor(i) && !acadDone(i)).length;
+    return { ...w, lanes, left, state: !w.items.length ? 'empty' : left === 0 ? 'full' : w.week < cur ? 'late' : w.week === cur ? 'now' : 'ahead' };
+  });
+  const info = items.filter((i) => i.week == null);
+  return { meta, cur, items, weekly, weeks, info, catchUp: past, thisWeek: now, behind, next: past[0] || now[0] || null,
     doneSoFar: due.filter(acadDone).length, totalSoFar: due.length, done: items.filter(acadDone).length, sections: data.sections };
 }
 function acadStatus(c) {
@@ -5464,38 +5523,87 @@ function acadStatus(c) {
 const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : n ? `${n} B` : '');
 
 // ---- pieces: an item row (used on the course page, in the catch-up list and on Today)
-function acadItemHtml(i, { compact = false } = {}) {
+function acadItemHtml(i, { inWeek = false } = {}) {
   const done = acadDone(i), moodle = i.moodleDone && !acad.progress.has(i.id);
   const notes = acad.notes.get(i.courseId);
   const f = i.files || [];
   const open = f.length ? `<a class="mini-btn go" href="${escapeHtml(f[0].link)}" target="_blank" rel="noopener">Open</a>${f.length > 1 ? f.slice(1, 4).map((x, k) => `<a class="mini-btn" href="${escapeHtml(x.link)}" target="_blank" rel="noopener" title="${escapeHtml(x.name)}">${k + 2}</a>`).join('') : ''}`
     : i.link ? `<a class="mini-btn ${/moodle/.test(hostOf(i.link)) ? '' : 'go'}" href="${escapeHtml(i.link)}" target="_blank" rel="noopener">${/moodle/.test(hostOf(i.link)) ? 'Moodle ↗' : 'Open ↗'}</a>` : '';
-  const meta = [i.week != null ? `Week ${i.week}` : i.section, i.label, f.length === 1 ? fmtBytes(f[0].size) : f.length > 1 ? `${f.length} files` : '', i.due ? `due ${fmtShort(isoDate(new Date(i.due * 1000)))}` : ''].filter(Boolean).join(' · ');
+  const meta = [inWeek ? '' : i.week != null ? `Week ${i.week}` : i.section, i.label, f.length === 1 ? fmtBytes(f[0].size) : f.length > 1 ? `${f.length} files` : '', i.due ? `due ${fmtShort(isoDate(new Date(i.due * 1000)))}` : ''].filter(Boolean).join(' · ');
   return `<div class="aitem ${done ? 'done' : ''}">
     <button class="acheck" data-act="acad-tick" data-id="${i.id}" data-course="${i.courseId}" aria-pressed="${done}" ${moodle ? 'disabled title="Done in Moodle"' : ''}
       aria-label="${escapeHtml(i.name)} ${done ? 'done' : 'not done'}">${done ? CHECK : ''}</button>
-    <div class="aitem-main"><b>${escapeHtml(i.name)}</b><small>${escapeHtml(meta)}</small></div>
-    <div class="aitem-go">${open}${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener" title="Your notes for this course">Notes</a>` : ''}</div>
+    <div class="aitem-main"><b>${escapeHtml(i.name)}</b>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</div>
+    <div class="aitem-go">${open}${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener" title="Your notes for this course">Notes</a>` : ''}${inWeek ? `<button class="mini-btn ghost" data-act="acad-move" data-id="${i.id}" data-course="${i.courseId}" aria-label="Move to another category" title="Move to another category">⋯</button>` : ''}</div>
   </div>`;
 }
 
-// The tree: the course as a trunk, a branch per week, a dot per item that lights when you finish it.
-function acadTreeHtml(c) {
-  const [ink, fill, mid, soft] = acadColor(c.meta.id), byWeek = new Map();
-  for (const i of c.weekly) (byWeek.get(i.week) || byWeek.set(i.week, []).get(i.week)).push(i);
-  const weeks = [...byWeek.keys()].sort((a, b) => a - b);
-  if (!weeks.length) return '<p class="muted small">This course doesn’t label its sections by week, so there’s no tree yet. Everything is in the list below.</p>';
-  return `<div class="atree" style="--ac:${mid};--acs:${soft};--ack:${ink}">
-    <div class="atree-root"><b>${escapeHtml(c.meta.shortname || c.meta.fullname)}</b><small>${c.done} of ${c.items.length} done</small></div>
-    <ol>${weeks.map((w) => {
-      const its = byWeek.get(w), left = its.filter((i) => !acadDone(i)).length;
-      const st = left === 0 ? 'full' : w < c.cur ? 'late' : w === c.cur ? 'now' : 'ahead';
-      return `<li class="atw ${st}">
-        <div class="atw-head"><span class="atw-n">Week ${w}</span>${w === c.cur ? '<span class="atw-here">◀ course is here</span>' : ''}<small>${its.length - left}/${its.length}</small></div>
-        <div class="atw-dots">${its.map((i) => `<button class="adot ${acadDone(i) ? 'lit' : ''} ${acad.just === i.id ? 'just' : ''}" data-act="acad-tick" data-id="${i.id}" data-course="${c.meta.id}"
-          ${i.moodleDone && !acad.progress.has(i.id) ? 'disabled' : ''} title="${escapeHtml(i.name)}" aria-label="${escapeHtml(i.name)}"></button>`).join('')}</div></li>`;
-    }).join('')}</ol></div>`;
+// ---- the week board: one block per week, with Reading, Lecture and Problem set & quiz side by side
+const acadWeekKey = (c, w) => `${c.meta.id}:w${w.week}`;
+function acadWeekOpen(c, w) {
+  const k = acadWeekKey(c, w);
+  return acadOpenWeeks.has(k) ? acadOpenWeeks.get(k) : w.week === c.cur || w.state === 'late';
 }
+function acadLaneHtml(c, w, lane) {
+  const its = w.lanes[lane];
+  if (!its.length) return '';
+  const done = its.filter(acadDone).length, optional = acadKind(c.meta.id) === 'quant' && lane === 'reading';
+  const canAll = its.length > 1 && its.some((i) => !acadDone(i) || acad.progress.has(i.id));
+  const allDone = done === its.length;
+  return `<div class="alane">
+    <div class="alane-h"><b>${LANE_NAME[lane]}</b>${optional ? '<small class="aopt">optional</small>' : ''}<small>${done}/${its.length}</small>
+      ${canAll ? `<button class="mini-btn ghost" data-act="acad-lane-all" data-course="${c.meta.id}" data-week="${w.week}" data-lane="${lane}">${allDone ? 'Untick all' : 'Tick all'}</button>` : ''}</div>
+    ${its.map((i) => acadItemHtml(i, { inWeek: true })).join('')}</div>`;
+}
+function acadWeekHtml(c, w) {
+  const order = lanesFor(c.meta.id), open = acadWeekOpen(c, w);
+  const chips = order.filter((l) => w.lanes[l].length).map((l) => {
+    const n = w.lanes[l].length, d = w.lanes[l].filter(acadDone).length;
+    return `<span class="alchip ${d === n ? 'full' : ''}">${LANE_SHORT[l]} ${d}/${n}</span>`;
+  }).join('');
+  return `<details class="aweek ${w.state}" data-asec="${acadWeekKey(c, w)}" ${open ? 'open' : ''}>
+    <summary><span class="aweek-t"><b>Week ${w.week}</b>${w.topic ? `<small>${escapeHtml(w.topic)}</small>` : ''}
+      ${w.week === c.cur ? '<span class="atw-here">this week</span>' : w.state === 'late' ? '<span class="atw-late">behind</span>' : ''}</span>
+      <span class="aweek-chips">${chips || '<span class="alchip">Nothing posted yet</span>'}</span></summary>
+    ${w.items.length ? `<div class="alanes">${order.map((l) => acadLaneHtml(c, w, l)).join('')}</div>` : '<p class="muted small pad">Nothing posted for this week yet.</p>'}
+  </details>`;
+}
+function acadBoardHtml(c) {
+  const wk = c.weeks;
+  const groups = [
+    ['This week', wk.filter((w) => w.week === c.cur)],
+    ['Catch up', wk.filter((w) => w.week < c.cur && w.left > 0)],
+    ['Coming up', wk.filter((w) => w.week > c.cur)],
+    ['Done', wk.filter((w) => w.week < c.cur && w.left === 0)],
+  ].filter(([, list]) => list.length);
+  if (!wk.length) return '<p class="muted small pad">This course doesn’t label its sections by week, so everything is under Course info below.</p>';
+  const strip = `<div class="astrip" role="list">${wk.map((w) => `<button class="astripw ${w.state} ${w.week === c.cur ? 'cur' : ''}" data-act="acad-jump" data-week="${w.week}" role="listitem"
+    aria-label="Week ${w.week}"><b>${w.week}</b><i></i></button>`).join('')}</div>`;
+  return `${strip}${groups.map(([name, list]) => `<div class="agroup"><h3>${name}${name === 'Catch up' ? `<small>${c.catchUp.length} item${c.catchUp.length === 1 ? '' : 's'}, oldest first</small>` : ''}</h3>${list.map((w) => acadWeekHtml(c, w)).join('')}</div>`).join('')}`;
+}
+
+// The knowledge tree for a course: the same builder as the technicals (paste Claude's outline), kept with the course.
+function acadKnowledgeHtml(meta) {
+  const trees = state.trees.filter((t) => t.courseId === meta.id);
+  if (!trees.length) {
+    return `<section class="card" data-section="Knowledge tree">
+      <div class="card-head"><h2>Knowledge tree</h2></div>
+      <p class="small">Turn this course into a tree of topics and light them up as you learn them, like your technicals. Copy the ready-made prompt (it already has this course’s topics from Moodle), paste Claude’s outline back, and it’s built.</p>
+      <button class="btn primary" data-act="acad-tree-new" data-course="${meta.id}">Build a knowledge tree</button></section>`;
+  }
+  return `<div class="seg-mini kview acad-kview"><button data-act="tree-view" data-v="map" class="${treeView === 'map' ? 'on' : ''}">Map</button><button data-act="tree-view" data-v="list" class="${treeView === 'list' ? 'on' : ''}">List</button></div>
+    ${trees.map(treeCardHtml).join('')}`;
+}
+// The prompt for the course's tree: the usual one, plus what Moodle lists for the course.
+function acadListing(cid) {
+  const d = acad.contents.get(cid);
+  return d ? d.sections.filter((s) => s.items.length).map((s) => `${s.name}\n${s.items.map((i) => `  - ${i.name}`).join('\n')}`).join('\n') : '';
+}
+function courseTreePrompt(name, source, cid) {
+  const listing = acadListing(cid);
+  return treePrompt(name, source) + (listing ? `\n\nMoodle lists these sections and items for the course (titles only, in the order they were posted). Use them with the course page to work out the topics:\n${listing}` : '');
+}
+let treeNewCourse = null; // the course a new knowledge tree is being made for
 
 // ---- the pages
 const acadSignIn = (head) => head + `<section class="card banner-card"><b>${state.account ? 'One more Google sign-in' : 'Sign in with Google to use Academics'}</b>
@@ -5572,22 +5680,16 @@ function courseHtml() {
       <a class="mini-btn" href="${escapeHtml(`${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${meta.id}`)}" target="_blank" rel="noopener">Moodle page ↗</a>
       ${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener">Notes ↗</a>` : '<button class="mini-btn" data-act="acad-course-settings">+ Notes link</button>'}</div></header>`;
   if (!c) return header + `<section class="card"><p class="muted pad">${escapeHtml(acad.errors.get(meta.id) || (acad.tracked.has(meta.id) ? 'Loading…' : 'This course isn’t tracked. Choose it on the Academics page.'))}</p></section>`;
-  const weeks = c.sections.filter((s) => s.items.length);
-  const isOpen = (s) => { const k = `${meta.id}:${s.id}`; return acadOpenWeeks.has(k) ? acadOpenWeeks.get(k) : s.week === c.cur || (s.week != null && s.week < c.cur && s.items.some((i) => !acadDone({ ...i }))); };
+  const done = c.items.filter(acadDone).length;
   return header + `
-    <section class="card" data-section="Progress">
-      <div class="card-head"><h2>Progress</h2><span class="hint">${c.done} of ${c.items.length} done</span></div>
-      ${acadTreeHtml(c)}
-    </section>
-    ${c.catchUp.length ? `<section class="card" data-section="Catch up">
-      <div class="card-head"><h2>Catch up</h2><span class="hint">${c.catchUp.length} item${c.catchUp.length === 1 ? '' : 's'}, oldest first</span></div>
-      ${c.catchUp.map((i) => acadItemHtml(i)).join('')}</section>` : ''}
     <section class="card" data-section="Weeks">
-      <div class="card-head"><h2>Weeks</h2></div>
-      ${weeks.map((s) => `<details class="asec" data-asec="${meta.id}:${s.id}" ${isOpen(s) ? 'open' : ''}>
-        <summary><span>${escapeHtml(s.name)}</span><small>${s.items.filter((i) => acadDone({ ...i })).length}/${s.items.length}</small></summary>
-        ${s.items.map((i) => acadItemHtml({ ...i, week: s.week, section: s.name, courseId: meta.id })).join('')}</details>`).join('') || '<p class="muted small">Nothing in this course yet.</p>'}
-    </section>`;
+      <div class="card-head"><h2>Week by week</h2><span class="hint">${done} of ${c.items.length} done · ${acadKind(meta.id) === 'qual' ? 'reading counts' : 'reading optional'}</span></div>
+      ${acadBoardHtml(c)}
+    </section>
+    ${acadKnowledgeHtml(meta)}
+    ${c.info.length ? `<section class="card" data-section="Course info">
+      <div class="card-head"><h2>Course info</h2><span class="hint">${c.info.length}</span></div>
+      ${c.info.map((i) => acadItemHtml(i)).join('')}</section>` : ''}`;
 }
 
 // Today: the next thing to study in each course (a catch-up item if you're behind), one tap to open.
@@ -5650,9 +5752,12 @@ function cleanNotesUrl(u) {
   return cleanUrl(u);
 }
 function openCourseSettings() {
-  const id = route.courseId, notes = acad.notes.get(id) || '';
+  const id = route.courseId, notes = acad.notes.get(id) || '', kind = acadKind(id);
   openSheet(`<div class="sheet-head"><h3>Course settings</h3></div>
     <form class="form flat" data-form="acad-course" data-id="${id}">
+      <div class="f">Type of course<div class="pformat two">
+        <label><input type="radio" name="kind" value="quant" ${kind === 'quant' ? 'checked' : ''}><span><b>Quantitative</b><small>Lecture and problem sets lead. Reading is optional, so it doesn’t count towards being behind.</small></span></label>
+        <label><input type="radio" name="kind" value="qual" ${kind === 'qual' ? 'checked' : ''}><span><b>Qualitative</b><small>Reading comes first each week and counts. Tick a week’s reading all at once at the start.</small></span></label></div></div>
       <label class="f">Notes link<input name="notes" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(notes)}" placeholder="Link to your OneNote section"></label>
       <p class="help">In OneNote, right-click this course’s section → <b>Copy Link to Section</b>, and paste it here. Every item then has a <b>Notes</b> button that opens it. Using paper for this course? Leave it empty.</p>
       <button class="btn primary" type="submit">Save</button>
@@ -5660,12 +5765,55 @@ function openCourseSettings() {
     </form>`, { acad: id });
 }
 async function acadSaveCourse(form) {
-  const id = +form.dataset.id, raw = String(new FormData(form).get('notes') || '').trim(), url = cleanNotesUrl(raw);
+  const f = new FormData(form), id = +form.dataset.id, raw = String(f.get('notes') || '').trim(), url = cleanNotesUrl(raw), kind = f.get('kind') === 'qual' ? 'qual' : 'quant';
   if (raw && !url) { toast('Paste the full link (https://… or onenote:https://…)'); return; }
   if (url.length > 2000) { toast('That link is too long to save'); return; }
-  try { await acadDb.course({ course_id: id, notes_url: url, tracked: acad.tracked.has(id) }); } catch (e) { toast(sbErr(e)); return; }
-  acad.notes.set(id, url);
+  try { await acadDb.course({ course_id: id, notes_url: url, tracked: acad.tracked.has(id), kind }); } catch (e) { toast(/schema cache|kind/i.test(e.message || '') ? 'Run the Academics setup in Supabase once more to save the course type.' : sbErr(e)); return; }
+  acad.notes.set(id, url); acad.kinds.set(id, kind);
   closeSheet(); render();
+}
+// Tick (or untick) a whole lane of a week at once, e.g. all of a week's reading at the start.
+async function acadLaneAll(cid, week, lane) {
+  const c = acadCourse(cid), w = c && c.weeks.find((x) => x.week === week);
+  const its = w ? w.lanes[lane] : [];
+  if (!its.length) return;
+  const allDone = its.every(acadDone);
+  const ids = allDone ? its.filter((i) => acad.progress.has(i.id)).map((i) => i.id) : its.filter((i) => !acadDone(i)).map((i) => i.id);
+  const before = new Map(acad.progress);
+  for (const id of ids) { if (allDone) acad.progress.delete(id); else acad.progress.set(id, new Date().toISOString()); }
+  if (!allDone) { acad.just = ids[0]; setTimeout(() => { acad.just = null; }, 900); }
+  render();
+  try { if (allDone) await acadDb.untickMany(ids); else await acadDb.tickMany(ids, cid); }
+  catch (e) { acad.progress = before; render(); toast(sbErr(e)); }
+}
+// Moving an item to a different lane (kept for the course).
+function openLaneSheet(cid, itemId) {
+  const data = acad.contents.get(cid), item = data && data.sections.flatMap((s) => s.items).find((i) => i.id === itemId);
+  if (!item) return;
+  const cur = laneOf({ ...item, courseId: cid }), set = (acad.lanes.get(cid) || {})[itemId];
+  openSheet(`<div class="sheet-head"><h3>Move “${escapeHtml(clip(item.name, 40))}”</h3></div>
+    <div class="menu">${LANES.map(([k, n]) => `<button class="btn ${cur === k ? 'primary' : ''}" data-act="acad-lane" data-lane="${k}">${n}${cur === k ? ' ✓' : ''}</button>`).join('')}
+      ${set ? '<button class="btn" data-act="acad-lane" data-lane="">Back to automatic</button>' : ''}</div>`, { lane: { cid, itemId } });
+}
+async function acadSetLane(lane) {
+  const { cid, itemId } = (sheetCtx && sheetCtx.lane) || {};
+  if (!cid) return;
+  const map = { ...(acad.lanes.get(cid) || {}) };
+  if (lane) map[itemId] = lane; else delete map[itemId];
+  const before = acad.lanes.get(cid);
+  acad.lanes.set(cid, map);
+  closeSheet(); render();
+  try { await acadDb.course({ course_id: cid, tracked: acad.tracked.has(cid), lanes: map }); }
+  catch (e) { acad.lanes.set(cid, before || {}); render(); toast(/schema cache|lanes/i.test(e.message || '') ? 'Run the Academics setup in Supabase once more to remember this.' : sbErr(e)); }
+}
+function acadJump(week) {
+  const c = acadCourse(route.courseId);
+  const w = c && c.weeks.find((x) => x.week === week);
+  if (!w) return;
+  acadOpenWeeks.set(acadWeekKey(c, w), true);
+  render();
+  const el = $app.querySelector(`[data-asec="${CSS.escape(acadWeekKey(c, w))}"]`);
+  if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 // Weeks you open or fold on a course page stay that way when the page redraws.
 document.addEventListener('toggle', (e) => { const d = e.target; if (d.dataset && d.dataset.asec) acadOpenWeeks.set(d.dataset.asec, d.open); }, true);
@@ -5953,10 +6101,14 @@ document.addEventListener('click', (e) => {
     case 'tree-view': treeView = btn.dataset.v; render(); break;
     case 'mini-hide': setMini(true); break;
     case 'mini-show': setMini(false); break;
-    case 'tree-prompt': { const f = btn.closest('form'); copyText(treePrompt(f.name.value.trim(), f.source.value.trim())); break; }
+    case 'tree-prompt': {
+      const f = btn.closest('form'), cid = f.courseId ? +f.courseId.value : 0;
+      copyText(cid ? courseTreePrompt(f.name.value.trim(), f.source.value.trim(), cid) : treePrompt(f.name.value.trim(), f.source.value.trim())); break;
+    }
     case 'tree-delete': {
       if (!confirm('Delete this knowledge tree?')) break;
-      state.trees = state.trees.filter((t) => t.id !== route.treeId); save(); location.replace('#/knowledge'); break;
+      const gone = state.trees.find((t) => t.id === route.treeId);
+      state.trees = state.trees.filter((t) => t.id !== route.treeId); save(); location.replace(gone && gone.courseId ? `#/academics/${gone.courseId}` : '#/knowledge'); break;
     }
     case 'test-delete': {
       if (!confirm('Delete this result?')) break;
@@ -5982,6 +6134,11 @@ document.addEventListener('click', (e) => {
     case 'acad-disconnect': acadDisconnect(); break;
     case 'acad-choose': acad.choosing = !acad.choosing; render(); break;
     case 'acad-course-settings': openCourseSettings(); break;
+    case 'acad-lane-all': acadLaneAll(+btn.dataset.course, +btn.dataset.week, btn.dataset.lane); break;
+    case 'acad-jump': acadJump(+btn.dataset.week); break;
+    case 'acad-move': openLaneSheet(+btn.dataset.course, +btn.dataset.id); break;
+    case 'acad-lane': acadSetLane(btn.dataset.lane); break;
+    case 'acad-tree-new': treeNewCourse = +btn.dataset.course; location.hash = '#/knowledge/new'; break;
     case 'acad-untrack': { const id = route.courseId; closeSheet(); acadSetTracked(id, false).then(() => { location.hash = '#/academics'; }); break; }
     case 'buddy-ev': openBuddyEvent(btn.dataset); break;
     case 'pm-month': if (btn.dataset.mk) { projMonthView.set(route.projId, btn.dataset.mk); render(); } break;

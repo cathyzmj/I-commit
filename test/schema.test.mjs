@@ -166,6 +166,10 @@ assert.equal((await db.query('select count(*)::int as n from project_refs')).row
 // --- Academics: private to you
 await as('cathy', "insert into academic_progress (item_id, course_id) values (1001, 11)");
 await as('cathy', "insert into academic_courses (course_id, notes_url) values (11, 'onenote:https://d.docs.live.net/abc/Microeconomics')");
+await as('cathy', "update academic_courses set kind = 'qual', lanes = '{\"11042\": \"reading\"}' where course_id = 11");
+await fails('cathy', "update academic_courses set kind = 'weird' where course_id = 11", [], /check/);
+await fails('cathy', "update academic_courses set lanes = '[1]' where course_id = 11", [], /check/);
+await db.exec(fs.readFileSync(new URL('../supabase/academics.sql', import.meta.url), 'utf8')); // safe to run again
 await as('cathy', "insert into academic_settings (term_start) values ('2026-09-28')");
 for (const table of ['academic_progress', 'academic_courses', 'academic_settings']) {
   assert.equal((await as('han', `select * from ${table}`)).length, 0, `others can't see ${table}`);
