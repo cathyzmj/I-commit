@@ -5331,7 +5331,7 @@ const acad = {
   conn: null,            // null = not known yet, false = not connected, true = connected
   name: '', courses: null, contents: new Map(), errors: new Map(),
   progress: new Map(),   // item id -> when you ticked it
-  tracked: new Set(), notes: new Map(), kinds: new Map(), lanes: new Map(), termStart: '2026-09-28', haveRows: false,
+  tracked: new Set(), notes: new Map(), kinds: new Map(), lanes: new Map(), offsets: new Map(), termStart: '2026-09-28', haveRows: false,
   at: 0, failAt: 0, loading: false, error: '', expired: false, dbMissing: false, choosing: false, just: null,
 };
 const acadOpenWeeks = new Map(); // "course:week" -> opened or folded by you
@@ -5341,7 +5341,7 @@ const acadDb = {
   async mine() {
     const [p, c, s] = await Promise.all([
       sb.from('academic_progress').select('item_id, done_at'),
-      sb.from('academic_courses').select('course_id, notes_url, tracked, kind, lanes'),
+      sb.from('academic_courses').select('course_id, notes_url, tracked, kind, lanes, week_offset'),
       sb.from('academic_settings').select('term_start').maybeSingle(),
     ]);
     const err = p.error || c.error || s.error;
@@ -5385,19 +5385,19 @@ async function moodleApi(body) {
 // ---- remembered between visits, so the tab opens at once (links are refreshed after a few hours)
 function acadSaveCache() {
   try {
-    localStorage.setItem('acadCache', JSON.stringify({ at: acad.at, name: acad.name, courses: acad.courses, contents: [...acad.contents] }));
+    localStorage.setItem('acadCache', JSON.stringify({ v: 2, at: acad.at, name: acad.name, courses: acad.courses, contents: [...acad.contents] }));
   } catch { /* storage full or blocked */ }
 }
 (function acadRestore() {
   try {
     const c = JSON.parse(localStorage.getItem('acadCache') || 'null');
-    if (!c || !Array.isArray(c.courses)) return;
+    if (!c || c.v !== 2 || !Array.isArray(c.courses)) return;
     acad.conn = true; acad.name = c.name || ''; acad.courses = c.courses; acad.contents = new Map(c.contents || []); acad.at = c.at || 0;
   } catch { /* nothing usable */ }
 })();
 function acadReset() {
   Object.assign(acad, { conn: null, name: '', courses: null, error: '', expired: false, dbMissing: false, at: 0, failAt: 0 });
-  acad.contents.clear(); acad.errors.clear(); acad.progress.clear(); acad.tracked.clear(); acad.notes.clear(); acad.kinds.clear(); acad.lanes.clear();
+  acad.contents.clear(); acad.errors.clear(); acad.progress.clear(); acad.tracked.clear(); acad.notes.clear(); acad.kinds.clear(); acad.lanes.clear(); acad.offsets.clear();
   try { localStorage.removeItem('acadCache'); } catch {}
 }
 const rerenderAcad = () => { if (['academics', 'today'].includes(route.tab) && !sheetCtx && !typing()) render(); };
@@ -5420,6 +5420,7 @@ async function acadLoad({ force = false } = {}) {
       acad.notes = new Map(mine.courses.map((r) => [+r.course_id, r.notes_url || '']));
       acad.kinds = new Map(mine.courses.map((r) => [+r.course_id, r.kind === 'qual' ? 'qual' : 'quant']));
       acad.lanes = new Map(mine.courses.map((r) => [+r.course_id, r.lanes && typeof r.lanes === 'object' ? r.lanes : {}]));
+      acad.offsets = new Map(mine.courses.map((r) => [+r.course_id, Math.max(0, +r.week_offset || 0)]));
       acad.tracked = new Set(mine.courses.filter((r) => r.tracked).map((r) => +r.course_id));
       acad.haveRows = mine.courses.length > 0;
       if (mine.term && mine.term.term_start) acad.termStart = mine.term.term_start;
@@ -5479,15 +5480,18 @@ function laneOf(i) {
 // "Qualitative" courses (essays, cases) treat the reading as part of the week; for "quantitative" ones it's
 // optional, so it isn't counted when working out how far behind you are.
 const acadKind = (cid) => acad.kinds.get(cid) || 'quant';
+// "Week 4: Consumer choice" / "2. Demand" / "Lecture 3 - Costs" -> the topic without its numbering.
+const acadTopicOf = (name) => String(name || '').replace(/^\s*(?:(?:weeks?|lectures?|topics?|sessions?|units?|modules?|chapters?|parts?|seminars?|classes|class|w)\s*[.#]?\s*\d{1,2}|\d{1,2})\s*[:.)\-–—]?\s*/i, '').trim();
 const LANE_ORDER = ['reading', 'lecture', 'practice', 'other']; // the rows of a week, top to bottom (after the topic)
 const countsFor = (i) => !(acadKind(i.courseId) === 'quant' && i.lane === 'reading');
 const acadDone = (i) => acad.progress.has(i.id) || i.moodleDone;
 function acadCourse(cid) {
   const data = acad.contents.get(cid), meta = (acad.courses || []).find((c) => c.id === cid);
   if (!data || !meta) return null;
-  const cur = termWeek();
+  const cur = termWeek(), off = acad.offsets.get(cid) || 0;
+  const weekOfSec = (s) => (s.week == null ? null : s.week + off);
   const items = data.sections.flatMap((s, si) => s.items.map((i, ii) => {
-    const it = { ...i, week: s.week, section: s.name, courseId: cid, order: si * 1000 + ii };
+    const it = { ...i, week: weekOfSec(s), section: s.name, courseId: cid, order: si * 1000 + ii };
     it.lane = laneOf(it);
     return it;
   }));
@@ -5499,11 +5503,12 @@ function acadCourse(cid) {
   // one entry per week, with its items split into lanes
   const byWeek = new Map();
   for (const s of data.sections) {
-    if (s.week == null) continue;
-    const w = byWeek.get(s.week) || byWeek.set(s.week, { week: s.week, topic: '', summary: '', items: [] }).get(s.week);
-    if (!w.topic) w.topic = String(s.name).replace(/^\s*weeks?\s*\d+\s*[:.\-–—]?\s*/i, '').trim();
+    const wk = weekOfSec(s);
+    if (wk == null) continue;
+    const w = byWeek.get(wk) || byWeek.set(wk, { week: wk, topic: '', summary: '', items: [] }).get(wk);
+    if (!w.topic) w.topic = acadTopicOf(s.name);
     if (!w.summary && s.summary) w.summary = s.summary;
-    for (const i of items.filter((x) => x.section === s.name && x.week === s.week)) if (!w.items.includes(i)) w.items.push(i);
+    for (const i of items.filter((x) => x.section === s.name && x.week === wk)) if (!w.items.includes(i)) w.items.push(i);
   }
   const weeks = [...byWeek.values()].sort((a, b) => a.week - b.week).map((w) => {
     if (!w.topic && w.summary) { // a section titled just "Week 3": its description holds the topic
@@ -5515,7 +5520,7 @@ function acadCourse(cid) {
     return { ...w, lanes, left, state: !w.items.length ? 'empty' : left === 0 ? 'full' : w.week < cur ? 'late' : w.week === cur ? 'now' : 'ahead' };
   });
   const info = items.filter((i) => i.week == null);
-  return { meta, cur, items, weekly, weeks, info, catchUp: past, thisWeek: now, behind, next: past[0] || now[0] || null,
+  return { meta, cur, items, weekly, weeks, info, guessed: data.sections.some((s) => s.week != null && s.weekFrom === 'order'), offset: off, catchUp: past, thisWeek: now, behind, next: past[0] || now[0] || null,
     doneSoFar: due.filter(acadDone).length, totalSoFar: due.length, done: items.filter(acadDone).length, sections: data.sections };
 }
 function acadStatus(c) {
@@ -5698,6 +5703,7 @@ function courseHtml() {
   return header + `
     <section class="card" data-section="Weeks">
       <div class="card-head"><h2>Week by week</h2><span class="hint">${done} of ${c.items.length} done · ${acadKind(meta.id) === 'qual' ? 'reading counts' : 'reading optional'}</span></div>
+      ${c.guessed ? `<p class="help">This course’s Moodle page doesn’t number its weeks, so they follow the order of its sections (the first section is week ${1 + c.offset}). Wrong? Change where the course starts in <b>Settings</b>.</p>` : ''}
       ${acadBoardHtml(c)}
     </section>
     ${acadKnowledgeHtml(meta)}
@@ -5772,6 +5778,8 @@ function openCourseSettings() {
       <div class="f">Type of course<div class="pformat two">
         <label><input type="radio" name="kind" value="quant" ${kind === 'quant' ? 'checked' : ''}><span><b>Quantitative</b><small>Lecture and problem sets lead. Reading is optional, so it doesn’t count towards being behind.</small></span></label>
         <label><input type="radio" name="kind" value="qual" ${kind === 'qual' ? 'checked' : ''}><span><b>Qualitative</b><small>Reading counts towards being behind. You can tick a week’s reading all at once, at the start of the week.</small></span></label></div></div>
+      <label class="f">The course’s first week is term week<input name="startWeek" type="number" inputmode="numeric" min="1" max="31" step="1" value="${(acad.offsets.get(id) || 0) + 1}">
+        <span class="help">Most start in week 1. If this course starts later, or you want its sections to line up with the term, change it. Week numbers shift to match.</span></label>
       <label class="f">Notes link<input name="notes" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(notes)}" placeholder="Link to your OneNote section"></label>
       <p class="help">In OneNote, right-click this course’s section → <b>Copy Link to Section</b>, and paste it here. Every item then has a <b>Notes</b> button that opens it. Using paper for this course? Leave it empty.</p>
       <button class="btn primary" type="submit">Save</button>
@@ -5782,8 +5790,9 @@ async function acadSaveCourse(form) {
   const f = new FormData(form), id = +form.dataset.id, raw = String(f.get('notes') || '').trim(), url = cleanNotesUrl(raw), kind = f.get('kind') === 'qual' ? 'qual' : 'quant';
   if (raw && !url) { toast('Paste the full link (https://… or onenote:https://…)'); return; }
   if (url.length > 2000) { toast('That link is too long to save'); return; }
-  try { await acadDb.course({ course_id: id, notes_url: url, tracked: acad.tracked.has(id), kind }); } catch (e) { toast(/schema cache|kind/i.test(e.message || '') ? 'Run the Academics setup in Supabase once more to save the course type.' : sbErr(e)); return; }
-  acad.notes.set(id, url); acad.kinds.set(id, kind);
+  const offset = Math.min(30, Math.max(0, Math.round(num(f.get('startWeek'), 1)) - 1));
+  try { await acadDb.course({ course_id: id, notes_url: url, tracked: acad.tracked.has(id), kind, week_offset: offset }); } catch (e) { toast(/schema cache|kind|week_offset/i.test(e.message || '') ? 'Run the Academics setup in Supabase once more to save these.' : sbErr(e)); return; }
+  acad.notes.set(id, url); acad.kinds.set(id, kind); acad.offsets.set(id, offset);
   closeSheet(); render();
 }
 // Tick (or untick) a whole lane of a week at once, e.g. all of a week's reading at the start.

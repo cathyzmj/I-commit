@@ -51,8 +51,22 @@ const friendly = (e) => (e.code === 'invalidtoken' ? { status: 401, error: 'Mood
   : e.code === 'unreachable' ? { status: 502, error: e.message }
   : { status: 502, error: `Moodle said: ${e.message}` });
 
-// "Week 4: Consumer choice" -> 4; sections like "General" have no week.
-export const weekOf = (name) => { const m = /\bweeks?\s*(\d{1,2})\b/i.exec(String(name || '')); return m ? +m[1] : null; };
+// Which teaching week a section is, from its title. Moodle courses label this in different ways:
+//   "Week 4: Consumer choice" · "Lecture 3" / "Topic 2" · "1. Introduction" / "2) Demand" / "03 - Costs" · "1 Introduction"
+// A leading number is taken as the week (that's how courses that don't say "week" usually number them).
+// "General", "Welcome", "Revision" and dates like "12 October" have none (0 isn't a week).
+const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*';
+const WEEK_PATTERNS = [
+  /\bweeks?\s*(\d{1,2})\b/i,
+  /^\s*(?:lectures?|topics?|sessions?|units?|modules?|chapters?|parts?|seminars?|classes|class|w)\s*[.#]?\s*(\d{1,2})\b/i,
+  /^\s*(\d{1,2})\s*[.):\-–—]\s*\S/,
+  new RegExp(`^\\s*(\\d{1,2})\\s+(?!${MONTH}\\b)(?!hours?\\b)[A-Za-z]`, 'i'),
+];
+export function weekOf(name) {
+  const t = String(name || '');
+  for (const re of WEEK_PATTERNS) { const m = re.exec(t); if (m && +m[1] >= 1 && +m[1] <= 52) return +m[1]; }
+  return null;
+}
 
 const TYPE_LABEL = { resource: 'File', url: 'Link', page: 'Page', folder: 'Folder', assign: 'Assignment', quiz: 'Quiz', lesson: 'Lesson', book: 'Book', lti: 'Recording or tool', scorm: 'Package', h5pactivity: 'Activity', choice: 'Poll', glossary: 'Glossary', wiki: 'Wiki', workshop: 'Workshop' };
 
@@ -94,7 +108,12 @@ async function normaliseSections(sections, { origin, acct, token, site, now }) {
         due: m.dates && (m.dates.find((d) => /due/i.test(d.label || '')) || {}).timestamp || null,
       });
     }
-    out.push({ id: sec.id, name: sec.name || `Section ${sec.section}`, week: weekOf(sec.name), summary: plainText(sec.summary), items });
+    out.push({ id: sec.id, no: sec.section, name: sec.name || `Section ${sec.section}`, week: weekOf(sec.name), weekFrom: 'name', summary: plainText(sec.summary), items });
+  }
+  // No section says which week it is anywhere in the course: take the order of the sections instead
+  // (section 1 = week 1, section 2 = week 2 …), and say so.
+  if (!out.some((x) => x.week != null)) {
+    for (const x of out) if (x.no >= 1 && x.no <= 52) { x.week = x.no; x.weekFrom = 'order'; }
   }
   return out;
 }

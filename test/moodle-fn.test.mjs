@@ -23,7 +23,15 @@ const fakeMoodle = async (url, opts = {}) => {
       case 'core_enrol_get_users_courses': return Response.json([
         { id: 11, shortname: 'EC1A1', fullname: 'Microeconomics I', startdate: 1790000000, enddate: 0, visible: 1, progress: 12.4 },
         { id: 12, shortname: 'OLD', fullname: 'Hidden course', startdate: 1, visible: 0 }]);
-      case 'core_course_get_contents': return Response.json([
+      case 'core_course_get_contents':
+        if (b.get('courseid') === '21') return Response.json([
+          { id: 31, section: 0, name: 'General', modules: [] },
+          { id: 32, section: 1, name: 'Introduction', modules: [{ id: 2001, modname: 'resource', name: 'Slides', visible: 1 }] },
+          { id: 33, section: 2, name: 'Consumer choice', modules: [] },
+          { id: 34, section: 3, name: 'Revision', modules: [] }]);
+        if (b.get('courseid') === '22') return Response.json([
+          { id: 41, section: 1, name: '1. Introduction', modules: [] }, { id: 42, section: 2, name: '2. Demand', modules: [] }, { id: 43, section: 3, name: 'Reading list', modules: [] }]);
+        return Response.json([
         { id: 1, section: 0, name: 'General', modules: [{ id: 900, modname: 'forum', name: 'Announcements', visible: 1 }, { id: 901, modname: 'label', name: 'Welcome', visible: 1 }] },
         { id: 2, section: 4, name: 'Week 4: Consumer choice', summary: '<p>How consumers choose &amp; trade off.</p><ul><li>Budget lines</li><li>Indifference curves</li></ul>', modules: [
           { id: 1001, modname: 'resource', name: 'Lecture slides', visible: 1, url: `${SITE}/mod/resource/view.php?id=1001`, completiondata: { state: 1 },
@@ -48,6 +56,9 @@ const j = async (r) => ({ status: r.status, ...(await r.json()) });
 assert.equal(weekOf('Week 4: Consumer choice'), 4);
 assert.equal(weekOf('Weeks 3-4'), 3);
 assert.equal(weekOf('General'), null);
+const WEEKS = { '1. Introduction': 1, '2) Demand': 2, '03 - Costs': 3, 'Lecture 5: Elasticity': 5, 'Topic 2': 2, '1 Introduction': 1, '10. Review': 10, 'Seminar 3 reading': 3, 'W4': 4,
+  '12 October': null, '2024/25 syllabus': null, 'Welcome to the course': null, 'Revision': null, '0. Welcome': null, '2 hours of lectures': null, 'Course information': null };
+for (const [name, week] of Object.entries(WEEKS)) assert.equal(weekOf(name), week, name);
 assert.equal(plainText('<p>Utility &amp; choice</p><ul><li>One</li><li>Two</li></ul><script>x</script>'), 'Utility & choice\nOne\nTwo\nx');
 
 // signed in only
@@ -83,6 +94,12 @@ assert.equal(pset.due, 1_800_500_000);
 assert.equal(offsite.files.length, 0, 'files from another site are never linked');
 assert(!JSON.stringify(r).includes(TOKEN), 'the key is not in the course data');
 assert.match(slides.files[0].link, /^https:\/\/commit\.example\/api\/moodle\/f\?u=[0-9a-f]{32}&e=\d+&p=/);
+
+// courses that never say which week it is
+r = await j(await post({ action: 'contents', courseId: 21 }));
+assert.deepEqual(r.sections.map((x) => [x.name, x.week, x.weekFrom]), [['General', null, 'name'], ['Introduction', 1, 'order'], ['Consumer choice', 2, 'order'], ['Revision', 3, 'order']], 'the order of the sections gives the weeks');
+r = await j(await post({ action: 'contents', courseId: 22 }));
+assert.deepEqual(r.sections.map((x) => [x.week, x.weekFrom]), [[1, 'name'], [2, 'name'], [null, 'name']], 'numbered titles are used, and no guessing when some are numbered');
 
 // opening a file through its signed link
 const open = (link, n = NOW) => handle(new Request(link), { loginStore, store, fetchImpl: fakeMoodle, now: n, env: {} });
