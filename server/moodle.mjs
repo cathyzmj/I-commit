@@ -62,9 +62,16 @@ const WEEK_PATTERNS = [
   /^\s*(\d{1,2})\s*[.):\-–—]\s*\S/,
   new RegExp(`^\\s*(\\d{1,2})\\s+(?!${MONTH}\\b)(?!hours?\\b)[A-Za-z]`, 'i'),
 ];
+// A section for tests and assessment ("Tests", "3. Online test", "Mock exams"): shown on its own, not as a week.
+export const TEST_RE = /\b(tests?|quiz(?:zes)?|assessments?|exams?|examinations?|mock|past papers?)\b/i;
 export function weekOf(name) {
   const t = String(name || '');
-  for (const re of WEEK_PATTERNS) { const m = re.exec(t); if (m && +m[1] >= 1 && +m[1] <= 52) return +m[1]; }
+  for (let k = 0; k < WEEK_PATTERNS.length; k++) {
+    const m = WEEK_PATTERNS[k].exec(t);
+    if (!m || +m[1] < 1 || +m[1] > 52) continue;
+    if (k > 0 && TEST_RE.test(t)) return null; // only "Week 6: Mid-term test" is still week 6; a numbered test section isn't a week
+    return +m[1];
+  }
   return null;
 }
 
@@ -108,12 +115,12 @@ async function normaliseSections(sections, { origin, acct, token, site, now }) {
         due: m.dates && (m.dates.find((d) => /due/i.test(d.label || '')) || {}).timestamp || null,
       });
     }
-    out.push({ id: sec.id, no: sec.section, name: sec.name || `Section ${sec.section}`, week: weekOf(sec.name), weekFrom: 'name', summary: plainText(sec.summary), items });
+    out.push({ id: sec.id, no: sec.section, name: sec.name || `Section ${sec.section}`, week: weekOf(sec.name), weekFrom: 'name', tests: weekOf(sec.name) == null && TEST_RE.test(sec.name || ''), summary: plainText(sec.summary), items });
   }
   // No section says which week it is anywhere in the course: take the order of the sections instead
   // (section 1 = week 1, section 2 = week 2 …), and say so.
   if (!out.some((x) => x.week != null)) {
-    for (const x of out) if (x.no >= 1 && x.no <= 52) { x.week = x.no; x.weekFrom = 'order'; }
+    for (const x of out) if (x.no >= 1 && x.no <= 52 && !TEST_RE.test(x.name)) { x.week = x.no; x.weekFrom = 'order'; }
   }
   return out;
 }

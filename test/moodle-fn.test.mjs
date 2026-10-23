@@ -29,6 +29,9 @@ const fakeMoodle = async (url, opts = {}) => {
           { id: 32, section: 1, name: 'Introduction', modules: [{ id: 2001, modname: 'resource', name: 'Slides', visible: 1 }] },
           { id: 33, section: 2, name: 'Consumer choice', modules: [] },
           { id: 34, section: 3, name: 'Revision', modules: [] }]);
+        if (b.get('courseid') === '23') return Response.json([
+          { id: 51, section: 1, name: '1. Introduction', modules: [] }, { id: 52, section: 2, name: 'Online tests', modules: [{ id: 3001, modname: 'quiz', name: 'Mock test 1', visible: 1 }] },
+          { id: 53, section: 3, name: '2. Demand', modules: [] }, { id: 54, section: 4, name: 'Course information', modules: [] }]);
         if (b.get('courseid') === '22') return Response.json([
           { id: 41, section: 1, name: '1. Introduction', modules: [] }, { id: 42, section: 2, name: '2. Demand', modules: [] }, { id: 43, section: 3, name: 'Reading list', modules: [] }]);
         return Response.json([
@@ -57,7 +60,7 @@ assert.equal(weekOf('Week 4: Consumer choice'), 4);
 assert.equal(weekOf('Weeks 3-4'), 3);
 assert.equal(weekOf('General'), null);
 const WEEKS = { '1. Introduction': 1, '2) Demand': 2, '03 - Costs': 3, 'Lecture 5: Elasticity': 5, 'Topic 2': 2, '1 Introduction': 1, '10. Review': 10, 'Seminar 3 reading': 3, 'W4': 4,
-  '12 October': null, '2024/25 syllabus': null, 'Welcome to the course': null, 'Revision': null, '0. Welcome': null, '2 hours of lectures': null, 'Course information': null };
+  '3. Online test': null, 'Tests': null, 'Week 6: Mid-term test': 6, 'Assessment': null, '12 October': null, '2024/25 syllabus': null, 'Welcome to the course': null, 'Revision': null, '0. Welcome': null, '2 hours of lectures': null, 'Course information': null };
 for (const [name, week] of Object.entries(WEEKS)) assert.equal(weekOf(name), week, name);
 assert.equal(plainText('<p>Utility &amp; choice</p><ul><li>One</li><li>Two</li></ul><script>x</script>'), 'Utility & choice\nOne\nTwo\nx');
 
@@ -100,6 +103,10 @@ r = await j(await post({ action: 'contents', courseId: 21 }));
 assert.deepEqual(r.sections.map((x) => [x.name, x.week, x.weekFrom]), [['General', null, 'name'], ['Introduction', 1, 'order'], ['Consumer choice', 2, 'order'], ['Revision', 3, 'order']], 'the order of the sections gives the weeks');
 r = await j(await post({ action: 'contents', courseId: 22 }));
 assert.deepEqual(r.sections.map((x) => [x.week, x.weekFrom]), [[1, 'name'], [2, 'name'], [null, 'name']], 'numbered titles are used, and no guessing when some are numbered');
+
+// a section for tests is its own thing, and isn't taken for a week
+r = await j(await post({ action: 'contents', courseId: 23 }));
+assert.deepEqual(r.sections.map((x) => [x.name, x.week, x.tests]), [['1. Introduction', 1, false], ['Online tests', null, true], ['2. Demand', 2, false], ['Course information', null, false]]);
 
 // opening a file through its signed link
 const open = (link, n = NOW) => handle(new Request(link), { loginStore, store, fetchImpl: fakeMoodle, now: n, env: {} });

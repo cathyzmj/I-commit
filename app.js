@@ -5385,13 +5385,13 @@ async function moodleApi(body) {
 // ---- remembered between visits, so the tab opens at once (links are refreshed after a few hours)
 function acadSaveCache() {
   try {
-    localStorage.setItem('acadCache', JSON.stringify({ v: 2, at: acad.at, name: acad.name, courses: acad.courses, contents: [...acad.contents] }));
+    localStorage.setItem('acadCache', JSON.stringify({ v: 3, at: acad.at, name: acad.name, courses: acad.courses, contents: [...acad.contents] }));
   } catch { /* storage full or blocked */ }
 }
 (function acadRestore() {
   try {
     const c = JSON.parse(localStorage.getItem('acadCache') || 'null');
-    if (!c || c.v !== 2 || !Array.isArray(c.courses)) return;
+    if (!c || c.v !== 3 || !Array.isArray(c.courses)) return;
     acad.conn = true; acad.name = c.name || ''; acad.courses = c.courses; acad.contents = new Map(c.contents || []); acad.at = c.at || 0;
   } catch { /* nothing usable */ }
 })();
@@ -5482,6 +5482,7 @@ function laneOf(i) {
 const acadKind = (cid) => acad.kinds.get(cid) || 'quant';
 // "Week 4: Consumer choice" / "2. Demand" / "Lecture 3 - Costs" -> the topic without its numbering.
 const acadTopicOf = (name) => String(name || '').replace(/^\s*(?:(?:weeks?|lectures?|topics?|sessions?|units?|modules?|chapters?|parts?|seminars?|classes|class|w)\s*[.#]?\s*\d{1,2}|\d{1,2})\s*[:.)\-–—]?\s*/i, '').trim();
+const ACAD_TEST_RE = /\b(tests?|quiz(?:zes)?|assessments?|exams?|examinations?|mock|past papers?)\b/i; // same idea as the server's TEST_RE
 const LANE_ORDER = ['reading', 'lecture', 'practice', 'other']; // the rows of a week, top to bottom (after the topic)
 const countsFor = (i) => !(acadKind(i.courseId) === 'quant' && i.lane === 'reading');
 const acadDone = (i) => acad.progress.has(i.id) || i.moodleDone;
@@ -5519,8 +5520,10 @@ function acadCourse(cid) {
     const left = w.items.filter((i) => countsFor(i) && !acadDone(i)).length;
     return { ...w, lanes, left, state: !w.items.length ? 'empty' : left === 0 ? 'full' : w.week < cur ? 'late' : w.week === cur ? 'now' : 'ahead' };
   });
-  const info = items.filter((i) => i.week == null);
-  return { meta, cur, items, weekly, weeks, info, guessed: data.sections.some((s) => s.week != null && s.weekFrom === 'order'), offset: off, catchUp: past, thisWeek: now, behind, next: past[0] || now[0] || null,
+  // a section for tests/assessment gets its own card; everything else outside the weeks is Course info
+  const isTest = (i) => i.week == null && ACAD_TEST_RE.test(i.section);
+  const tests = items.filter(isTest), info = items.filter((i) => i.week == null && !isTest(i));
+  return { meta, cur, items, weekly, weeks, info, tests, guessed: data.sections.some((s) => s.week != null && s.weekFrom === 'order'), offset: off, catchUp: past, thisWeek: now, behind, next: past[0] || now[0] || null,
     doneSoFar: due.filter(acadDone).length, totalSoFar: due.length, done: items.filter(acadDone).length, sections: data.sections };
 }
 function acadStatus(c) {
@@ -5706,6 +5709,9 @@ function courseHtml() {
       ${c.guessed ? `<p class="help">This course’s Moodle page doesn’t number its weeks, so they follow the order of its sections (the first section is week ${1 + c.offset}). Wrong? Change where the course starts in <b>Settings</b>.</p>` : ''}
       ${acadBoardHtml(c)}
     </section>
+    ${c.tests.length ? `<section class="card" data-section="Tests">
+      <div class="card-head"><h2>Tests</h2><span class="hint">${c.tests.filter(acadDone).length} of ${c.tests.length} done</span></div>
+      ${c.tests.map((i) => acadItemHtml(i)).join('')}</section>` : ''}
     ${acadKnowledgeHtml(meta)}
     ${c.info.length ? `<section class="card" data-section="Course info">
       <div class="card-head"><h2>Course info</h2><span class="hint">${c.info.length}</span></div>
