@@ -5466,17 +5466,45 @@ const acadColor = (cid) => PROJ_COLORS[acadKeyOf(cid)];
 const LANES = [['reading', 'Reading'], ['lecture', 'Lecture'], ['practice', 'Problem sets'], ['other', 'Other']];
 const LANE_NAME = Object.fromEntries(LANES);
 const LANE_SHORT = { reading: 'Reading', lecture: 'Lecture', practice: 'Problems', other: 'Other' };
-function autoLane(i) {
-  const n = String(i.name || '').toLowerCase();
-  if (['assign', 'quiz', 'workshop', 'lesson'].includes(i.type) || /problem|exercise|quiz|homework|worksheet|assignment|formative|summative|past paper|mock|\bpset\b|\bps ?\d/.test(n)) return 'practice';
-  if (i.type === 'lti' || /lecture|slides|recording|panopto|echo ?360|video|webinar|podcast/.test(n)) return 'lecture';
-  if (['url', 'book'].includes(i.type) || /\bread|chapter|\bch\.? ?\d|article|paper|textbook|journal|case study|essay|\bbook\b/.test(n)) return 'reading';
-  return 'other';
+// Sorting an item into a lane uses everything Moodle tells us: the item's title, its type, its file names
+// and types (Stata .do/.dta files are workshop work, slides and recordings are lecture), and then the
+// week's own title or description as a hint for items that say nothing themselves.
+const RE_PRACTICE = /problems?\b|exercises?|quiz|homework|\bhw ?\d|worksheets?|work sheets?|assignments?|formative|summative|past papers?|mock|\bpsets?\b|\bps ?\d|tutorials?|workshops?|\blabs?\b|practicals?|stata|\bpython\b|\br ?studio\b|replication|solutions?|answers?|answer key|example sheets?|question sheets?|\bquestions?\b|problem class|coursework|\bcw ?\d|\bdata ?sets?\b|\bdo[- ]?files?\b/i;
+const RE_LECTURE = /lectures?|\blec\b|\blec ?\d|\bl\d{1,2}\b|slides?|slide deck|recordings?|panopto|echo ?360|videos?|webinar|podcast|presentations?|powerpoint|\bppt|screencast|lecture notes?/i;
+const RE_READING = /\bread|chapters?|\bch\.? ?\d|articles?|\bpapers?\b|textbook|journal|case study|essay|\bbooks?\b|references?|bibliography|extracts?|\bnotes? on\b/i;
+const EXT_PRACTICE = new Set(['do', 'dta', 'ado', 'r', 'rmd', 'py', 'ipynb', 'csv', 'sav', 'xlsx', 'xls', 'sas', 'm']);
+const EXT_LECTURE = new Set(['pptx', 'ppt', 'key', 'mp4', 'm4a', 'mp3', 'mov', 'm4v', 'webm']);
+const fileExts = (i) => (i.files || []).map((f) => ((String(f.name || '').match(/\.([a-z0-9]{1,5})$/i) || [])[1] || '').toLowerCase()).filter(Boolean);
+const fileNames = (i) => (i.files || []).map((f) => f.name || '').join(' ');
+function laneFromText(t) {
+  t = String(t || '').replace(/reading[- ]week/gi, ' '); // a break, not reading material
+  if (RE_PRACTICE.test(t)) return 'practice';
+  if (RE_LECTURE.test(t)) return 'lecture';
+  if (RE_READING.test(t)) return 'reading';
+  return null;
 }
+function autoLane(i) {
+  const name = String(i.name || '').toLowerCase(), exts = fileExts(i), files = fileNames(i).toLowerCase();
+  if (['assign', 'quiz', 'workshop'].includes(i.type)) return 'practice';
+  if (i.type === 'lti' || i.type === 'kalvidres' || i.type === 'panopto') return 'lecture';
+  const byName = laneFromText(name);              // what the item calls itself wins
+  if (byName) return byName;
+  if (exts.some((e) => EXT_PRACTICE.has(e))) return 'practice';
+  if (exts.some((e) => EXT_LECTURE.has(e))) return 'lecture';
+  const byFile = laneFromText(files);             // then what its files are called
+  if (byFile) return byFile;
+  if (['url', 'book'].includes(i.type)) return 'reading';
+  if ((i.files || []).some((f) => /^(video|audio)\//.test(f.type || ''))) return 'lecture';
+  return i.hint || 'other';                       // finally, what the week says it is about
+}
+// "Week 2: Stata workshop" / a description that says "problem set": unlabelled items in that week follow it.
+const weekHint = (s) => laneFromText(`${s.name || ''} ${s.summary || ''}`.toLowerCase().replace(/^\s*(?:weeks?|lectures?|topics?|sessions?)?\s*\d+\s*[:.)\-–—]?\s*/i, ''));
 function laneOf(i) {
   const o = (acad.lanes.get(i.courseId) || {})[i.id];
   return o && LANE_NAME[o] ? o : autoLane(i);
 }
+// What an item is called, with its numbers taken out, so "Problem set 3" and "Problem set 4" are alike.
+const itemPattern = (name) => String(name || '').toLowerCase().replace(/\b(?:weeks?|wk|w)\s*\d+\b/g, ' ').replace(/\d+/g, '#').replace(/[^a-z#]+/g, ' ').trim();
 // "Qualitative" courses (essays, cases) treat the reading as part of the week; for "quantitative" ones it's
 // optional, so it isn't counted when working out how far behind you are.
 const acadKind = (cid) => acad.kinds.get(cid) || 'quant';
@@ -5492,7 +5520,7 @@ function acadCourse(cid) {
   const cur = termWeek(), off = acad.offsets.get(cid) || 0;
   const weekOfSec = (s) => (s.week == null ? null : s.week + off);
   const items = data.sections.flatMap((s, si) => s.items.map((i, ii) => {
-    const it = { ...i, week: weekOfSec(s), section: s.name, courseId: cid, order: si * 1000 + ii };
+    const it = { ...i, week: weekOfSec(s), section: s.name, courseId: cid, order: si * 1000 + ii, hint: weekHint(s) };
     it.lane = laneOf(it);
     return it;
   }));
@@ -5789,6 +5817,8 @@ function openCourseSettings() {
       <label class="f">Notes link<input name="notes" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(notes)}" placeholder="Link to your OneNote section"></label>
       <p class="help">In OneNote, right-click this course’s section → <b>Copy Link to Section</b>, and paste it here. Every item then has a <b>Notes</b> button that opens it. Using paper for this course? Leave it empty.</p>
       <button class="btn primary" type="submit">Save</button>
+      <button type="button" class="btn" data-act="acad-copy-list">Copy how items were sorted</button>
+      <p class="help">If items land in the wrong row, copy this list and send it to Claude so the sorting can be improved. Moving one item in a week also moves its look-alikes in other weeks.</p>
       <button type="button" class="btn warn" data-act="acad-untrack">Stop tracking this course</button>
     </form>`, { acad: id });
 }
@@ -5827,13 +5857,26 @@ function openLaneSheet(cid, itemId) {
 async function acadSetLane(lane) {
   const { cid, itemId } = (sheetCtx && sheetCtx.lane) || {};
   if (!cid) return;
+  const data = acad.contents.get(cid), all = data ? data.sections.flatMap((s) => s.items) : [];
+  const item = all.find((i) => i.id === itemId), pat = item ? itemPattern(item.name) : '';
+  // the same kind of item in other weeks ("Problem set 3" → "Problem set 4") follows, unless you set it yourself
   const map = { ...(acad.lanes.get(cid) || {}) };
-  if (lane) map[itemId] = lane; else delete map[itemId];
+  const same = pat.length >= 4 ? all.filter((i) => i.id !== itemId && itemPattern(i.name) === pat && !map[i.id]) : [];
+  if (lane) { map[itemId] = lane; for (const i of same) map[i.id] = lane; }
+  else { delete map[itemId]; for (const i of all.filter((x) => x.id !== itemId && itemPattern(x.name) === pat && pat.length >= 4)) delete map[i.id]; }
   const before = acad.lanes.get(cid);
   acad.lanes.set(cid, map);
   closeSheet(); render();
+  if (same.length) toast(`${same.length} similar item${same.length === 1 ? '' : 's'} moved too`);
   try { await acadDb.course({ course_id: cid, tracked: acad.tracked.has(cid), lanes: map }); }
   catch (e) { acad.lanes.set(cid, before || {}); render(); toast(/schema cache|lanes/i.test(e.message || '') ? 'Run the Academics setup in Supabase once more to remember this.' : sbErr(e)); }
+}
+// A plain-text list of how every item of the course was sorted, to paste to Claude when the sorting is off.
+function acadCopyList() {
+  const c = acadCourse(route.courseId);
+  if (!c) return;
+  const lines = c.items.map((i) => `${i.week != null ? `W${i.week}` : '--'} | ${i.lane} | ${i.name} | ${i.type}${i.files.length ? ` | files: ${i.files.map((f) => f.name).join(', ')}` : ''} | section: ${i.section}`);
+  copyText(`${c.meta.shortname || c.meta.fullname} (${c.items.length} items; week | sorted as | title | type | files | section)\n${lines.join('\n')}`);
 }
 function acadJump(week) {
   const c = acadCourse(route.courseId);
@@ -6167,6 +6210,7 @@ document.addEventListener('click', (e) => {
     case 'acad-jump': acadJump(+btn.dataset.week); break;
     case 'acad-move': openLaneSheet(+btn.dataset.course, +btn.dataset.id); break;
     case 'acad-lane': acadSetLane(btn.dataset.lane); break;
+    case 'acad-copy-list': acadCopyList(); break;
     case 'acad-tree-new': treeNewCourse = +btn.dataset.course; location.hash = '#/knowledge/new'; break;
     case 'acad-untrack': { const id = route.courseId; closeSheet(); acadSetTracked(id, false).then(() => { location.hash = '#/academics'; }); break; }
     case 'buddy-ev': openBuddyEvent(btn.dataset); break;
