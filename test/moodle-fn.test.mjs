@@ -1,7 +1,7 @@
 // Tests server/moodle.mjs against a fake Moodle: connecting, reading courses and weeks, signed file
 // links (and refusing forged, expired or off-site ones), and that Moodle is only ever read.
 import assert from 'node:assert';
-import { handle, weekOf } from '../server/moodle.mjs';
+import { handle, weekOf, plainText } from '../server/moodle.mjs';
 import { memoryStore } from './sync-fn-store.mjs';
 
 const ORIGIN = 'https://commit.example', SITE = 'https://moodle.test', NOW = 1_800_000_000_000;
@@ -25,7 +25,7 @@ const fakeMoodle = async (url, opts = {}) => {
         { id: 12, shortname: 'OLD', fullname: 'Hidden course', startdate: 1, visible: 0 }]);
       case 'core_course_get_contents': return Response.json([
         { id: 1, section: 0, name: 'General', modules: [{ id: 900, modname: 'forum', name: 'Announcements', visible: 1 }, { id: 901, modname: 'label', name: 'Welcome', visible: 1 }] },
-        { id: 2, section: 4, name: 'Week 4: Consumer choice', modules: [
+        { id: 2, section: 4, name: 'Week 4: Consumer choice', summary: '<p>How consumers choose &amp; trade off.</p><ul><li>Budget lines</li><li>Indifference curves</li></ul>', modules: [
           { id: 1001, modname: 'resource', name: 'Lecture slides', visible: 1, url: `${SITE}/mod/resource/view.php?id=1001`, completiondata: { state: 1 },
             contents: [{ type: 'file', filename: 'Week 4 slides.pdf', filesize: 2048, mimetype: 'application/pdf', fileurl: FILE }] },
           { id: 1002, modname: 'url', name: 'Reading: Varian ch.2', visible: 1, url: `${SITE}/mod/url/view.php?id=1002`, contents: [{ type: 'url', fileurl: 'https://example.org/varian.pdf' }] },
@@ -48,6 +48,7 @@ const j = async (r) => ({ status: r.status, ...(await r.json()) });
 assert.equal(weekOf('Week 4: Consumer choice'), 4);
 assert.equal(weekOf('Weeks 3-4'), 3);
 assert.equal(weekOf('General'), null);
+assert.equal(plainText('<p>Utility &amp; choice</p><ul><li>One</li><li>Two</li></ul><script>x</script>'), 'Utility & choice\nOne\nTwo\nx');
 
 // signed in only
 assert.equal((await post({ action: 'status' }, 'nope')).status, 401);
@@ -73,6 +74,7 @@ assert.equal(r.status, 200);
 const [general, wk4] = r.sections;
 assert.deepEqual(general.items, [], 'forums and labels are skipped');
 assert.equal(wk4.week, 4);
+assert.equal(wk4.summary, 'How consumers choose & trade off.\nBudget lines\nIndifference curves');
 assert.deepEqual(wk4.items.map((i) => i.name), ['Lecture slides', 'Reading: Varian ch.2', 'Problem set 3', 'Offsite'], 'hidden items are skipped');
 const [slides, reading, pset, offsite] = wk4.items;
 assert.equal(slides.moodleDone, true); assert.equal(slides.label, 'File');

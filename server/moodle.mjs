@@ -65,6 +65,11 @@ async function signedLink(origin, acct, token, fileurl, name, now) {
   return `${origin}/api/moodle/f?u=${acct}&e=${exp}&p=${p}&n=${encodeURIComponent(name || 'file')}&s=${s}`;
 }
 
+// Moodle's section description is HTML; keep just its words (it often holds the week's topic).
+const ENTITIES = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&nbsp;': ' ', '&rsquo;': '’', '&lsquo;': '‘', '&ndash;': '–', '&mdash;': '—' };
+export const plainText = (html) => String(html || '').replace(/<(br|\/p|\/li|\/div|\/h\d)[^>]*>/gi, '\n').replace(/<[^>]*>/g, ' ')
+  .replace(/&[a-z#0-9]+;/gi, (e) => ENTITIES[e.toLowerCase()] || ' ').replace(/[ \t\u00a0]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim().slice(0, 300);
+
 async function normaliseSections(sections, { origin, acct, token, site, now }) {
   const out = [];
   for (const sec of sections || []) {
@@ -89,7 +94,7 @@ async function normaliseSections(sections, { origin, acct, token, site, now }) {
         due: m.dates && (m.dates.find((d) => /due/i.test(d.label || '')) || {}).timestamp || null,
       });
     }
-    out.push({ id: sec.id, name: sec.name || `Section ${sec.section}`, week: weekOf(sec.name), items });
+    out.push({ id: sec.id, name: sec.name || `Section ${sec.section}`, week: weekOf(sec.name), summary: plainText(sec.summary), items });
   }
   return out;
 }

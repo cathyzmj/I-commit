@@ -5462,7 +5462,7 @@ const acadKeyOf = (cid) => ACAD_KEYS[Math.max(0, (acad.courses || []).findIndex(
 const acadColor = (cid) => PROJ_COLORS[acadKeyOf(cid)];
 // Each week's items fall into lanes: Reading, Lecture, Problem set & quiz (and Other). They're sorted
 // by what Moodle calls them, and you can move any item (the choice is remembered for the course).
-const LANES = [['reading', 'Reading'], ['lecture', 'Lecture'], ['practice', 'Problem set & quiz'], ['other', 'Other']];
+const LANES = [['reading', 'Reading'], ['lecture', 'Lecture'], ['practice', 'Problem sets'], ['other', 'Other']];
 const LANE_NAME = Object.fromEntries(LANES);
 const LANE_SHORT = { reading: 'Reading', lecture: 'Lecture', practice: 'Problems', other: 'Other' };
 function autoLane(i) {
@@ -5479,7 +5479,7 @@ function laneOf(i) {
 // "Qualitative" courses (essays, cases) treat the reading as part of the week; for "quantitative" ones it's
 // optional, so it isn't counted when working out how far behind you are.
 const acadKind = (cid) => acad.kinds.get(cid) || 'quant';
-const lanesFor = (cid) => (acadKind(cid) === 'qual' ? ['reading', 'lecture', 'practice', 'other'] : ['lecture', 'practice', 'reading', 'other']);
+const LANE_ORDER = ['reading', 'lecture', 'practice', 'other']; // the rows of a week, top to bottom (after the topic)
 const countsFor = (i) => !(acadKind(i.courseId) === 'quant' && i.lane === 'reading');
 const acadDone = (i) => acad.progress.has(i.id) || i.moodleDone;
 function acadCourse(cid) {
@@ -5500,11 +5500,16 @@ function acadCourse(cid) {
   const byWeek = new Map();
   for (const s of data.sections) {
     if (s.week == null) continue;
-    const w = byWeek.get(s.week) || byWeek.set(s.week, { week: s.week, topic: '', items: [] }).get(s.week);
+    const w = byWeek.get(s.week) || byWeek.set(s.week, { week: s.week, topic: '', summary: '', items: [] }).get(s.week);
     if (!w.topic) w.topic = String(s.name).replace(/^\s*weeks?\s*\d+\s*[:.\-–—]?\s*/i, '').trim();
+    if (!w.summary && s.summary) w.summary = s.summary;
     for (const i of items.filter((x) => x.section === s.name && x.week === s.week)) if (!w.items.includes(i)) w.items.push(i);
   }
   const weeks = [...byWeek.values()].sort((a, b) => a.week - b.week).map((w) => {
+    if (!w.topic && w.summary) { // a section titled just "Week 3": its description holds the topic
+      const [first, ...rest] = w.summary.split('\n');
+      w = { ...w, topic: first.slice(0, 100), summary: rest.join('\n').trim() };
+    }
     const lanes = Object.fromEntries(LANES.map(([k]) => [k, w.items.filter((i) => i.lane === k)]));
     const left = w.items.filter((i) => countsFor(i) && !acadDone(i)).length;
     return { ...w, lanes, left, state: !w.items.length ? 'empty' : left === 0 ? 'full' : w.week < cur ? 'late' : w.week === cur ? 'now' : 'ahead' };
@@ -5544,28 +5549,37 @@ function acadWeekOpen(c, w) {
   const k = acadWeekKey(c, w);
   return acadOpenWeeks.has(k) ? acadOpenWeeks.get(k) : w.week === c.cur || w.state === 'late';
 }
+// A week's rows: the topic, then Reading, Lecture and Problem sets (Other only if there is something).
+const acadWeekDates = (week) => { const a = addDaysISO(acad.termStart, (week - 1) * 7); return shortRange(a, addDaysISO(a, 6)); };
 function acadLaneHtml(c, w, lane) {
   const its = w.lanes[lane];
-  if (!its.length) return '';
+  if (!its.length && lane === 'other') return '';
   const done = its.filter(acadDone).length, optional = acadKind(c.meta.id) === 'quant' && lane === 'reading';
   const canAll = its.length > 1 && its.some((i) => !acadDone(i) || acad.progress.has(i.id));
-  const allDone = done === its.length;
-  return `<div class="alane">
-    <div class="alane-h"><b>${LANE_NAME[lane]}</b>${optional ? '<small class="aopt">optional</small>' : ''}<small>${done}/${its.length}</small>
+  const allDone = its.length > 0 && done === its.length;
+  const none = { reading: 'No reading posted', lecture: 'No lecture posted yet', practice: 'No problem set posted', other: '' }[lane];
+  return `<div class="arow">
+    <div class="arow-l"><b>${LANE_NAME[lane]}</b>${its.length ? `<small>${done}/${its.length}${optional ? ' · optional' : ''}</small>` : ''}
       ${canAll ? `<button class="mini-btn ghost" data-act="acad-lane-all" data-course="${c.meta.id}" data-week="${w.week}" data-lane="${lane}">${allDone ? 'Untick all' : 'Tick all'}</button>` : ''}</div>
-    ${its.map((i) => acadItemHtml(i, { inWeek: true })).join('')}</div>`;
+    <div class="arow-b">${its.length ? its.map((i) => acadItemHtml(i, { inWeek: true })).join('') : `<p class="arow-none">${none}</p>`}</div></div>`;
+}
+function acadTopicRow(c, w) {
+  const text = w.summary && w.summary.toLowerCase() !== w.topic.toLowerCase() ? w.summary : '';
+  return `<div class="arow arow-topic">
+    <div class="arow-l"><b>Topic</b></div>
+    <div class="arow-b"><p class="arow-topic-t">${escapeHtml(w.topic || `Week ${w.week}`)}</p>${text ? `<p class="arow-sum">${escapeHtml(text).replace(/\n/g, '<br>')}</p>` : ''}</div></div>`;
 }
 function acadWeekHtml(c, w) {
-  const order = lanesFor(c.meta.id), open = acadWeekOpen(c, w);
-  const chips = order.filter((l) => w.lanes[l].length).map((l) => {
+  const open = acadWeekOpen(c, w);
+  const chips = LANE_ORDER.filter((l) => w.lanes[l].length).map((l) => {
     const n = w.lanes[l].length, d = w.lanes[l].filter(acadDone).length;
     return `<span class="alchip ${d === n ? 'full' : ''}">${LANE_SHORT[l]} ${d}/${n}</span>`;
   }).join('');
   return `<details class="aweek ${w.state}" data-asec="${acadWeekKey(c, w)}" ${open ? 'open' : ''}>
-    <summary><span class="aweek-t"><b>Week ${w.week}</b>${w.topic ? `<small>${escapeHtml(w.topic)}</small>` : ''}
-      ${w.week === c.cur ? '<span class="atw-here">this week</span>' : w.state === 'late' ? '<span class="atw-late">behind</span>' : ''}</span>
+    <summary><span class="aweek-t"><b>Week ${w.week}</b><small>${acadWeekDates(w.week)}</small>
+      ${w.week === c.cur ? '<span class="atw-here">this week</span>' : w.state === 'late' ? '<span class="atw-late">behind</span>' : ''}${w.topic ? `<span class="aweek-topic">${escapeHtml(w.topic)}</span>` : ''}</span>
       <span class="aweek-chips">${chips || '<span class="alchip">Nothing posted yet</span>'}</span></summary>
-    ${w.items.length ? `<div class="alanes">${order.map((l) => acadLaneHtml(c, w, l)).join('')}</div>` : '<p class="muted small pad">Nothing posted for this week yet.</p>'}
+    <div class="arows">${acadTopicRow(c, w)}${LANE_ORDER.map((l) => acadLaneHtml(c, w, l)).join('')}</div>
   </details>`;
 }
 function acadBoardHtml(c) {
@@ -5757,7 +5771,7 @@ function openCourseSettings() {
     <form class="form flat" data-form="acad-course" data-id="${id}">
       <div class="f">Type of course<div class="pformat two">
         <label><input type="radio" name="kind" value="quant" ${kind === 'quant' ? 'checked' : ''}><span><b>Quantitative</b><small>Lecture and problem sets lead. Reading is optional, so it doesn’t count towards being behind.</small></span></label>
-        <label><input type="radio" name="kind" value="qual" ${kind === 'qual' ? 'checked' : ''}><span><b>Qualitative</b><small>Reading comes first each week and counts. Tick a week’s reading all at once at the start.</small></span></label></div></div>
+        <label><input type="radio" name="kind" value="qual" ${kind === 'qual' ? 'checked' : ''}><span><b>Qualitative</b><small>Reading counts towards being behind. You can tick a week’s reading all at once, at the start of the week.</small></span></label></div></div>
       <label class="f">Notes link<input name="notes" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(notes)}" placeholder="Link to your OneNote section"></label>
       <p class="help">In OneNote, right-click this course’s section → <b>Copy Link to Section</b>, and paste it here. Every item then has a <b>Notes</b> button that opens it. Using paper for this course? Leave it empty.</p>
       <button class="btn primary" type="submit">Save</button>

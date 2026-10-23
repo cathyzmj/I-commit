@@ -1294,17 +1294,26 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, 
 .aweek[open] .aweek-t::before { transform: rotate(90deg); }
 .aweek-t b { font-size: 15px; }
 .aweek-t small { color: var(--muted); font-size: 12.5px; }
+.aweek-topic { font-size: 13px; font-weight: 600; flex-basis: 100%; padding-left: 16px; }
 .atw-late { font-size: 11.5px; font-weight: 700; color: #712b13; background: rgba(250, 128, 114, 0.35); padding: 1px 8px; border-radius: 99px; }
 .aweek-chips { display: flex; gap: 5px; flex-wrap: wrap; padding-left: 16px; }
 .alchip { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: rgba(27, 31, 29, 0.07); color: var(--muted); }
 .alchip.full { background: rgba(144, 238, 144, 0.5); color: var(--ink); }
-.alanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 14px; padding: 0 12px 8px; border-top: 1px solid var(--line); }
-.alane { min-width: 0; padding-top: 8px; }
-.alane-h { display: flex; align-items: baseline; gap: 6px; padding: 2px 2px 4px; }
-.alane-h b { font-size: 13px; }
-.alane-h small { color: var(--muted); font-size: 12px; }
-.alane-h .aopt { font-style: italic; }
-.alane-h .mini-btn { margin-left: auto; }
 .mini-btn.ghost { background: transparent; color: var(--muted); }
-.alane .aitem:first-of-type { border-top: 0; }
 .acad-kview { margin: 8px 4px 0; }
+
+/* a week as rows: Topic, Reading, Lecture, Problem sets (and Other) */
+.arows { border-top: 1px solid var(--line); }
+.arow { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 4px 12px; padding: 8px 12px; border-top: 1px solid var(--line); }
+.arow:first-child { border-top: 0; }
+.arow-l { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding-top: 4px; }
+.arow-l b { font-size: 13px; }
+.arow-l small { color: var(--muted); font-size: 12px; }
+.arow-l .mini-btn { margin-top: 2px; }
+.arow-b { min-width: 0; }
+.arow-b .aitem:first-child { border-top: 0; }
+.arow-none { margin: 4px 0; font-size: 13px; color: var(--muted); font-style: italic; }
+.arow-topic { background: rgba(255, 255, 255, 0.5); }
+.arow-topic-t { margin: 3px 0 0; font-size: 15px; font-weight: 650; }
+.arow-sum { margin: 4px 0 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+@media (max-width: 560px) { .arow { grid-template-columns: 1fr; } .arow-l { flex-direction: row; align-items: baseline; padding-top: 0; } .arow-l .mini-btn { margin: 0 0 0 auto; } }
