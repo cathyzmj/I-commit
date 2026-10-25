@@ -1,5 +1,5 @@
 // Offline cache. Bump CACHE when you add or rename files so old caches are cleared.
-const CACHE = 'wct-v57';
+const CACHE = 'wct-v58';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './xlsx.js', './ics.js', './widget/commitments-widget.js', './vendor/supabase.js', './manifest.webmanifest',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png',
@@ -42,5 +42,27 @@ self.addEventListener('fetch', (e) => {
     const cached = await cache.match(req, { ignoreSearch: true });
     if (cached) { e.waitUntil(network.catch(() => {})); return cached; }
     return network; // nothing cached yet: wait for the network after all
+  })());
+});
+
+// Reminders from the server (server/notify.mjs): { title, body, url, tag }.
+self.addEventListener('push', (e) => {
+  let m = {};
+  try { m = e.data ? e.data.json() : {}; } catch { m = { body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(m.title || 'I Commit!', {
+    body: m.body || '', tag: m.tag || undefined, data: { url: m.url || '#/today' },
+    icon: './icons/icon-192.png', badge: './icons/icon-192.png',
+  }));
+});
+
+// Tapping a notification opens the app (or brings it forward) on the right page.
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = new URL(`./${e.notification.data && e.notification.data.url || '#/today'}`, self.registration.scope).href;
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const win = wins.find((w) => w.url.startsWith(self.registration.scope));
+    if (win) { await win.focus(); if ('navigate' in win) return win.navigate(target).catch(() => {}); return; }
+    return self.clients.openWindow(target);
   })());
 });
