@@ -9,6 +9,8 @@
 //   /api/google  Google Calendar copy + Gmail   (server/google.mjs; the same Google secrets as sign-in)
 //   /api/notify  push reminders, morning email  (server/notify.mjs; secrets VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
 // A cron every minute sends the reminders that are due (scheduled() below; wrangler.toml [triggers]).
+//   /google….html  proves to Google Search Console that this site is yours (optional var
+//                  GOOGLE_SITE_VERIFICATION: the file name Search Console gives, e.g. google1a2b3c4d.html)
 // Storage is the D1 database bound as DB (server/schema.sql).
 import { handle as ics } from './ics.mjs';
 import { handle as sync } from './sync.mjs';
@@ -61,6 +63,10 @@ export default {
       return Response.json({ error: 'Server error. Try again shortly.' }, { status: 500, headers: { 'cache-control': 'no-store' } });
     }
     if (pathname.startsWith('/api/')) return Response.json({ error: 'Not found' }, { status: 404 });
+    const verify = (env.GOOGLE_SITE_VERIFICATION || '').trim().replace(/^\/+/, '').replace(/(\.html)?$/, '.html');
+    if (/^google[0-9a-f]+\.html$/.test(verify) && pathname === `/${verify}`) {
+      return new Response(`google-site-verification: ${verify}`, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+    }
     return env.ASSETS.fetch(req);
   },
   async scheduled(event, env, ctx) {

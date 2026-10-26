@@ -65,6 +65,11 @@ Then, in the same Google Cloud project as sign-in:
    after 7 days (the app then asks you to connect again). For lasting access, press **Publish app**; for
    your own use you can skip verification and click through Google's "unverified app" warning.
 
+For Google's branding verification, prove the site is yours in [Search Console](https://search.google.com/search-console):
+add a **URL prefix** property for your app's address, choose **HTML file**, and store the file's name:
+`npx wrangler secret put GOOGLE_SITE_VERIFICATION` (e.g. `google1a2b3c4d.html`). The home page links to
+`privacy.html` and `terms.html`, which Google asks for.
+
 The cron in `wrangler.toml` deploys with `npm run deploy`. On iPhone, push works in the Home Screen app
 (Share → Add to Home Screen, iOS 16.4 or later); the Mac app's window can't show push, so use a browser
 there. Open **⋯ → Reminders & Google Calendar** to turn things on.

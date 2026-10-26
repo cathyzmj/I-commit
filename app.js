@@ -849,7 +849,8 @@ function todayTabHtml() {
     ${appsTodayCardHtml()}
     ${tbcTodayHtml()}
     ${onceLater.length ? `<section class="card"><div class="card-head"><h2>Coming up this week</h2></div>
-      ${onceLater.map(([id, it]) => periodRowHtml(wk, id, it, { showDate: true })).join('')}</section>` : ''}`;
+      ${onceLater.map(([id, it]) => periodRowHtml(wk, id, it, { showDate: true })).join('')}</section>` : ''}
+    ${LEGAL_LINKS}`;
 }
 
 // One-offs whose date is still to be confirmed (shown folded on Today).
