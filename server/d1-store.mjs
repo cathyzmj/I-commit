@@ -1,6 +1,7 @@
 // A small key-value store on Cloudflare D1 (SQLite), with the same interface the handlers use:
 //   get / set / delete                      plain values (widget summaries)
 //   getWithMetadata / setJSON(onlyIfMatch | onlyIfNew)   JSON with an ETag for conditional writes (sync)
+//   list(prefix)                            every JSON value whose key starts with prefix (reminders)
 // Every value lives in one table, separated by `store` name. Schema: server/schema.sql.
 export function d1Store(db, store) {
   const newEtag = () => crypto.randomUUID();
@@ -18,6 +19,11 @@ export function d1Store(db, store) {
     },
     async delete(key) {
       await db.prepare('DELETE FROM kv WHERE store = ? AND key = ?').bind(store, key).run();
+    },
+    async list(prefix) {
+      const { results } = await db.prepare("SELECT key, value FROM kv WHERE store = ? AND key LIKE ? ESCAPE '\\'")
+        .bind(store, prefix.replace(/[\\%_]/g, '\\$&') + '%').all();
+      return results.map((r) => ({ key: r.key, data: JSON.parse(r.value) }));
     },
     async getWithMetadata(key) {
       const row = await db.prepare('SELECT value, etag FROM kv WHERE store = ? AND key = ?').bind(store, key).first();

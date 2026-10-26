@@ -18,5 +18,6 @@ export function memoryStore({ beforeWrite } = {}) {
       return { modified: true, etag };
     },
     async delete(k) { mem.delete(k); },
+    async list(prefix) { return [...mem].filter(([k]) => k.startsWith(prefix)).map(([key, e]) => ({ key, data: JSON.parse(e.value) })); },
   };
 }

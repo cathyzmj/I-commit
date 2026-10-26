@@ -15,5 +15,9 @@ binding = "DB"
 database_name = "commitments"
 database_id = "6b7c442c-a774-4dec-a005-7dad6de51fb2"
 
+# Sends reminders and the morning email when they're due (server/notify.mjs).
+[triggers]
+crons = ["* * * * *"]
+
 [observability]
 enabled = false

@@ -18,6 +18,7 @@ function fakeD1() {
         bind(...a) { args = a; return api; },
         async first() { return stmt.get(...args) ?? null; },
         async run() { const r = stmt.run(...args); return { meta: { changes: Number(r.changes) } }; },
+        async all() { return { results: stmt.all(...args) }; },
       };
       return api;
     },
@@ -46,6 +47,16 @@ assert.equal((await s.setJSON('doc', { n: 2 }, { onlyIfMatch: 'stale-etag' })).m
 assert.equal((await s.setJSON('doc', { n: 2 }, { onlyIfMatch: cur.etag })).modified, true);
 assert.equal((await s.setJSON('doc', { n: 3 }, { onlyIfMatch: cur.etag })).modified, false, 'ETag changes after each write');
 assert.deepEqual((await s.getWithMetadata('doc')).data, { n: 2 });
+
+// listing by key prefix (reminders): only that store, only that prefix, % and _ taken literally
+await s.setJSON('plan:1', { a: 1 });
+await s.setJSON('plan:2', { a: 2 });
+await s.setJSON('planX', { a: 3 });
+await s.setJSON('p%n:1', { a: 4 });
+await other.setJSON('plan:9', { a: 9 });
+assert.deepEqual((await s.list('plan:')).map((r) => r.key).sort(), ['plan:1', 'plan:2']);
+assert.deepEqual((await s.list('p%n:')).map((r) => r.data), [{ a: 4 }]);
+assert.deepEqual(await s.list('pla_'), []);
 
 // the sync handler on D1, with two devices racing
 const KEY = 'q'.repeat(43), T = Date.now();

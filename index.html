@@ -13,11 +13,19 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" href="icons/icon-192.png">
   <link rel="manifest" href="manifest.webmanifest">
+  <link rel="privacy-policy" href="privacy.html">
+  <link rel="terms-of-service" href="terms.html">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="bgpic" hidden></div>
-  <div id="app"></div>
+  <!-- Shown until the app starts (and to anything that reads the page without running it). -->
+  <div id="app"><main class="card static-home">
+    <h1>I Commit!</h1>
+    <p>A personal commitment tracker: tick off daily and weekly routines, see planned vs actual hours,
+    follow your timetable and application deadlines, and get reminders.</p>
+    <p class="help"><a href="privacy.html">Privacy Policy</a> · <a href="terms.html">Terms of Service</a></p>
+  </main></div>
   <div id="sheet" class="sheet-wrap" hidden></div>
   <div id="toast" role="status" hidden></div>
   <input type="file" id="importFile" accept="application/json,.json" hidden>

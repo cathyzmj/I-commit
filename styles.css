@@ -40,6 +40,7 @@ body {
 body.locked { overflow: hidden; }
 /* Every page uses the same width. */
 #app { max-width: 1400px; margin: 0 auto; }
+.static-home { max-width: 560px; margin: 40px auto; padding: 20px; }
 button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
 button:disabled { cursor: default; opacity: .35; }
 h2 { font-size: 17px; margin: 0; }
