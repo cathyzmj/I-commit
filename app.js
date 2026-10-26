@@ -4330,6 +4330,7 @@ function signOut() {
   render();
   toast('Signed out');
 }
+const LEGAL_LINKS = '<p class="help center"><a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a> · <a href="terms.html" target="_blank" rel="noopener">Terms of Service</a></p>';
 function accountPageHtml() {
   const back = '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>';
   const head = `<header class="top">${topBar({ left: back, label: 'Sign-in', title: 'Account' })}</header>`;
@@ -4339,7 +4340,7 @@ function accountPageHtml() {
         <div class="acct"><span class="acct-g">G</span><div><b>${escapeHtml(state.account.name || state.account.email)}</b><span>${escapeHtml(state.account.email)}</span></div></div>
         <p class="small pad muted">Your data is saved to this Google account and stays the same on every device you sign in on. ${state.sync.lastError ? `<span class="err">${escapeHtml(state.sync.lastError)}</span>` : `Last synced ${ago(state.sync.lastSync)}.`}</p>
         <div class="btn-row"><button class="btn" data-act="sync-now">Sync now</button><button class="btn" data-act="sign-out">Sign out</button></div>
-      </section>`;
+      </section>${LEGAL_LINKS}`;
   }
   const cfg = loginCfg;
   return head + `
@@ -4351,7 +4352,7 @@ function accountPageHtml() {
         : `<button class="btn gbtn full" data-act="google-signin" ${cfg && !cfg.error ? '' : 'disabled'}><span class="glogo">G</span>Continue with Google</button>
         ${cfg && cfg.error ? `<p class="small err pad">${escapeHtml(cfg.error)}</p>` : ''}`}
       ${state.sync.enabled ? '<p class="help">This device\'s data will be kept and saved to your account.</p>' : ''}
-    </section>`;
+    </section>${LEGAL_LINKS}`;
 }
 
 // ---------- Reminders and Google Calendar ----------
@@ -6352,6 +6353,7 @@ function openMenu() {
       <button class="btn" data-act="export-json">Back up (JSON)</button>
       <button class="btn" data-act="import-json">Restore from backup…</button>
       <p class="muted small">Last backup: ${last}. Data lives only on this device, so back up now and then.</p>
+      ${LEGAL_LINKS}
       <button class="btn" data-act="close">Close</button>
     </div>`);
 }

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy · I Commit!</title>
+  <meta name="description" content="What I Commit! stores, why, and how to delete it.">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="legal.css">
+</head>
+<body>
+<main>
+  <a class="top" href="./"><img src="icons/icon-192.png" alt="">I Commit!</a>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated 26 October 2026</p>
+
+  <p>I Commit! is a personal commitment tracker made and run by Cathy Zhang. This page explains what
+  the app stores, why, who else handles it, and how you can delete it. In short: your data is used only
+  to run the app for you. It is never sold, never used for advertising, and the app has no analytics or
+  tracking.</p>
+
+  <h2>What stays on your device</h2>
+  <p>Everything you enter (commitments, ticks and logged time, notes, knowledge trees, test results) is
+  kept in your browser's storage on each device. So are the calendar (iCal) links you add and your
+  background picture. If you never sign in, nothing else leaves your device, except as described under
+  "Calendar links" below.</p>
+
+  <h2>What the server stores, and why</h2>
+  <p>The app's server runs on Cloudflare Workers and stores data in a Cloudflare D1 database. It stores
+  only what the features you turn on need:</p>
+  <div class="box wrap"><table>
+    <tr><th>Data</th><th>Why</th></tr>
+    <tr><td>Your Google account ID, email address and name</td><td>To know which account is yours when you sign in with Google</td></tr>
+    <tr><td>A synced copy of your app data, filed under a hash of a random key</td><td>To keep your devices the same</td></tr>
+    <tr><td>A plan of your next 8 days: item names, dates and times, and which routines are ticked</td><td>To send reminders and the morning summary while the app is closed</td></tr>
+    <tr><td>Your reminder settings and, for each device with notifications on, its push address, encryption keys and type (e.g. "iPhone")</td><td>To send push notifications to your devices</td></tr>
+    <tr><td>Google access tokens for Calendar and Gmail, and a list linking each copied item to its Google Calendar event</td><td>To keep the I Commit! calendar up to date and send your summary email</td></tr>
+    <tr><td>Your Moodle security key, if you connect Moodle</td><td>To show your courses in Academics</td></tr>
+    <tr><td>A short summary of today's progress, if you turn on the phone widget</td><td>So the widget can show it</td></tr>
+  </table></div>
+  <p>Work Buddy, calendar sharing, Gallery projects and Academics choices are stored in a Supabase
+  database. Its access rules let only you, and the people you choose to share with, see your rows.</p>
+
+  <h2>Google user data</h2>
+  <p>When you sign in with Google, or connect Google Calendar and Gmail, the app asks for these
+  permissions and uses them only as follows:</p>
+  <ul>
+    <li><b>Sign in (openid, email, profile):</b> your Google account ID, email address and name, to
+      identify your account and to show who is signed in.</li>
+    <li><b>Google Calendar (<code>calendar.app.created</code>):</b> to make one calendar called
+      "I Commit!" and to add, change and delete events in that calendar only. The app cannot see or
+      change your other calendars.</li>
+    <li><b>Gmail (<code>gmail.send</code>):</b> to send one summary email a day from your Gmail to your
+      own address. The app cannot read, search or delete your email.</li>
+  </ul>
+  <p>I Commit!'s use and transfer of information received from Google APIs adheres to the
+  <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+  including the Limited Use requirements. Google user data is used only to provide the features above.
+  It is not sold, not used for advertising, not used to train AI models, and not transferred to anyone
+  else, except as needed to run these features, for security, or where the law requires it. No person
+  reads it, unless you ask for help with your data, it is needed for security, or the law requires it.</p>
+
+  <h2>Who else handles your data</h2>
+  <ul>
+    <li><b>Cloudflare:</b> hosts the app and its database.</li>
+    <li><b>Supabase:</b> hosts the Work Buddy, sharing, Gallery and Academics database.</li>
+    <li><b>Google:</b> sign-in, and Google Calendar and Gmail if you connect them.</li>
+    <li><b>Push services (Apple, Google or Mozilla, depending on your device):</b> deliver notifications.
+      Each notification is encrypted for your device, so the push service can't read it.</li>
+    <li><b>Moodle (LSE):</b> only if you connect it; the app only reads your courses.</li>
+    <li><b>Notion:</b> the Applications tab reads one application tracker that the app's owner set up.</li>
+  </ul>
+
+  <h3>Calendar links</h3>
+  <p>When you add an iCal link, the server fetches the calendar for your device and passes it straight
+  back. It doesn't store the link or the calendar.</p>
+
+  <h2>How long data is kept, and how to delete it</h2>
+  <ul>
+    <li><b>Google access:</b> in the app, open ⋯ → Reminders &amp; Google Calendar → Disconnect. This
+      revokes the app's Google access. You can also remove it at any time at
+      <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. The
+      I Commit! calendar stays in your Google Calendar until you delete it there.</li>
+    <li><b>Notifications:</b> turn them off on the same page. A device is also forgotten automatically
+      when its browser drops the subscription.</li>
+    <li><b>Synced data:</b> "Delete the synced copy" removes it from the server. Deleted items are
+      remembered as deleted for up to 180 days, so a device that was offline doesn't bring them back.</li>
+    <li><b>Reminder records:</b> the list of reminders already sent is kept for 3 days.</li>
+    <li><b>Everything else:</b> to delete your whole account and all its data, ask on the
+      <a href="https://github.com/cathyzmj/I-commit/issues">project's GitHub page</a>. It will be deleted
+      within 30 days.</li>
+  </ul>
+
+  <h2>Security</h2>
+  <p>All traffic uses HTTPS. Your sync key is stored only as a hash, Google and Moodle tokens stay on
+  the server and are never sent to your browser, and push notifications are encrypted end to end.</p>
+
+  <h2>Children</h2>
+  <p>I Commit! is not meant for children under 13.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, the new version will be posted here with a new date.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or requests: open an issue on the
+  <a href="https://github.com/cathyzmj/I-commit/issues">I Commit! GitHub page</a>.</p>
+
+  <footer><a href="terms.html">Terms of Service</a> · <a href="./">Open I Commit!</a></footer>
+</main>
+</body>
+</html>

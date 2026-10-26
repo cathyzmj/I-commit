@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(decodeURIComponent(new URL(import.meta.ur
 const dist = path.join(root, 'dist');
 const PUBLIC = [
   'index.html', 'styles.css', 'app.js', 'xlsx.js', 'ics.js', 'sw.js', 'manifest.webmanifest',
-  'icons', 'widget/commitments-widget.js', 'vendor',
+  'icons', 'widget/commitments-widget.js', 'vendor', 'privacy.html', 'terms.html', 'legal.css',
 ];
 
 fs.rmSync(dist, { recursive: true, force: true });

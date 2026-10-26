@@ -1,0 +1,24 @@
+/* The privacy policy and terms pages (privacy.html, terms.html). */
+:root { --bg: #f4f7fb; --card: #ffffff; --ink: #1b1f1d; --muted: #5f6763; --line: #e3e8ee; --link: #185FA5; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #15181a; --card: #1e2225; --ink: #e8ecea; --muted: #a3aba7; --line: #30363a; --link: #8cc0f2; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+.top { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; text-decoration: none; color: inherit; font-weight: 700; }
+.top img { width: 32px; height: 32px; border-radius: 8px; }
+h1 { font-size: 28px; line-height: 1.2; margin: 0 0 4px; }
+.updated { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+h2 { font-size: 19px; margin: 32px 0 8px; }
+h3 { font-size: 16px; margin: 20px 0 6px; }
+p, li { max-width: 68ch; }
+ul { padding-left: 22px; }
+li { margin: 4px 0; }
+a { color: var(--link); }
+.box { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px 16px; margin: 16px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 8px 8px 0; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; }
+.wrap { overflow-x: auto; }
+footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
