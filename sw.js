@@ -1,11 +1,9 @@
 // Offline cache. Bump CACHE when you add or rename files so old caches are cleared.
-const CACHE = 'wct-v59';
+const CACHE = 'wct-v58';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './xlsx.js', './ics.js', './widget/commitments-widget.js', './vendor/supabase.js', './manifest.webmanifest',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png',
 ];
-
-const APP_PATHS = new Set(ASSETS.map((a) => new URL(a, self.registration.scope).pathname));
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
@@ -26,10 +24,8 @@ const NETWORK_TIMEOUT_MS = 4000;
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   const url = new URL(req.url);
-  // Only the app's own files are cached. Everything else (server functions under /api/, the privacy
-  // and terms pages, Search Console's file) goes straight to the network, untouched: Cloudflare
-  // redirects /privacy.html to /privacy, and a page answered with a redirect it fetched itself fails.
-  if (req.method !== 'GET' || url.origin !== location.origin || !APP_PATHS.has(url.pathname)) return;
+  // Only the app's own files are cached; server functions (/api/…) always go to the network.
+  if (req.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/')) return;
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const network = fetch(url.href, { cache: 'no-cache', credentials: 'same-origin' }).then((res) => {
