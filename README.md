@@ -14,11 +14,12 @@ browser, and as a native Mac app with a desktop widget.
   calendar as "my timetable" to treat all its events as schedule.
 - **Applications:** reads an application tracker database from Notion (read-only) and shows openings,
   deadlines and next steps on a month calendar, with apply links.
-- **Reminders:** push notifications (iPhone Home Screen app, Mac/PC browsers) before timed tasks and
-  meetings, the day before application deadlines, and in the evening for routines not yet ticked; plus a
-  morning summary email sent through your own Gmail. They arrive even when the app is closed.
-- **Google Calendar copy:** timed one-offs, project meetings and application dates are copied into an
-  "I Commit!" calendar in your Google Calendar and kept up to date (adds, changes and deletes).
+- **Reminders in Telegram:** messages from the app's bot before timed tasks and meetings, the day
+  before application deadlines, in the evening for routines not yet ticked, and a morning briefing of
+  the day. They arrive even when the app is closed; send the bot `/today` any time.
+- **Calendar link:** timed one-offs, project meetings and application dates as a private calendar link
+  you add to Google Calendar (or Apple Calendar, Outlook). No Google permissions needed; Google reads
+  the link every few hours.
 - **Sync** between devices with a private key (no accounts). Per-record merge, so edits on two
   devices don't overwrite each other.
 - **Widgets:** a Scriptable widget for iPhone and a native macOS widget (`mac/`).
@@ -31,7 +32,7 @@ browser, and as a native Mac app with a desktop widget.
 | `ics.js`, `xlsx.js` | Calendar parser (recurrence, time zones, exceptions) and a tiny Excel writer |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Offline support and home-screen install |
 | `widget/commitments-widget.js` | Scriptable widget (the app fills in your key and address when you copy it) |
-| `server/` | Cloudflare Worker: `/api/ics` (calendar relay), `/api/sync`, `/api/widget`, `/api/apps` (Notion), `/api/google` (Calendar copy, Gmail), `/api/notify` (reminders, sent by a cron every minute), storage on D1 |
+| `server/` | Cloudflare Worker: `/api/ics` (calendar relay), `/api/sync`, `/api/widget`, `/api/apps` (Notion), `/api/notify` (Telegram reminders, sent by a cron every minute), `/api/feed` (calendar link), storage on D1 |
 | `mac/` | Native Mac app and desktop widget (see `mac/README.md`) |
 | `scripts/build.mjs` | Copies only the public files into `dist/` for deployment |
 | `test/` | `npm test`; `npm run dev` runs the Worker locally |
@@ -50,33 +51,26 @@ npx wrangler secret put NOTION_TOKEN
 npx wrangler secret put NOTION_APPS_DATABASE   # the database link or ID
 ```
 
-Optional reminders and Google Calendar copy (need Sign in with Google to be set up already):
+Optional Telegram reminders (need Sign in with Google to be set up already): in Telegram, message
+**@BotFather**, send `/newbot`, pick a name and a username ending in `bot`, and copy the token it gives:
 ```bash
-node scripts/vapid-keys.mjs                    # prints a key pair for push notifications
-npx wrangler secret put VAPID_PUBLIC_KEY
-npx wrangler secret put VAPID_PRIVATE_KEY
-npx wrangler secret put VAPID_SUBJECT          # optional: mailto:you@example.com
+npx wrangler secret put TELEGRAM_BOT_TOKEN
 ```
-Then, in the same Google Cloud project as sign-in:
-1. **APIs & Services → Library:** enable **Google Calendar API** and **Gmail API**.
-2. **OAuth consent screen → Data access:** add the scopes `.../auth/calendar.app.created` (only calendars
-   the app makes) and `.../auth/gmail.send`. No new redirect URI is needed.
-3. While the app is in **Testing**, add your Gmail as a test user. Google ends a Testing app's access
-   after 7 days (the app then asks you to connect again). For lasting access, press **Publish app**; for
-   your own use you can skip verification and click through Google's "unverified app" warning.
+The bot's webhook registers itself the first time someone connects. The calendar link needs no setup.
+Sign-in uses only Google's basic scopes (openid, email, profile), so the app can be published without
+Google's verification review.
 
 For Google's branding verification, prove the site is yours in [Search Console](https://search.google.com/search-console):
 add a **URL prefix** property for your app's address, choose **HTML file**, and store the file's name:
 `npx wrangler secret put GOOGLE_SITE_VERIFICATION` (e.g. `google1a2b3c4d.html`). The home page links to
 `privacy.html` and `terms.html`, which Google asks for.
 
-The cron in `wrangler.toml` deploys with `npm run deploy`. On iPhone, push works in the Home Screen app
-(Share → Add to Home Screen, iOS 16.4 or later); the Mac app's window can't show push, so use a browser
-there. Open **⋯ → Reminders & Google Calendar** to turn things on.
+The cron in `wrangler.toml` deploys with `npm run deploy`. Open **⋯ → Reminders & Google Calendar** to
+connect Telegram and make the calendar link.
 
 ## Privacy
 Your data stays on your devices. With sync on, a copy is stored in your own Cloudflare D1 database
 under a hash of your private sync key. With reminders on, a plan of your next 8 days (item names and
-times) is stored there too; with Google connected, so is Google's access token for the I Commit!
-calendar and for sending the summary email to yourself. Calendar links, the sync key and the widget key are stored on
+times) is stored there too, with your Telegram chat ID; with the calendar link on, so are the items
+the link shows. Calendar links, the sync key and the widget key are stored on
 the device (and in JSON backups), never in this repository.
