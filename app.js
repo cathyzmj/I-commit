@@ -560,7 +560,7 @@ window.addEventListener('hashchange', () => {
   if (route.tab === 'gallery' && projects !== null && !route.page) loadProjects();
   if (route.tab === 'academics') acadLoad();
   if (route.page === 'account') loadLoginConfig();
-  if (route.page === 'notify') { loadLoginConfig(); loadOutboundStatus(); }
+  if (route.page === 'notify') loadOutboundStatus();
   if (route.page === 'knowledge' && route.focus) focusTree(route.focus);
   if (route.tab === 'apps') {
     if (route.day) { appsDay = route.day; appsMonth = route.day.slice(0, 7); }
@@ -4318,12 +4318,7 @@ function signOut() {
   if (!confirm('Sign out on this device? Your data stays in your Google account; this device starts empty until you sign in again.')) return;
   stopGoogleWait();
   sbSignOut();
-  // This device stops getting the account's notifications.
-  if (pushSub) {
-    fetch('/api/notify/unsubscribe', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ endpoint: pushSub.endpoint }) }).catch(() => {});
-    pushSub.unsubscribe().catch(() => {});
-  }
-  pushSub = undefined; notifyInfo = null; googleInfo = null; outboundAsked = false; lastPlanSig = ''; lastCalSig = ''; googleWaitStop();
+  notifyInfo = null; feedInfo = null; outboundAsked = false; lastPlanSig = ''; lastFeedSig = ''; tgWaitStop();
   state = defaultState();
   recordHashes = null;
   save();
@@ -4356,27 +4351,24 @@ function accountPageHtml() {
     </section>${LEGAL_LINKS}`;
 }
 
-// ---------- Reminders and Google Calendar ----------
-// Push notifications and the morning email are sent by the server (server/notify.mjs) even when
-// the app is closed. It can't work out your days itself, so after each change the app sends it a
-// small plan of the next 8 days (planForReminders). With Google connected (server/google.mjs), the
-// app also copies timed one-offs, project meetings and application dates into an "I Commit!"
-// calendar in your Google Calendar, and keeps it up to date (calendarCopy).
+// ---------- Reminders (Telegram) and the calendar link ----------
+// Reminders come as Telegram messages from the app's bot, sent by the server (server/notify.mjs)
+// even when the app is closed. The server can't work out your days itself, so after each change
+// the app sends it a small plan of the next 8 days (planForReminders). Timed one-offs, project
+// meetings and application dates also go into a private calendar link (server/feed.mjs) that
+// Google Calendar subscribes to (calendarCopy); no Google permissions are needed for that.
 const OUTBOUND_DELAY = 3000;
-const GOOGLE_SCOPES = 'openid email https://www.googleapis.com/auth/calendar.app.created https://www.googleapis.com/auth/gmail.send';
-let notifyInfo = null;     // { prefs, devices, push, gmail } from the server, once asked
-let googleInfo = null;     // { connected, calendar, gmail, reconnect, lastSync, lastError }
-let pushConfig = null;     // { publicKey } or { error }
-let pushSub = undefined;   // this device's PushSubscription (null: none; undefined: not checked yet)
-let googleWait = null;     // { until, timer } while the Google window is open
+let notifyInfo = null;     // { prefs, telegram: { name } | null, bot, setup, error } from the server
+let feedInfo = null;       // { url, updatedAt }
+let tgWait = null;         // { until, timer } while you press Start in Telegram
 let outboundAsked = false; // the Reminders page asked the server at least once
-let outboundTimer = null, lastPlanSig = '', lastCalSig = '', calBusy = false, calAgain = false;
+let outboundTimer = null, lastPlanSig = '', lastFeedSig = '';
 const authHeaders = () => ({ authorization: `Bearer ${state.sync.key}`, 'content-type': 'application/json' });
-const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-const remindersInUse = () => !!(notifyInfo && (notifyInfo.devices.length || notifyInfo.gmail));
-const calendarInUse = () => !!(googleInfo && googleInfo.calendar && !googleInfo.reconnect);
+const remindersInUse = () => !!(notifyInfo && notifyInfo.telegram);
+const feedInUse = () => !!(feedInfo && feedInfo.url);
 const safeKey = (s) => String(s).replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 100);
 const timeOnly = (t) => (t ? String(t).slice(0, 5) : null);
+const randomCode = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 async function api(path, { method = 'GET', body } = {}) {
   const r = await fetch(path, { method, headers: authHeaders(), body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
@@ -4427,9 +4419,9 @@ function planForReminders() {
   return { tz: Intl.DateTimeFormat().resolvedOptions().timeZone, days, timed, deadlines };
 }
 
-// What goes into the I Commit! calendar: your own timed one-offs (not ones imported from a
-// calendar, which are already in one), project meetings and application dates. Kinds this device
-// hasn't loaded are left out of `sources`, so the server leaves those events alone.
+// What goes into the calendar link: your own timed one-offs (not ones imported from a calendar,
+// which are already in one), project meetings and application dates. Kinds this device hasn't
+// loaded are left out of `sources`, so the server keeps those events as they were.
 function calendarCopy() {
   const from = addDaysISO(todayISO(), -7), events = [], sources = ['task'];
   for (const c of state.commitments) {
@@ -4461,7 +4453,7 @@ function calendarCopy() {
 // Called after every change (and when the day or synced data changes): sends what's new a few
 // seconds later. A send already waiting isn't pushed back, so a stream of saves can't hold it off.
 function scheduleOutbound(delay = OUTBOUND_DELAY) {
-  if (!state || !state.account || !(remindersInUse() || calendarInUse())) return;
+  if (!state || !state.account || !(remindersInUse() || feedInUse())) return;
   if (outboundTimer && delay >= OUTBOUND_DELAY) return;
   clearTimeout(outboundTimer);
   outboundTimer = setTimeout(sendOutbound, delay);
@@ -4476,85 +4468,63 @@ async function sendOutbound() {
       try { await api('/api/notify/plan', { method: 'PUT', body: { plan } }); lastPlanSig = sig; } catch { /* tried again after the next change */ }
     }
   }
-  if (calendarInUse()) copyToCalendar();
-}
-async function copyToCalendar({ force = false } = {}) {
-  if (calBusy) { calAgain = true; return; } // a change made while a copy is under way goes next
-  const body = calendarCopy(), sig = JSON.stringify(body);
-  if (!force && sig === lastCalSig) return;
-  calBusy = true;
-  try {
-    for (let round = 0; round < 8; round++) {
-      let r;
-      try { r = await api('/api/google/calendar', { method: 'POST', body }); }
-      catch (e) {
-        googleInfo = { ...googleInfo, lastError: e.message, reconnect: !!(e.data && e.data.reconnect) || googleInfo.reconnect };
-        break;
-      }
-      if (!r.more) { lastCalSig = sig; googleInfo = { ...googleInfo, lastSync: new Date().toISOString(), lastError: null }; break; }
-      await new Promise((ok) => setTimeout(ok, r.busy ? 5000 : 500)); // a big first copy goes in parts
+  if (feedInUse()) {
+    const body = calendarCopy(), sig = JSON.stringify(body);
+    if (sig !== lastFeedSig) {
+      try { feedInfo = await api('/api/feed', { method: 'PUT', body }); lastFeedSig = sig; } catch { /* tried again after the next change */ }
+      if (route.page === 'notify' && !typing()) render();
     }
-  } finally {
-    calBusy = false;
-    if (calAgain) { calAgain = false; copyToCalendar(); }
-    if (route.page === 'notify') render();
   }
 }
 
 // What the server has: asked when you sign in, open the app, or open the Reminders page.
 async function loadOutboundStatus() {
   if (!state.account || !state.sync.enabled) return;
-  const [n, g] = await Promise.allSettled([api('/api/notify'), api('/api/google')]);
+  const [n, f] = await Promise.allSettled([api('/api/notify'), api('/api/feed')]);
   outboundAsked = true;
   if (n.status === 'fulfilled') notifyInfo = n.value;
-  if (g.status === 'fulfilled') googleInfo = g.value;
-  const reg = pushSupported() && (swRegistration || await navigator.serviceWorker.getRegistration().catch(() => null));
-  pushSub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
+  if (f.status === 'fulfilled') feedInfo = f.value;
   if (route.page === 'notify') render();
   scheduleOutbound(500);
 }
-async function loadPushConfig() {
-  if (pushConfig && !pushConfig.error) return pushConfig;
-  try { const r = await fetch('/api/notify/config', { cache: 'no-store' }); pushConfig = await r.json(); if (!r.ok) pushConfig = { error: pushConfig.error || 'Push isn’t available.' }; }
-  catch { pushConfig = { error: 'Offline.' }; }
-  return pushConfig;
-}
-const deviceName = () => (/iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android'
-  : /Macintosh/.test(navigator.userAgent) ? 'Mac' : /Windows/.test(navigator.userAgent) ? 'Windows' : 'Browser');
-const b64uToBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 
-async function pushOn() {
-  if (!pushSupported()) { toast('This window can’t show notifications.'); return; }
-  // Asked straight from the tap (iPhone only allows it then).
-  const perm = await Notification.requestPermission();
-  if (perm !== 'granted') { toast(perm === 'denied' ? 'Notifications are blocked. Allow them in Settings for this app, then try again.' : 'Notifications weren’t allowed.'); return; }
-  const cfg = await loadPushConfig();
-  if (cfg.error) { toast(cfg.error); return; }
-  try {
-    const reg = swRegistration || await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(cfg.publicKey) });
-    notifyInfo = await api('/api/notify/subscribe', { method: 'POST', body: { subscription: sub.toJSON(), device: deviceName() } });
-    pushSub = sub;
-    lastPlanSig = '';
-    scheduleOutbound(0);
-    render();
-    toast('Notifications are on for this device');
-  } catch (e) { toast(e.name === 'AbortError' ? 'This browser couldn’t reach its push service. Try again later, or in another browser.' : e.message || 'Couldn’t turn notifications on.'); }
+// Connecting Telegram: the app opens the bot with a one-time code (straight from the tap, so it
+// isn't blocked as a pop-up) and tells the server the code; pressing Start there links the chat.
+function telegramConnect() {
+  const bot = notifyInfo && notifyInfo.bot;
+  if (!bot) { toast((notifyInfo && notifyInfo.error) || 'Telegram isn’t ready yet. Try again in a moment.'); loadOutboundStatus(); return; }
+  const code = randomCode();
+  window.open(`https://t.me/${encodeURIComponent(bot)}?start=${code}`, '_blank');
+  api('/api/notify/telegram', { method: 'POST', body: { code } }).catch((e) => toast(e.message));
+  tgWaitStop();
+  tgWait = { until: Date.now() + 10 * 60e3 };
+  tgWait.timer = setInterval(async () => {
+    if (Date.now() > tgWait.until) { tgWaitStop(); render(); return; }
+    try {
+      const n = await api('/api/notify');
+      if (n.telegram) {
+        tgWaitStop();
+        notifyInfo = n;
+        lastPlanSig = '';
+        scheduleOutbound(0);
+        render();
+        toast('Telegram connected');
+      }
+    } catch { /* offline for a moment */ }
+  }, 2000);
+  render();
 }
-async function pushOff() {
-  try {
-    const sub = pushSub || (swRegistration && await swRegistration.pushManager.getSubscription());
-    if (sub) { notifyInfo = await api('/api/notify/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }); await sub.unsubscribe(); }
-    pushSub = null;
-    render();
-    toast('Notifications are off for this device');
-  } catch (e) { toast(e.message); }
+function tgWaitStop() { if (tgWait) clearInterval(tgWait.timer); tgWait = null; }
+async function telegramDisconnect() {
+  if (!confirm('Stop reminders in Telegram? You can connect again any time.')) return;
+  try { notifyInfo = { ...notifyInfo, ...(await api('/api/notify/telegram', { method: 'DELETE' })) }; render(); toast('Telegram disconnected'); }
+  catch (e) { toast(e.message); }
 }
-async function notifyTest(email) {
+async function notifyTest(summary) {
   try {
     await sendOutbound();
-    const r = await api('/api/notify/test', { method: 'POST', body: { email } });
-    toast(email ? (r.emailed ? 'Sent today’s summary to your Gmail' : r.error || 'Gmail isn’t connected') : r.pushed ? 'Sent. It should pop up in a moment.' : 'No device has notifications on yet.');
+    const r = await api('/api/notify/test', { method: 'POST', body: { summary } });
+    toast(r.sent ? 'Sent. Check Telegram.' : r.error);
   } catch (e) { toast(e.message); }
 }
 async function saveNotifyPrefs(form) {
@@ -4563,104 +4533,92 @@ async function saveNotifyPrefs(form) {
     timed: f.has('timed'), lead: Number(f.get('lead')), deadlines: f.has('deadlines'), deadlineTime: f.get('deadlineTime'),
     routines: f.has('routines'), nudgeTime: f.get('nudgeTime'), summary: f.has('summary'), summaryTime: f.get('summaryTime'),
   };
-  try { notifyInfo = await api('/api/notify/prefs', { method: 'PUT', body: { prefs } }); toast('Saved'); }
+  try { notifyInfo = { ...notifyInfo, ...(await api('/api/notify/prefs', { method: 'PUT', body: { prefs } })) }; toast('Saved'); }
   catch (e) { toast(e.message); }
 }
 
-// Connecting Google: the app opens Google's page itself (straight from the tap, so it isn't
-// blocked as a pop-up) and tells the server which request it is; Google comes back to the server.
-function googleConnect() {
-  const cfg = loginCfg;
-  if (!cfg || cfg.error) { loginCfg = null; loadLoginConfig(); toast('Connecting to Google… tap again in a moment.'); return; }
-  const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  const url = cfg.devAuthUrl ? `${cfg.devAuthUrl}?state=${nonce}` : `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({
-    client_id: cfg.clientId, redirect_uri: cfg.redirectUri, response_type: 'code', scope: GOOGLE_SCOPES, state: nonce,
-    access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', login_hint: state.account.email })}`;
-  window.open(url, '_blank');
-  api('/api/google/connect', { method: 'POST', body: { state: nonce } }).catch((e) => toast(e.message));
-  googleWaitStop();
-  const before = googleInfo && googleInfo.connected && !googleInfo.reconnect ? JSON.stringify(googleInfo) : '';
-  googleWait = { until: Date.now() + 10 * 60e3 };
-  googleWait.timer = setInterval(async () => {
-    if (Date.now() > googleWait.until) { googleWaitStop(); render(); return; }
-    try {
-      const g = await api('/api/google');
-      if (g.connected && !g.reconnect && JSON.stringify(g) !== before) {
-        googleWaitStop();
-        googleInfo = g;
-        lastCalSig = '';
-        await loadOutboundStatus();
-        if (g.calendar) copyToCalendar({ force: true });
-        toast([g.calendar && 'Google Calendar', g.gmail && 'Gmail'].filter(Boolean).join(' and ') + ' connected');
-      }
-    } catch { /* offline for a moment */ }
-  }, 2000);
-  render();
+async function feedAction(act) {
+  try {
+    if (act === 'feed-make') {
+      const body = calendarCopy();
+      feedInfo = await api('/api/feed', { method: 'PUT', body });
+      lastFeedSig = JSON.stringify(body);
+      toast('Calendar link made');
+    } else if (act === 'feed-copy') {
+      await navigator.clipboard.writeText(feedInfo.url).then(() => toast('Link copied'), () => { document.getElementById('feedUrl')?.select(); toast('Select the link and copy it'); });
+      return;
+    } else if (act === 'feed-reset') {
+      if (!confirm('Make a new link? The old one stops working, so you’ll need to add the new one to Google Calendar again (and remove the old calendar there).')) return;
+      feedInfo = await api('/api/feed/reset', { method: 'POST' });
+      toast('New link made. Add it to Google Calendar again.');
+    } else if (act === 'feed-stop') {
+      if (!confirm('Stop the calendar link? Google Calendar can’t read it any more; remove the I Commit! calendar there too.')) return;
+      feedInfo = await api('/api/feed', { method: 'DELETE' });
+      lastFeedSig = '';
+      toast('Calendar link stopped');
+    }
+    render();
+  } catch (e) { toast(e.message); }
 }
-function googleWaitStop() { if (googleWait) clearInterval(googleWait.timer); googleWait = null; }
-async function googleDisconnect() {
-  if (!confirm('Disconnect Google Calendar and Gmail? The I Commit! calendar stays in Google (delete it there if you like) but stops updating, and the morning email stops.')) return;
-  try { await api('/api/google', { method: 'DELETE' }); } catch (e) { toast(e.message); return; }
-  await loadOutboundStatus();
-  toast('Google disconnected');
-}
+// Google Calendar's own "add this calendar" page, for a calendar link (webcal:).
+const googleSubscribeUrl = (url) => `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(url.replace(/^https:/, 'webcal:'))}`;
 
 function notifyPageHtml() {
   const back = '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>';
-  const head = `<header class="top">${topBar({ left: back, label: 'Notifications · Google', title: 'Reminders' })}</header>`;
+  const head = `<header class="top">${topBar({ left: back, label: 'Telegram · Google Calendar', title: 'Reminders' })}</header>`;
   if (!state.account) {
     return head + `<section class="card banner-card"><b>Sign in with Google first</b>
-      <p class="small">Reminders and the Google Calendar copy belong to your account, so they work from any device.</p>
+      <p class="small">Reminders and the calendar link belong to your account, so they work from any device.</p>
       <div class="btn-row"><a class="btn primary" href="#/account">Sign in with Google</a></div></section>`;
   }
-  if (!notifyInfo || !googleInfo) {
+  if (!notifyInfo || !feedInfo) {
     if (!outboundAsked) { loadOutboundStatus(); return head + '<section class="card"><p class="muted pad">Loading…</p></section>'; }
     return head + `<section class="card empty"><p><b>Couldn’t reach the server</b></p><p class="small muted">Check you’re online, then try again.</p>
       <button class="btn" data-act="notify-retry">Try again</button></section>`;
   }
-  const n = notifyInfo, g = googleInfo;
-  const p = n.prefs;
-  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  const iosBrowser = /iPhone|iPad/.test(navigator.userAgent) && !standalone;
-  const pushCard = !n.push ? '<p class="small pad muted">Push notifications aren’t set up on the server yet (VAPID keys; see the README).</p>'
-    : !pushSupported() ? `<p class="small pad muted">${iosBrowser ? 'On iPhone, notifications work in the Home Screen app: tap Share → <b>Add to Home Screen</b>, open I Commit! from there and come back here.' : 'This window can’t show notifications (e.g. the Mac app). Turn them on in Safari, Chrome or on your iPhone instead.'}</p>`
-    : pushSub ? `<p class="small pad">✅ On for this device.</p>
-        <div class="btn-row"><button class="btn" data-act="notify-test">Send a test</button><button class="btn" data-act="push-off">Turn off here</button></div>`
-    : '<button class="btn primary full" data-act="push-on">Turn on for this device</button>';
+  const n = notifyInfo, p = n.prefs, f = feedInfo;
+  const tgCard = n.setup ? '<p class="small pad muted">Telegram isn’t set up on the server yet (the bot token; see the README).</p>'
+    : n.telegram ? `<p class="small pad">✅ Connected to <b>${escapeHtml(n.telegram.name || 'your Telegram')}</b>. Send <b>/today</b> to the bot any time for today’s plan.</p>
+        <div class="btn-row"><button class="btn" data-act="notify-test">Send a test</button><button class="btn" data-act="tg-disconnect">Disconnect</button></div>`
+    : tgWait ? `<p class="pad"><b>Press Start in Telegram…</b><br><span class="small muted">This page carries on by itself once you have.</span></p>
+        <div class="btn-row"><button class="btn" data-act="tg-connect">Open Telegram again</button><button class="btn" data-act="tg-cancel">Cancel</button></div>`
+    : `${n.error ? `<p class="small pad err">⚠️ ${escapeHtml(n.error)}</p>` : ''}<button class="btn primary full" data-act="tg-connect">Connect Telegram</button>
+        <p class="help pad">Opens <b>@${escapeHtml(n.bot || '…')}</b> in Telegram. Press <b>Start</b> there and you’re done.</p>`;
   const sel = (name, opts, cur) => `<select name="${name}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   const time = (name, v) => `<input type="time" name="${name}" value="${escapeHtml(v || '')}" required>`;
-  const devices = n.devices.length ? n.devices.map((d) => escapeHtml(d.device)).join(', ') : 'none yet';
-  const gStatus = !g.connected ? '' : g.reconnect ? '<p class="small pad err">⚠️ Google access has ended. Connect again to keep the calendar and email going.</p>'
-    : `<p class="small pad ${g.lastError ? 'err' : 'muted'}">${g.calendar ? '✅ Google Calendar' : '✖︎ Calendar not allowed'} · ${g.gmail ? '✅ Gmail' : '✖︎ Gmail not allowed'}<br>
-      ${g.lastError ? '⚠️ ' + escapeHtml(g.lastError) : g.calendar ? `Calendar updated ${ago(g.lastSync)}.` : ''}</p>`;
+  const feedCard = !f.url ? `<p class="small pad muted">Makes a private calendar link with your timed one-offs, project meetings and application dates. Add it to Google Calendar once, and it follows your changes here.</p>
+      <button class="btn primary full" data-act="feed-make">Make calendar link</button>`
+    : `<label class="f pad">Your private calendar link<input id="feedUrl" readonly value="${escapeHtml(f.url)}" onclick="this.select()"></label>
+      <div class="btn-row"><a class="btn primary" href="${escapeHtml(googleSubscribeUrl(f.url))}" target="_blank" rel="noopener">Add to Google Calendar</a><button class="btn" data-act="feed-copy">Copy link</button></div>
+      <details class="fold-in"><summary>Add it by hand</summary><ol>
+        <li>On a computer, open <b>calendar.google.com</b>.</li>
+        <li>Next to <b>Other calendars</b>, click <b>+</b> → <b>From URL</b>.</li>
+        <li>Paste the link and click <b>Add calendar</b>. It shows as <b>I Commit!</b>; on iPhone it appears in the Google Calendar app by itself.</li></ol></details>
+      <p class="small pad muted">Updated here ${ago(f.updatedAt)}. Google Calendar reads the link every few hours (Google decides how often), so changes can take a while to show there.</p>
+      <p class="help pad">Keep the link private: anyone with it can see these items. Edit items here, not in Google. Don’t add this link back under Calendars, or everything would show twice.</p>
+      <div class="btn-row"><button class="btn" data-act="feed-reset">Make a new link</button><button class="btn" data-act="feed-stop">Stop sharing</button></div>`;
   return head + `
-    <section class="card" data-section="Push notifications">
-      <div class="card-head"><h2>Push notifications</h2></div>
-      <p class="small pad muted">Pop-ups on this device, even when the app is closed. Devices with notifications on: ${devices}.</p>
-      ${pushCard}
+    <section class="card" data-section="Telegram">
+      <div class="card-head"><h2>Telegram</h2></div>
+      <p class="small pad muted">Your reminders arrive as Telegram messages from the I Commit! bot, even when the app is closed.</p>
+      ${tgCard}
     </section>
     <form class="card" data-form="notify-prefs" data-section="What to send">
       <div class="card-head"><h2>What to send</h2></div>
-      <label class="toggle-row"><input type="checkbox" name="timed" ${p.timed ? 'checked' : ''}><span>Before a timed task or meeting<small>Push, before anything with a start time.</small></span></label>
+      <label class="toggle-row"><input type="checkbox" name="timed" ${p.timed ? 'checked' : ''}><span>Before a timed task or meeting<small>A message before anything with a start time.</small></span></label>
       <label class="f pad">How long before ${sel('lead', [[0, 'At the start'], [5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [120, '2 hours']], p.lead)}</label>
-      <label class="toggle-row"><input type="checkbox" name="deadlines" ${p.deadlines ? 'checked' : ''}><span>Application deadlines<small>Push, the day before an application closes or a next step is due.</small></span></label>
+      <label class="toggle-row"><input type="checkbox" name="deadlines" ${p.deadlines ? 'checked' : ''}><span>Application deadlines<small>The day before an application closes or a next step is due.</small></span></label>
       <label class="f pad">At ${time('deadlineTime', p.deadlineTime)}</label>
-      <label class="toggle-row"><input type="checkbox" name="routines" ${p.routines ? 'checked' : ''}><span>Routines not ticked<small>Push in the evening, listing the day's routines you haven't ticked yet.</small></span></label>
+      <label class="toggle-row"><input type="checkbox" name="routines" ${p.routines ? 'checked' : ''}><span>Routines not ticked<small>In the evening, listing the day's routines you haven't ticked yet.</small></span></label>
       <label class="f pad">At ${time('nudgeTime', p.nudgeTime)}</label>
-      <label class="toggle-row"><input type="checkbox" name="summary" ${p.summary ? 'checked' : ''}><span>Morning summary email<small>To ${escapeHtml(state.account.email)}: the day's timeline, to-dos, routines and application dates. ${n.gmail ? '' : '<b>Connect Gmail below to get it.</b>'}</small></span></label>
+      <label class="toggle-row"><input type="checkbox" name="summary" ${p.summary ? 'checked' : ''}><span>Morning briefing<small>The day's timeline, to-dos, routines and application dates.</small></span></label>
       <label class="f pad">At ${time('summaryTime', p.summaryTime)}</label>
-      ${n.gmail ? '<div class="btn-row"><button class="btn" type="button" data-act="notify-test-email">Send today’s summary now</button></div>' : ''}
+      ${n.telegram ? '<div class="btn-row"><button class="btn" type="button" data-act="notify-test-summary">Send today’s briefing now</button></div>' : ''}
       <p class="help pad">Times are this device's time zone. Changes save by themselves.</p>
     </form>
-    <section class="card" data-section="Google Calendar and Gmail">
-      <div class="card-head"><h2>Google Calendar &amp; Gmail</h2></div>
-      <p class="small pad muted">Copies your timed one-offs, project meetings and application dates into a calendar called <b>I Commit!</b> in your Google Calendar, and keeps it up to date as you add, change or delete them here. Gmail sends the morning summary, from you to you.</p>
-      ${gStatus}
-      ${googleWait ? `<p class="pad"><b>Finish in the Google window…</b><br><span class="small muted">Tick both boxes (Calendar and Gmail) on Google’s page.</span></p>
-        <button class="btn full" data-act="google-connect-cancel">Cancel</button>`
-        : !g.connected || g.reconnect || !g.calendar || !g.gmail ? `<button class="btn gbtn full" data-act="google-connect"><span class="glogo">G</span>${g.connected ? 'Connect again' : 'Connect Google Calendar & Gmail'}</button>` : ''}
-      ${g.connected && !g.reconnect ? `<div class="btn-row">${g.calendar ? '<button class="btn" data-act="gcal-now">Update calendar now</button>' : ''}<button class="btn" data-act="google-disconnect">Disconnect</button></div>` : ''}
-      <p class="help pad">Edit items here, not in Google: changes made to the I Commit! calendar in Google are overwritten. Don’t add the I Commit! calendar back under Calendars, or everything would show twice.</p>
+    <section class="card" data-section="Google Calendar">
+      <div class="card-head"><h2>Google Calendar</h2></div>
+      ${feedCard}
     </section>`;
 }
 
@@ -6621,15 +6579,13 @@ document.addEventListener('click', (e) => {
     case 'invite-takeback': takeBackInvite(btn.dataset.email); break;
     case 'google-signin': startGoogleSignIn(); break;
     case 'google-cancel': stopGoogleWait(); render(); break;
-    case 'push-on': pushOn(); break;
     case 'notify-retry': outboundAsked = false; render(); break;
-    case 'push-off': pushOff(); break;
+    case 'tg-connect': telegramConnect(); break;
+    case 'tg-cancel': tgWaitStop(); render(); break;
+    case 'tg-disconnect': telegramDisconnect(); break;
     case 'notify-test': notifyTest(false); break;
-    case 'notify-test-email': notifyTest(true); break;
-    case 'google-connect': googleConnect(); break;
-    case 'google-connect-cancel': googleWaitStop(); render(); break;
-    case 'google-disconnect': googleDisconnect(); break;
-    case 'gcal-now': copyToCalendar({ force: true }).then(() => toast(googleInfo && googleInfo.lastError ? googleInfo.lastError : 'Google Calendar is up to date')); break;
+    case 'notify-test-summary': notifyTest(true); break;
+    case 'feed-make': case 'feed-copy': case 'feed-reset': case 'feed-stop': feedAction(act); break;
     case 'sign-out': signOut(); break;
     case 'signin-hide': try { localStorage.setItem('signinHint', 'off'); } catch {} render(); break;
     case 'buddy-refresh': buddyError = null; render(); refreshBuddy(); break;

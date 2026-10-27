@@ -6,8 +6,9 @@
 //   /api/login   Sign in with Google            (server/login.mjs; secrets GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
 //   /api/logo    find a company's icon          (server/logo.mjs)
 //   /api/moodle  read courses from Moodle       (server/moodle.mjs; optional env MOODLE_URL)
-//   /api/google  Google Calendar copy + Gmail   (server/google.mjs; the same Google secrets as sign-in)
-//   /api/notify  push reminders, morning email  (server/notify.mjs; secrets VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
+//   /api/notify  reminders through Telegram     (server/notify.mjs; secret TELEGRAM_BOT_TOKEN)
+//   /api/telegram/webhook  messages to the bot   (server/notify.mjs)
+//   /api/feed    private calendar link (.ics)   (server/feed.mjs)
 // A cron every minute sends the reminders that are due (scheduled() below; wrangler.toml [triggers]).
 //   /google….html  proves to Google Search Console that this site is yours (optional var
 //                  GOOGLE_SITE_VERIFICATION: the file name Search Console gives, e.g. google1a2b3c4d.html)
@@ -19,27 +20,22 @@ import { handle as apps } from './apps.mjs';
 import { handle as login } from './login.mjs';
 import { handle as logo } from './logo.mjs';
 import { handle as moodle } from './moodle.mjs';
-import { handle as google, connectCallback } from './google.mjs';
-import { handle as notify, run as sendReminders } from './notify.mjs';
+import { handle as notify, run as sendReminders, webhook as telegramWebhook } from './notify.mjs';
+import { handle as feed } from './feed.mjs';
 import { d1Store } from './d1-store.mjs';
 
-const googleEnv = (env) => ({ GOOGLE_CLIENT_ID: (env.GOOGLE_CLIENT_ID || '').trim(), GOOGLE_CLIENT_SECRET: (env.GOOGLE_CLIENT_SECRET || '').trim() });
-const notifyEnv = (env) => ({ ...googleEnv(env), VAPID_PUBLIC_KEY: (env.VAPID_PUBLIC_KEY || '').trim(), VAPID_PRIVATE_KEY: (env.VAPID_PRIVATE_KEY || '').trim(), VAPID_SUBJECT: (env.VAPID_SUBJECT || '').trim() });
+const notifyEnv = (env) => ({ TELEGRAM_BOT_TOKEN: (env.TELEGRAM_BOT_TOKEN || '').trim() });
 
 export default {
   async fetch(req, env) {
     const { pathname } = new URL(req.url);
     try {
-      // Google comes back here both after sign-in and after connecting Calendar and Gmail.
-      if (pathname === '/api/login/callback') {
-        const page = await connectCallback(req, { store: d1Store(env.DB, 'google'), env: googleEnv(env) });
-        if (page) return page;
-      }
-      if (pathname === '/api/google' || pathname.startsWith('/api/google/')) {
-        return await google(req, { store: d1Store(env.DB, 'google'), loginStore: d1Store(env.DB, 'login'), env: googleEnv(env) });
-      }
       if (pathname === '/api/notify' || pathname.startsWith('/api/notify/')) {
-        return await notify(req, { store: d1Store(env.DB, 'notify'), loginStore: d1Store(env.DB, 'login'), googleStore: d1Store(env.DB, 'google'), env: notifyEnv(env) });
+        return await notify(req, { store: d1Store(env.DB, 'notify'), loginStore: d1Store(env.DB, 'login'), env: notifyEnv(env) });
+      }
+      if (pathname === '/api/telegram/webhook') return await telegramWebhook(req, { store: d1Store(env.DB, 'notify'), env: notifyEnv(env) });
+      if (pathname === '/api/feed' || pathname.startsWith('/api/feed/')) {
+        return await feed(req, { store: d1Store(env.DB, 'feed'), loginStore: d1Store(env.DB, 'login') });
       }
       if (pathname === '/api/login' || pathname.startsWith('/api/login/')) {
         return await login(req, { store: d1Store(env.DB, 'login'), syncStore: d1Store(env.DB, 'sync'),
@@ -70,6 +66,6 @@ export default {
     return env.ASSETS.fetch(req);
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(sendReminders({ store: d1Store(env.DB, 'notify'), loginStore: d1Store(env.DB, 'login'), googleStore: d1Store(env.DB, 'google'), env: notifyEnv(env), now: event.scheduledTime }));
+    ctx.waitUntil(sendReminders({ store: d1Store(env.DB, 'notify'), env: notifyEnv(env), now: event.scheduledTime }));
   },
 };

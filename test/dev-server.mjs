@@ -8,47 +8,34 @@ import path from 'node:path';
 import { handle as syncHandle } from '../server/sync.mjs';
 import { handle as widgetHandle } from '../server/widget.mjs';
 import { handle as loginHandle } from '../server/login.mjs';
-import { handle as googleHandle, connectCallback } from '../server/google.mjs';
-import { handle as notifyHandle, run as sendReminders } from '../server/notify.mjs';
+import { handle as notifyHandle, run as sendReminders, webhook as telegramWebhook } from '../server/notify.mjs';
+import { webhookSecret } from '../server/telegram.mjs';
+import { handle as feedHandle } from '../server/feed.mjs';
 import { memoryStore } from './sync-fn-store.mjs';
 
 const root = path.resolve(path.dirname(decodeURIComponent(new URL(import.meta.url).pathname)), '..');
 const port = Number(process.argv[2]) || 8766;
 const syncStore = memoryStore();
 const loginStore = memoryStore();
-// A stand-in for Google: /api/login/dev?state=…&email=… "signs in" as that email (and grants
-// Calendar and Gmail when connecting). Calendar and Gmail calls are kept in memory and logged.
-const devCalendar = new Map();
-let devId = 1;
-const devGoogle = async (url, opts = {}) => {
-  url = String(url);
-  if (url === 'https://oauth2.googleapis.com/token') {
-    const b = new URLSearchParams(opts.body);
-    if (b.get('grant_type') === 'refresh_token') return Response.json({ access_token: 'dev-access', expires_in: 3600 });
-    const email = b.get('code');
-    const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-    return Response.json({ id_token: `${b64({})}.${b64({ iss: 'https://accounts.google.com', aud: 'dev-client.apps.googleusercontent.com', sub: `dev-${email}`, email, name: email.split('@')[0], email_verified: true })}.x`,
-      access_token: 'dev-access', expires_in: 3600, refresh_token: 'dev-refresh', scope: 'openid email https://www.googleapis.com/auth/calendar.app.created https://www.googleapis.com/auth/gmail.send' });
-  }
-  if (url === 'https://oauth2.googleapis.com/revoke') return new Response('');
-  if (url.startsWith('https://gmail.googleapis.com/')) { console.log('[gmail] sent', Buffer.from(JSON.parse(opts.body).raw, 'base64url').toString().split('\r\n')[1]); return Response.json({ id: 'm' }); }
-  if (url.startsWith('https://www.googleapis.com/calendar/v3/')) {
-    const body = opts.body ? JSON.parse(opts.body) : null;
-    if (url.endsWith('/calendars')) return Response.json({ id: 'dev-cal' });
-    const id = url.split('/events/')[1];
-    if (opts.method === 'POST') { const n = `ev${devId++}`; devCalendar.set(n, body); console.log('[calendar] add', body.summary, JSON.stringify(body.start)); return Response.json({ id: n }); }
-    if (opts.method === 'PUT') { devCalendar.set(id, body); console.log('[calendar] change', body.summary, JSON.stringify(body.start)); return Response.json({ id }); }
-    if (opts.method === 'DELETE') { console.log('[calendar] delete', devCalendar.get(id)?.summary); devCalendar.delete(id); return new Response(null, { status: 204 }); }
-  }
-  return fetch(url, opts); // real push services
+// A stand-in for Google: /api/login/dev?state=…&email=… "signs in" as that email.
+const devGoogle = async (url, opts) => {
+  const email = new URLSearchParams(opts.body).get('code');
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return new Response(JSON.stringify({ id_token: `${b64({})}.${b64({ iss: 'https://accounts.google.com', aud: 'dev-client.apps.googleusercontent.com', sub: `dev-${email}`, email, name: email.split('@')[0], email_verified: true })}.x` }));
 };
 const loginEnv = { GOOGLE_CLIENT_ID: 'dev-client.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'dev', DEV_AUTH_URL: '/api/login/dev' };
-const vapidPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-const notifyEnv = { ...loginEnv, VAPID_PUBLIC_KEY: Buffer.from(await crypto.subtle.exportKey('raw', vapidPair.publicKey)).toString('base64url'),
-  VAPID_PRIVATE_KEY: (await crypto.subtle.exportKey('jwk', vapidPair.privateKey)).d, VAPID_SUBJECT: 'mailto:dev@example.com' };
-const googleStore = memoryStore(), notifyStore = memoryStore();
-const notifyCtx = { store: notifyStore, loginStore, googleStore, env: notifyEnv, fetchImpl: devGoogle };
-setInterval(() => sendReminders(notifyCtx).then((s) => { if (s.pushed || s.emailed) console.log('[reminders]', s); }).catch((e) => console.error(e)), 60e3);
+// A stand-in for Telegram: the bot is @DevICommitBot, and messages are printed here.
+// /api/dev/telegram-start?code=… acts as pressing Start in Telegram (the app opens t.me instead).
+const devTelegram = async (url, opts) => {
+  const method = String(url).split('/').pop(), body = JSON.parse(opts.body);
+  if (method === 'getMe') return Response.json({ ok: true, result: { username: 'DevICommitBot' } });
+  if (method === 'sendMessage') console.log(`[telegram → ${body.chat_id}]\n${body.text}\n`);
+  return Response.json({ ok: true, result: true });
+};
+const notifyEnv = { TELEGRAM_BOT_TOKEN: 'dev:token' };
+const notifyStore = memoryStore(), feedStore = memoryStore();
+const notifyCtx = { store: notifyStore, loginStore, env: notifyEnv, fetchImpl: devTelegram };
+setInterval(() => sendReminders(notifyCtx).then((s) => { if (s.sent) console.log('[reminders]', s); }).catch((e) => console.error(e)), 60e3);
 const widgetMem = new Map();
 const widgetStore = { get: async (k) => widgetMem.get(k) ?? null, set: async (k, v) => { widgetMem.set(k, v); }, delete: async (k) => { widgetMem.delete(k); } };
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.ics': 'text/calendar' };
@@ -68,10 +55,13 @@ http.createServer(async (req, res) => {
     else if (url.pathname === '/api/widget') response = await widgetHandle(await toRequest(req), widgetStore);
     else if (url.pathname === '/api/login/dev') {
       response = new Response(`<form action="/api/login/callback"><input type="hidden" name="state" value="${url.searchParams.get('state')}"><p>Pretend Google sign-in</p><input name="code" value="cathy@example.com"><button>Continue</button></form>`, { headers: { 'content-type': 'text/html' } });
-    } else if (url.pathname.startsWith('/api/google')) response = await googleHandle(await toRequest(req), { store: googleStore, loginStore, env: loginEnv, fetchImpl: devGoogle });
-    else if (url.pathname.startsWith('/api/notify')) response = await notifyHandle(await toRequest(req), notifyCtx);
-    else if (url.pathname === '/api/login/callback' && (response = await connectCallback(await toRequest(req), { store: googleStore, env: loginEnv, fetchImpl: devGoogle }))) { /* connecting Google */ }
-    else if (url.pathname.startsWith('/api/login')) response = await loginHandle(await toRequest(req), { store: loginStore, syncStore, env: loginEnv, fetchImpl: devGoogle });
+    } else if (url.pathname.startsWith('/api/notify')) response = await notifyHandle(await toRequest(req), notifyCtx);
+    else if (url.pathname.startsWith('/api/feed')) response = await feedHandle(await toRequest(req), { store: feedStore, loginStore });
+    else if (url.pathname === '/api/telegram/webhook') response = await telegramWebhook(await toRequest(req), notifyCtx);
+    else if (url.pathname === '/api/dev/telegram-start') {
+      response = await telegramWebhook(new Request(`http://${req.headers.host}/api/telegram/webhook`, { method: 'POST', headers: { 'x-telegram-bot-api-secret-token': await webhookSecret(notifyEnv) },
+        body: JSON.stringify({ message: { chat: { id: 4242, username: 'dev_user' }, text: `/start ${url.searchParams.get('code')}` } }) }), notifyCtx);
+    } else if (url.pathname.startsWith('/api/login')) response = await loginHandle(await toRequest(req), { store: loginStore, syncStore, env: loginEnv, fetchImpl: devGoogle });
     if (response) {
       res.writeHead(response.status, Object.fromEntries(response.headers));
       res.end(Buffer.from(await response.arrayBuffer()));

@@ -6,7 +6,7 @@
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs && wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "TZ=Europe/London node test/ics.test.js && node test/widget-fn.test.mjs && node test/widget-script.test.mjs && node test/sync-fn.test.mjs && node test/apps-fn.test.mjs && node test/d1-store.test.mjs && node test/login-fn.test.mjs && node test/logo-fn.test.mjs && node test/moodle-fn.test.mjs && node test/schema.test.mjs && node test/notify-fn.test.mjs && node test/google-fn.test.mjs"
+    "test": "TZ=Europe/London node test/ics.test.js && node test/widget-fn.test.mjs && node test/widget-script.test.mjs && node test/sync-fn.test.mjs && node test/apps-fn.test.mjs && node test/d1-store.test.mjs && node test/login-fn.test.mjs && node test/logo-fn.test.mjs && node test/moodle-fn.test.mjs && node test/schema.test.mjs && node test/notify-fn.test.mjs && node test/feed-fn.test.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
