@@ -527,7 +527,7 @@ function countLabel(it, n) {
 }
 
 // ---------- Routing ----------
-// #/reminders  #/today  #/cal  #/routine (was #/week)  #/academics  #/academics/<course id>  #/apps  #/buddy  #/gallery  #/gallery/<id>[/edit]  #/commitments  #/c/<id>  #/c/<id>/edit  #/new/<freq>
+// #/home (the donut, where the app opens)  #/plan (this week)  #/reminders  #/today  #/cal  #/routine (was #/week)  #/academics  #/academics/<course id>  #/apps  #/buddy  #/gallery  #/gallery/<id>[/edit]  #/commitments  #/c/<id>  #/c/<id>/edit  #/new/<freq>
 function parseHash() {
   const [a, b, c] = location.hash.replace(/^#\/?/, '').split('/');
   if (a === 'c' && b) return { tab: 'commitments', id: b, edit: c === 'edit' };
@@ -545,16 +545,17 @@ function parseHash() {
   if (a === 'academics') return /^\d+$/.test(b || '') ? { tab: 'academics', page: 'course', courseId: +b } : { tab: 'academics' };
   if (a === 'gallery' && b) return { tab: 'gallery', page: b === 'new' || c === 'edit' ? 'project-edit' : 'project', projId: b };
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
-  return { tab: ['today', 'routine', 'cal', 'buddy', 'gallery', 'academics', 'commitments'].includes(a) ? a : 'today' };
+  return { tab: ['home', 'plan', 'today', 'routine', 'cal', 'buddy', 'gallery', 'academics', 'commitments'].includes(a) ? a : 'home' };
 }
-// The app always opens on Today (an invite link, or a deadline notification, still opens its page). A refresh stays where you were.
+// The app always opens on Home, the donut (an invite link, or a deadline notification, still opens its page). A refresh stays where you were.
 const isReload = (() => { try { return performance.getEntriesByType('navigation')[0].type === 'reload'; } catch { return false; } })();
-if (!isReload && !/^#\/(join|apps)\//.test(location.hash) && location.hash && location.hash !== '#/today') history.replaceState(null, '', '#/today');
+if (!isReload && !/^#\/(join|apps)\//.test(location.hash) && location.hash && location.hash !== '#/home') history.replaceState(null, '', '#/home');
 let route = parseHash();
 window.addEventListener('hashchange', () => {
   route = parseHash();
   treeDraft = null;
   editingCard = null;
+  wbPick = null;
   if (route.page !== 'tree-edit') treeNewCourse = null;
   if (route.tab === 'buddy') refreshBuddy();
   if (route.tab === 'gallery' && projects !== null && !route.page) loadProjects();
@@ -573,7 +574,7 @@ window.addEventListener('hashchange', () => {
 // Pages that are mostly a form being filled in: background refreshes leave them alone, so
 // switching to another window and back never wipes what you've typed.
 const formOpen = () => !!(route.edit || /-edit$/.test(route.page || '') || route.page === 'tests' || (route.tab === 'academics' && !route.page && acad.conn === false));
-function goBack(fallback = '#/today') {
+function goBack(fallback = '#/home') {
   if (history.length > 1) history.back(); else location.hash = fallback;
 }
 
@@ -605,11 +606,13 @@ function render() {
   else if (route.tab === 'apps') html = appsTabHtml();
   else if (route.tab === 'gallery') html = galleryHtml();
   else if (route.tab === 'academics') html = academicsHtml();
+  else if (route.tab === 'home') html = homeHtml();
+  else if (route.tab === 'plan') html = planHtml();
   else if (route.tab === 'commitments') html = commitmentsTabHtml();
   else html = todayTabHtml();
   $app.dataset.tab = route.id || route.page ? 'page' : route.tab;
   $app.dataset.page = route.page || '';
-  $app.innerHTML = html + tabBarHtml() + sideNavHtml();
+  $app.innerHTML = html + tabBarHtml() + floatDonutHtml(); // the floating donut replaces the sidebar
   fillSideSections();
   if (route.page === 'knowledge' || route.page === 'course') initMaps();
   if (route.page === 'board') layoutBoard();
@@ -3575,7 +3578,7 @@ function submitReview(form) {
   save();
   if (needSync) syncAll({ force: true });
   toast(imported ? `Importing ${imported} series` : 'Skipped');
-  location.hash = '#/today';
+  location.hash = '#/home';
 }
 
 function reviewBannerHtml() {
@@ -4168,7 +4171,7 @@ async function joinWithKey(key, { done = 'Synced with your other device' } = {})
   }
   save();
   toast(done);
-  location.hash = '#/today';
+  location.hash = '#/home';
   refreshBuddy();
 }
 
@@ -4322,7 +4325,7 @@ function signOut() {
   state = defaultState();
   recordHashes = null;
   save();
-  location.hash = '#/today';
+  location.hash = '#/home';
   render();
   toast('Signed out');
 }
@@ -6225,6 +6228,315 @@ function acadJump(week) {
 // Weeks you open or fold on a course page stay that way when the page redraws.
 document.addEventListener('toggle', (e) => { const d = e.target; if (d.dataset && d.dataset.asec) acadOpenWeeks.set(d.dataset.asec, d.open); }, true);
 
+// ---------- This week: the simplified dashboard ----------
+// Monday to Sunday top to bottom, each day a plain bullet list (daily routines, periodic ones on the days
+// they're due, one-off tasks, pinned notes, and optional extra lines), with a whiteboard of undated tasks
+// on the right. Drag a whiteboard task onto a day to give it that date (or tap it, then tap a day); drag a
+// one-off back to the whiteboard to undate it. Ticking here is the same tick as on Today and the Calendar.
+let planWk = null;          // the week shown (null = this week)
+let wbPick = null;          // a whiteboard item picked up by tapping ("task:id" / "note:id"), waiting for a day
+let planExtras = { projects: true, apps: true, study: true };
+try { planExtras = { ...planExtras, ...JSON.parse(localStorage.getItem('planExtras') || '{}') }; } catch {}
+const PLAN_EXTRAS = [['projects', 'Projects'], ['apps', 'Applications'], ['study', 'Study']];
+
+function planDayHtml(wk, w, i) {
+  const d = isoDate(dayDate(wk, i)), today = todayISO();
+  const rows = [];
+  let done = 0, total = 0;
+  const routine = !w ? [] : [...itemsOf(w, 'daily'), ...itemsOf(w, 'periodic').filter(([id, it]) => periodicOn(id, it, d))];
+  for (const [id, it] of routine) {
+    const ok = dayDone(it, i);
+    total++; if (ok) done++;
+    const prog = it.kind === 'counter' ? `${round2(it.counts[i])}/${round2(it.target)}${it.unit ? ` ${it.unit}` : ''}` : it.freq === 'periodic' ? `every ${everyLabel(it.everyDays || 7)}` : '';
+    rows.push(`<li><button class="wb ${ok ? 'done' : ''}" data-cell="${wk}:${id}:${i}" aria-label="${escapeHtml(cellLabel(it, i))}">
+      <span class="wbox">${ok ? CHECK : ''}</span><span class="wname">${escapeHtml(it.name)}</span>${prog ? `<small>${escapeHtml(prog)}</small>` : ''}</button></li>`);
+  }
+  const ones = w ? itemsOf(w, 'once').filter(([, it]) => it.date === d && !it.schedule) : [];
+  if (ones.length) rows.push('<li class="wsep" aria-hidden="true"></li>');
+  for (const [id, it] of ones) {
+    const ok = periodDone(it);
+    total++; if (ok) done++;
+    rows.push(`<li class="wb once ${ok ? 'done' : ''}" data-wdrag="task:${id}">
+      <button class="wbox" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-label="${escapeHtml(it.name)} done" aria-pressed="${ok}">${ok ? CHECK : ''}</button>
+      <a class="wname" href="#/c/${id}" draggable="false">${it.time ? `<small class="wtime">${escapeHtml(it.time)}</small> ` : ''}${escapeHtml(it.name)}</a></li>`);
+  }
+  for (const n of notesOn(d)) {
+    total++; if (n.done) done++;
+    rows.push(`<li class="wb note c-${n.color} ${n.done ? 'done' : ''}">
+      <button class="wbox" data-act="note-done" data-id="${n.id}" aria-label="Done" aria-pressed="${n.done}">${n.done ? CHECK : ''}</button>
+      <a class="wname" href="#/board">${escapeHtml(n.text.split('\n')[0] || 'Note')}</a></li>`);
+  }
+  const extra = [];
+  if (planExtras.projects) for (const x of projectItemsOn(d)) extra.push(`<li class="wx"><span class="wdot" style="--c:${pcol(x.p)[2]}"></span><a href="#/gallery/${x.p.id}">${x.time ? `<small class="wtime">${x.time}</small> ` : ''}${escapeHtml(x.title)}<small> · ${escapeHtml(x.p.name)}</small></a></li>`);
+  if (planExtras.apps) for (const e of appEvents().filter((e) => e.date === d)) extra.push(`<li class="wx"><span class="wdot" style="--c:#e6b800"></span><a href="#/apps/${d}">${escapeHtml(e.a.company)} ${e.kind === 'open' ? 'opens' : e.kind === 'close' ? 'closes' : 'due'}</a></li>`);
+  if (planExtras.study && d === today) {
+    for (const c of (acad.courses || []).filter((m) => acad.tracked.has(m.id)).map((m) => acadCourse(m.id)).filter((c) => c && c.next)) {
+      const i2 = c.next, f = (i2.files || [])[0];
+      extra.push(`<li class="wx study"><button class="wbox" data-act="acad-tick" data-id="${i2.id}" data-course="${c.meta.id}" aria-label="${escapeHtml(i2.name)} done"></button>
+        <a href="#/academics/${c.meta.id}">${escapeHtml(c.meta.shortname || c.meta.fullname)}: ${escapeHtml(i2.name)}</a>${f ? `<a class="mini-btn go" href="${escapeHtml(f.link)}" target="_blank" rel="noopener">Open</a>` : ''}</li>`);
+    }
+  }
+  return `<section class="wday ${d === today ? 'today' : d < today ? 'past' : ''} ${wbPick ? 'placing' : ''}" data-wday="${d}">
+    <button class="wday-h" data-act="wday-place" data-day="${d}" ${wbPick ? '' : 'tabindex="-1"'}>
+      <b>${DAY_NAMES[i]}</b><span>${fmtDay(parseISO(d), { day: 'numeric', month: 'short' })}</span>${d === today ? '<em>today</em>' : ''}
+      ${total ? `<small>${done}/${total}</small>` : ''}${wbPick ? '<i>Place here</i>' : ''}</button>
+    <ul class="wlist">${rows.join('')}${extra.join('')}${!rows.length && !extra.length ? '<li class="wempty">Nothing planned</li>' : ''}</ul>
+  </section>`;
+}
+function planWeeklyHtml(wk, w) {
+  const weekly = w ? itemsOf(w, 'weekly') : [];
+  if (!weekly.length) return '';
+  return `<div class="wweekly"><b>This week</b>${weekly.map(([id, it]) => {
+    const ok = periodDone(it);
+    const prog = it.kind === 'counter' ? `${round2(it.count)}/${round2(it.target)}${it.unit ? ` ${it.unit}` : ''}` : '';
+    return it.kind === 'task'
+      ? `<span class="wwk ${ok ? 'done' : ''}"><button class="wbox" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-pressed="${ok}" aria-label="${escapeHtml(it.name)} done">${ok ? CHECK : ''}</button><a href="#/c/${id}">${escapeHtml(it.name)}</a></span>`
+      : `<a class="wwk ${ok ? 'done' : ''}" href="#/c/${id}">${escapeHtml(it.name)} <small>${escapeHtml(prog)}</small></a>`;
+  }).join('')}</div>`;
+}
+function whiteboardColHtml() {
+  const tasks = state.commitments.filter((c) => c.freq === 'once' && !c.date && !c.archived);
+  const notes = state.notes.filter((n) => !n.date && !n.done && n.text.trim());
+  const sticky = (key, text, color, sub) => `<div class="wsticky c-${color} ${wbPick === key ? 'picked' : ''}" data-wdrag="${key}" tabindex="0" role="button" aria-label="${escapeHtml(text)}: tap, then tap a day">
+    <span>${escapeHtml(text)}</span>${sub ? `<small>${escapeHtml(sub)}</small>` : ''}
+    <button class="wsticky-x" data-act="wb-remove" data-key="${key}" aria-label="Remove">×</button></div>`;
+  return `<aside class="card wbcol" data-section="Whiteboard" data-wb>
+    <div class="card-head"><h2>Whiteboard</h2><span class="hint">${tasks.length + notes.length || ''}</span></div>
+    <form class="wb-add" data-form="wb-add" autocomplete="off"><input name="text" maxlength="120" placeholder="Type a task, press Enter" aria-label="New task"></form>
+    <div class="wb-list">${tasks.map((c) => sticky(`task:${c.id}`, c.name, 'gold', c.section !== 'Tasks' ? c.section : '')).join('')}
+      ${notes.map((n) => sticky(`note:${n.id}`, n.text.split('\n')[0], n.color, 'note')).join('')}
+      ${!tasks.length && !notes.length ? '<p class="wempty">Nothing undated. Type a task above, then drag it onto a day.</p>' : ''}</div>
+    <p class="help">${wbPick ? '<b>Now tap a day</b> to place it, or tap it again to cancel.' : 'Drag a task onto a day to give it that date. On a phone: tap it, then tap a day. Drag a task from a day back here to undate it.'}</p>
+  </aside>`;
+}
+function planHtml() {
+  const wk = planWk || currentWeekKey(), w = getWeek(wk);
+  const cur = wk === currentWeekKey();
+  return `
+    <header class="top">${topBar({ left: '<button class="icon-btn" data-act="plan-week" data-d="-1" aria-label="Previous week">‹</button>',
+      label: cur ? 'This week' : weekLabel(wk), title: weekRange(wk), titleAct: cur ? '' : 'data-act="plan-week" data-d="0"',
+      right: '<button class="icon-btn" data-act="plan-week" data-d="1" aria-label="Next week">›</button>' })}
+      <div class="plan-links"><a href="#/today">Today</a><a href="#/cal">Full calendar</a><a href="#/board">Notes board</a>
+        <span class="plan-show">Show:${PLAN_EXTRAS.map(([k, l]) => `<button class="mini-btn ${planExtras[k] ? 'on' : ''}" data-act="plan-extra" data-k="${k}" aria-pressed="${!!planExtras[k]}">${l}</button>`).join('')}</span></div>
+    </header>
+    <div class="plan">
+      <div class="plan-days" data-section="Week">${planWeeklyHtml(wk, w)}${DAY_NAMES.map((_, i) => planDayHtml(wk, w, i)).join('')}</div>
+      ${whiteboardColHtml()}
+    </div>`;
+}
+
+// Dates for one-off tasks: give one a day, or take its day away (back to the whiteboard).
+function setTaskDate(id, date) {
+  const c = state.commitments.find((x) => x.id === id && x.freq === 'once');
+  if (!c || c.date === date) return;
+  const old = c.date;
+  if (old && !date) {
+    const w = state.weeks[weekOf(old)], it = w && w.items[id];
+    if (it && hasData(it)) { toast('It’s already ticked off, so it stays on its day'); render(); return; }
+    if (w) delete w.items[id];
+  } else if (old && date) moveOnceItem(id, old, date);
+  c.date = date; c.tbc = !date;
+  save(); render();
+  toast(date ? `On ${fmtShort(date)}` : 'Back on the whiteboard, no date');
+}
+function placeOnDay(key, date) {
+  wbPick = null;
+  const [kind, id] = String(key).split(':');
+  if (kind === 'task') { setTaskDate(id, date); return; }
+  const n = state.notes.find((x) => x.id === id);
+  if (!n) return;
+  n.date = date; // a sticky placed on a day becomes a task on that day
+  noteToTask(id);
+}
+function wbAdd(form) {
+  const text = String(new FormData(form).get('text') || '').trim();
+  if (!text) return;
+  state.commitments.push(normaliseCommitment(newCommitment({ name: text.slice(0, 120), section: 'Tasks', freq: 'once', kind: 'task', date: null, hours: 0.5, timeUnit: 'min', order: nextOrder() })));
+  renumber(); save(); render();
+  const box = $app.querySelector('form[data-form="wb-add"] input');
+  if (box) box.focus();
+}
+function wbRemove(key) {
+  const [kind, id] = String(key).split(':');
+  if (kind === 'task') {
+    const c = state.commitments.find((x) => x.id === id);
+    if (!c || !confirm(`Delete “${c.name}”?`)) return;
+    removeCommitment(id); renumber();
+  } else {
+    if (!confirm('Delete this note?')) return;
+    state.notes = state.notes.filter((x) => x.id !== id);
+  }
+  if (wbPick === key) wbPick = null;
+  save(); render();
+}
+
+// Dragging on the dashboard: a whiteboard task or a one-off floats with the pointer onto a day (or back to
+// the whiteboard). A tap without dragging picks a whiteboard item up, for placing with a second tap.
+let wDrag = null, wNoClick = 0;
+// the browser's own "drag this link" would cancel ours
+document.addEventListener('dragstart', (e) => { if (e.target.closest && e.target.closest('[data-wdrag]')) e.preventDefault(); });
+document.addEventListener('click', (e) => { if (Date.now() - wNoClick < 400 && e.target.closest && e.target.closest('[data-wdrag]')) { e.preventDefault(); e.stopPropagation(); } }, true);
+document.addEventListener('pointerdown', (e) => {
+  if (e.button > 0 || route.tab !== 'plan') return;
+  const el = e.target.closest('[data-wdrag]');
+  if (!el || e.target.closest('button, input')) return; // the task's name (a link) is a handle too: a plain click still opens it
+  wDrag = { el, key: el.dataset.wdrag, sx: e.clientX, sy: e.clientY, moved: false };
+  el.setPointerCapture(e.pointerId);
+  if (!e.target.closest('a')) e.preventDefault();
+});
+const wDropAt = (x, y) => document.elementsFromPoint(x, y).map((el) => el.closest && el.closest('[data-wday], [data-wb]')).find(Boolean) || null;
+document.addEventListener('pointermove', (e) => {
+  const d = wDrag;
+  if (!d) return;
+  if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 6) return;
+  d.moved = true;
+  if (!d.ghost) {
+    d.ghost = Object.assign(document.createElement('div'), { className: 'pcard-ghost c-amber', textContent: (d.el.querySelector('.wname, span') || d.el).textContent.trim() });
+    document.body.appendChild(d.ghost);
+    d.el.classList.add('lifted');
+    d.scroll = setInterval(() => { if (d.y < 70) window.scrollBy(0, -14); else if (d.y > innerHeight - 70) window.scrollBy(0, 14); }, 16);
+  }
+  d.x = e.clientX; d.y = e.clientY;
+  d.ghost.style.transform = `translate(${e.clientX - 60}px, ${e.clientY - 20}px)`;
+  const t = wDropAt(e.clientX, e.clientY);
+  if (t !== d.target) { if (d.target) d.target.classList.remove('drop-on'); d.target = t; if (t) t.classList.add('drop-on'); }
+});
+function endWDrag(d) { clearInterval(d.scroll); if (d.ghost) d.ghost.remove(); if (d.target) d.target.classList.remove('drop-on'); d.el.classList.remove('lifted'); }
+document.addEventListener('pointerup', (e) => {
+  const d = wDrag;
+  wDrag = null;
+  if (!d) return;
+  endWDrag(d);
+  if (d.moved) { wNoClick = Date.now(); } // the click that ends a drag mustn't open the task
+  if (!d.moved) { // a tap: pick a whiteboard item up (or put it down again)
+    if (d.el.closest('[data-wb]')) { wbPick = wbPick === d.key ? null : d.key; render(); }
+    return;
+  }
+  const t = wDropAt(e.clientX, e.clientY);
+  if (t && t.dataset.wday) placeOnDay(d.key, t.dataset.wday);
+  else if (t && t.hasAttribute('data-wb') && d.key.startsWith('task:')) setTaskDate(d.key.slice(5), null);
+  else render();
+});
+document.addEventListener('pointercancel', () => { if (wDrag) { endWDrag(wDrag); wDrag = null; } });
+
+// ---------- Home: the donut ----------
+// The whole of I Commit! as one ring. The centre is the week (the dashboard above); around it, a slice
+// for each area, filled as far as this week's progress there. Click one to go in. Inside the app the
+// ring stays as a small floating donut that opens when you point at it (or tap it on a phone).
+const HOME_AREAS = [
+  { key: 'routine', name: 'Routine', href: '#/routine', tabs: ['routine'], color: 'green' },
+  { key: 'academics', name: 'Academics', href: '#/academics', tabs: ['academics'], color: 'blue' },
+  { key: 'apps', name: 'Career', href: '#/apps', tabs: ['apps'], color: 'amber' },
+  { key: 'gallery', name: 'Projects', href: '#/gallery', tabs: ['gallery'], color: 'purple' },
+  { key: 'buddy', name: 'Work Buddy', href: '#/buddy', tabs: ['buddy'], color: 'coral' },
+  { key: 'commitments', name: 'All', href: '#/commitments', tabs: ['commitments'], color: 'gray' },
+];
+const CENTRE_TABS = ['plan', 'today', 'cal'];
+// What each slice says, and how full it is (null = no fill, just the slice).
+function areaStatus(key) {
+  const wk = currentWeekKey(), w = getWeek(wk), end = addDaysISO(wk, 6), today = todayISO();
+  try {
+    if (key === 'routine') {
+      const s = weekStats(w, { routine: true });
+      return s.total ? { pct: s.pct, text: `${Math.round(s.pct * 100)}% of this week’s routines` } : { pct: null, text: 'No routines yet' };
+    }
+    if (key === 'academics') {
+      if (acad.conn !== true) return { pct: null, text: 'Connect Moodle' };
+      const cs = (acad.courses || []).filter((m) => acad.tracked.has(m.id)).map((m) => acadCourse(m.id)).filter(Boolean);
+      if (!cs.length) return { pct: null, text: 'No courses tracked' };
+      const done = cs.reduce((n, c) => n + c.doneSoFar, 0), all = cs.reduce((n, c) => n + c.totalSoFar, 0);
+      const worst = [...cs].sort((a, b) => b.behind - a.behind)[0];
+      return { pct: all ? done / all : null, text: worst.behind ? `${worst.meta.shortname || worst.meta.fullname} · ${worst.behind} week${worst.behind === 1 ? '' : 's'} behind` : 'On track in every course' };
+    }
+    if (key === 'apps') {
+      const ev = appEvents().filter((e) => e.kind !== 'open' && e.date >= today && e.date <= end);
+      return { pct: null, text: ev.length ? `${ev.length} deadline${ev.length === 1 ? '' : 's'} this week` : 'No deadlines this week' };
+    }
+    if (key === 'gallery') {
+      if (!projects) return { pct: null, text: sbUser ? 'Projects' : 'Sign in to see projects' };
+      const live = projects.filter((p) => noTime(p) || (projSpan(p)[0] <= today && today <= projSpan(p)[1]));
+      const next = projects.flatMap((p) => (noTime(p) ? [] : p.meetings.map((m) => ({ p, m, d: meetingDate(p, m) })))).filter((x) => x.d >= today).sort((a, b) => a.d.localeCompare(b.d))[0];
+      const steps = live.flatMap((p) => p.steps), done = steps.filter((s) => s.done).length;
+      return { pct: steps.length ? done / steps.length : null, text: next ? `Next: ${next.m.title} · ${fmtShort(next.d)}` : `${live.length} active project${live.length === 1 ? '' : 's'}` };
+    }
+    if (key === 'buddy') {
+      if (!buddyView) return { pct: null, text: 'No pact yet' };
+      const me = buddyView.members.find((m) => m.me), others = buddyView.members.filter((m) => !m.me);
+      const days = me ? Array.from({ length: 7 }, (_, i) => addDaysISO(wk, i)).filter((d) => d <= today && me.days[d]).length : 0;
+      const shown = Math.min(7, Math.round((parseISO(today) - parseISO(wk)) / 864e5) + 1);
+      return { pct: shown ? days / shown : null, text: others.length ? `${others.map((m) => m.name).join(', ')} ${others.every((m) => m.days[today]) ? 'ticked today ✓' : 'not yet today'}` : buddyView.name };
+    }
+    if (key === 'commitments') {
+      const n = state.commitments.filter((c) => !c.archived).length;
+      return { pct: null, text: `${n} commitment${n === 1 ? '' : 's'}` };
+    }
+  } catch { /* data still loading */ }
+  return { pct: null, text: '' };
+}
+function weekCentre() {
+  const wk = currentWeekKey(), w = getWeek(wk), s = weekStats(w), ds = dayStats(w, todayIndex(wk));
+  return { pct: s.pct, left: Math.max(0, ds.total - ds.done) };
+}
+function donutSvg({ labels = true, current = null, big = false } = {}) {
+  const n = HOME_AREAS.length, R = 104, r = 50, gap = 1.8;
+  const pt = (a, rad) => [(Math.sin((a * Math.PI) / 180) * rad).toFixed(2), (-Math.cos((a * Math.PI) / 180) * rad).toFixed(2)];
+  const sector = (a0, a1, R1, r1) => {
+    const large = a1 - a0 > 180 ? 1 : 0, [x0, y0] = pt(a0, R1), [x1, y1] = pt(a1, R1), [x2, y2] = pt(a1, r1), [x3, y3] = pt(a0, r1);
+    return `M${x0} ${y0}A${R1} ${R1} 0 ${large} 1 ${x1} ${y1}L${x2} ${y2}A${r1} ${r1} 0 ${large} 0 ${x3} ${y3}Z`;
+  };
+  const slices = HOME_AREAS.map((a, i) => {
+    const a0 = (i * 360) / n + gap / 2, a1 = ((i + 1) * 360) / n - gap / 2, mid = (a0 + a1) / 2;
+    const st = areaStatus(a.key), [ink, fill, mid2, soft] = PROJ_COLORS[a.color];
+    const prog = st.pct != null && st.pct > 0 ? `<path class="dprog" d="${sector(a0, a0 + (a1 - a0) * Math.min(1, st.pct), R, r)}" fill="${mid2}"/>` : '';
+    const [tx, ty] = pt(mid, (R + r) / 2);
+    const on = current === a.key;
+    return `<a href="${a.href}" class="dslice ${on ? 'on' : ''}" aria-label="${escapeHtml(`${a.name}: ${st.text}`)}">
+      <path class="dbase" d="${sector(a0, a1, R, r)}" fill="${soft}"/>${prog}
+      ${on ? `<path class="dring" d="${sector(a0, a1, R + 6, R + 2)}" fill="${mid2}"/>` : ''}
+      ${labels ? `<text x="${tx}" y="${ty}" class="dlabel ${st.pct != null && st.pct > 0.55 ? 'light' : ''}" fill="${ink}">${a.name.includes(' ')
+        ? a.name.split(' ').map((w2, k) => `<tspan x="${tx}" dy="${k ? '1.15em' : '-0.55em'}">${escapeHtml(w2)}</tspan>`).join('') : escapeHtml(a.name)}</text>` : ''}</a>`;
+  }).join('');
+  const c = weekCentre(), onC = current === 'centre';
+  return `<svg class="donut ${big ? 'big' : ''}" viewBox="-112 -112 224 224" role="img" aria-label="I Commit! areas">
+    ${slices}
+    <a href="#/plan" class="dcentre ${onC ? 'on' : ''}" aria-label="This week">
+      <circle r="${r - 4}"/>
+      <text y="-13" class="dc-l">This week</text><text y="6" class="dc-b">${Math.round(c.pct * 100)}%</text>
+      <text y="23" class="dc-s">${c.left ? `${c.left} left today` : 'all done today'}</text></a>
+  </svg>`;
+}
+function homeHtml() {
+  const areas = HOME_AREAS.map((a) => {
+    const st = areaStatus(a.key), [ink, fill, mid, soft] = PROJ_COLORS[a.color];
+    return `<a class="harea" href="${a.href}" style="--hc:${mid};--hs:${soft};--hk:${ink}">
+      <span class="hdot"></span><b>${a.name}</b><span>${escapeHtml(st.text)}</span>
+      ${st.pct != null ? `<i class="hbar2"><i style="width:${Math.round(st.pct * 100)}%"></i></i>` : ''}</a>`;
+  }).join('');
+  if (sbUser) { if (projects === null) loadProjects(); acadEnsure(); }
+  return `
+    <header class="top home-top"><div class="home-brand"><img src="icons/icon-192.png" alt=""><b>I Commit!</b></div>
+      <p class="amuted">${fmtDay(startOfToday(), { weekday: 'long', day: 'numeric', month: 'long' })}</p></header>
+    <section class="home" data-section="Overview">
+      <div class="home-donut">${donutSvg({ big: true })}<p class="help center">Tap the centre for your week, or a slice to go there.</p></div>
+      <div class="home-areas"><a class="harea centre" href="#/plan"><span class="hdot"></span><b>This week</b><span>Your week, day by day, with the whiteboard</span></a>${areas}</div>
+    </section>
+    <nav class="home-links"><a href="#/today">Today</a><a href="#/cal">Calendar</a><a href="#/calendar">Calendars</a><a href="#/reminders">Reminders</a>
+      <a href="#/account">${state.account ? 'Account' : 'Sign in'}</a><a href="#/widget">Phone widget</a><button data-act="export-xlsx">Export to Excel</button><button data-act="menu">More…</button></nav>`;
+}
+// The floating mini-donut on every other page.
+function floatDonutHtml() {
+  if (route.tab === 'home') return '';
+  const current = CENTRE_TABS.includes(route.tab) ? 'centre' : (HOME_AREAS.find((a) => a.tabs.includes(route.tab)) || {}).key || null;
+  return `<nav class="fdonut" aria-label="Go to another part of I Commit!">${donutSvg({ current })}<a class="fd-home" href="#/home">Overview</a></nav>`;
+}
+// On a touch screen there's no hover: the first tap opens it, a tap outside closes it.
+document.addEventListener('click', (e) => {
+  const fd = e.target.closest && e.target.closest('.fdonut');
+  const open = document.querySelector('.fdonut.open');
+  if (open && !fd) { open.classList.remove('open'); e.preventDefault(); e.stopPropagation(); return; } // closing shouldn't also tap what's underneath
+  if (fd && !fd.classList.contains('open') && window.matchMedia('(hover: none)').matches) { e.preventDefault(); e.stopPropagation(); fd.classList.add('open'); }
+}, true);
+
 // ---------- Sheets (bottom modals) ----------
 let sheetCtx = null;
 function openSheet(html, ctx = null) {
@@ -6538,6 +6850,10 @@ document.addEventListener('click', (e) => {
     case 'step-delete': removeFromSheet('project_steps'); break;
     case 'meet-new': openMeetSheet(null, btn.dataset.day || null); break;
     case 'step-toggle': toggleStep(btn.dataset.id); break;
+    case 'plan-week': { const d = +btn.dataset.d; planWk = d === 0 ? null : addDaysISO(planWk || currentWeekKey(), d * 7); if (planWk === currentWeekKey()) planWk = null; render(); break; }
+    case 'plan-extra': planExtras[btn.dataset.k] = !planExtras[btn.dataset.k]; try { localStorage.setItem('planExtras', JSON.stringify(planExtras)); } catch {} render(); break;
+    case 'wday-place': if (wbPick) placeOnDay(wbPick, btn.dataset.day); break;
+    case 'wb-remove': wbRemove(btn.dataset.key); break;
     case 'acad-tick': acadTick(+btn.dataset.id, +btn.dataset.course); break;
     case 'acad-refresh': acad.dbMissing = false; acadLoad({ force: true }); break;
     case 'acad-disconnect': acadDisconnect(); break;
@@ -6834,6 +7150,7 @@ document.addEventListener('submit', (e) => {
   else if (form === 'project') saveProjectForm(e.target);
   else if (form === 'step') saveStep(e.target);
   else if (form === 'step-quick') quickStep(e.target);
+  else if (form === 'wb-add') wbAdd(e.target);
   else if (form === 'acad-connect') acadConnect(e.target);
   else if (form === 'acad-course') acadSaveCourse(e.target);
   else if (form === 'ref') addRef(e.target);
@@ -6902,7 +7219,8 @@ function backToToday() {
   viewKey = currentWeekKey();
   calViewDay = todayISO();
   boardWeek = null;
-  if (route.tab !== 'today' || route.id || route.page) location.hash = '#/today';
+  planWk = null;
+  if (route.tab !== 'home' || route.id || route.page) location.hash = '#/home';
 }
 document.addEventListener('visibilitychange', () => {
   if (!state) return; // still loading saved data
