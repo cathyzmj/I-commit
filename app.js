@@ -545,17 +545,18 @@ function parseHash() {
   if (a === 'academics') return /^\d+$/.test(b || '') ? { tab: 'academics', page: 'course', courseId: +b } : { tab: 'academics' };
   if (a === 'gallery' && b) return { tab: 'gallery', page: b === 'new' || c === 'edit' ? 'project-edit' : 'project', projId: b };
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
-  return { tab: ['home', 'plan', 'today', 'routine', 'cal', 'buddy', 'gallery', 'academics', 'commitments'].includes(a) ? a : 'home' };
+  return { tab: ['home', 'plan', 'today', 'routine', 'cal', 'buddy', 'gallery', 'academics', 'commitments'].includes(a) ? a : 'plan' };
 }
-// The app always opens on Home, the donut (an invite link, or a deadline notification, still opens its page). A refresh stays where you were.
+// The app always opens on This week, at today (an invite link, or a deadline notification, still opens its page). A refresh stays where you were.
 const isReload = (() => { try { return performance.getEntriesByType('navigation')[0].type === 'reload'; } catch { return false; } })();
-if (!isReload && !/^#\/(join|apps)\//.test(location.hash) && location.hash && location.hash !== '#/home') history.replaceState(null, '', '#/home');
+if (!isReload && !/^#\/(join|apps)\//.test(location.hash) && location.hash && location.hash !== '#/plan') history.replaceState(null, '', '#/plan');
 let route = parseHash();
 window.addEventListener('hashchange', () => {
   route = parseHash();
   treeDraft = null;
   editingCard = null;
   wbPick = null;
+  planJump = route.tab === 'plan';
   if (route.page !== 'tree-edit') treeNewCourse = null;
   if (route.tab === 'buddy') refreshBuddy();
   if (route.tab === 'gallery' && projects !== null && !route.page) loadProjects();
@@ -574,7 +575,7 @@ window.addEventListener('hashchange', () => {
 // Pages that are mostly a form being filled in: background refreshes leave them alone, so
 // switching to another window and back never wipes what you've typed.
 const formOpen = () => !!(route.edit || /-edit$/.test(route.page || '') || route.page === 'tests' || (route.tab === 'academics' && !route.page && acad.conn === false));
-function goBack(fallback = '#/home') {
+function goBack(fallback = '#/plan') {
   if (history.length > 1) history.back(); else location.hash = fallback;
 }
 
@@ -613,6 +614,10 @@ function render() {
   $app.dataset.tab = route.id || route.page ? 'page' : route.tab;
   $app.dataset.page = route.page || '';
   $app.innerHTML = html + tabBarHtml() + floatDonutHtml(); // the floating donut replaces the sidebar
+  if (route.tab === 'plan' && planJump) { // arriving on This week: bring today into view
+    planJump = false;
+    setTimeout(() => { const t = $app.querySelector('.wday.today'); if (t) t.scrollIntoView({ block: 'center' }); }, 30); // after the page's own jump to the top
+  }
   fillSideSections();
   if (route.page === 'knowledge' || route.page === 'course') initMaps();
   if (route.page === 'board') layoutBoard();
@@ -3578,7 +3583,7 @@ function submitReview(form) {
   save();
   if (needSync) syncAll({ force: true });
   toast(imported ? `Importing ${imported} series` : 'Skipped');
-  location.hash = '#/home';
+  location.hash = '#/plan';
 }
 
 function reviewBannerHtml() {
@@ -4171,7 +4176,7 @@ async function joinWithKey(key, { done = 'Synced with your other device' } = {})
   }
   save();
   toast(done);
-  location.hash = '#/home';
+  location.hash = '#/plan';
   refreshBuddy();
 }
 
@@ -4325,7 +4330,7 @@ function signOut() {
   state = defaultState();
   recordHashes = null;
   save();
-  location.hash = '#/home';
+  location.hash = '#/plan';
   render();
   toast('Signed out');
 }
@@ -6255,6 +6260,7 @@ document.addEventListener('toggle', (e) => {
 // on the right. Drag a whiteboard task onto a day to give it that date (or tap it, then tap a day); drag a
 // one-off back to the whiteboard to undate it. Ticking here is the same tick as on Today and the Calendar.
 let planWk = null;          // the week shown (null = this week)
+let planJump = true;        // scroll to today the next time This week is drawn
 let wbPick = null;          // a whiteboard item picked up by tapping ("task:id" / "note:id"), waiting for a day
 let planExtras = { projects: true, apps: true, study: true };
 try { planExtras = { ...planExtras, ...JSON.parse(localStorage.getItem('planExtras') || '{}') }; } catch {}
@@ -6594,6 +6600,20 @@ document.addEventListener('pointerup', (e) => {
 });
 document.addEventListener('pointercancel', () => { if (fdDrag) { fdDrag.fd.classList.remove('dragging'); fdDrag = null; } });
 window.addEventListener('resize', () => { const fd = document.querySelector('.fdonut'); if (fd && fdPos) fd.setAttribute('style', fdPlace().replace(/^style="|"$/g, '')); });
+// With a mouse it opens when the pointer rests on its middle (not its rim) for a moment, and closes once the
+// pointer has clearly left the circle. On a touch screen the first tap opens it and a tap outside closes it.
+let fdTimer = null;
+document.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch' || fdDrag) return;
+  const fd = document.querySelector('.fdonut');
+  if (!fd) return;
+  const r = fd.getBoundingClientRect(), dist = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+  if (!fd.classList.contains('open')) {
+    const middle = dist < r.width * 0.3; // the inner part of the button only
+    if (middle && !fdTimer) fdTimer = setTimeout(() => { fdTimer = null; fd.classList.add('open'); }, 160);
+    else if (!middle && fdTimer) { clearTimeout(fdTimer); fdTimer = null; }
+  } else if (dist > r.width / 2 + 14) fd.classList.remove('open');
+}, { passive: true });
 // On a touch screen there's no hover: the first tap opens it, a tap outside closes it.
 document.addEventListener('click', (e) => {
   if (Date.now() - fdNoClick < 400 && e.target.closest && e.target.closest('.fdonut')) { e.preventDefault(); e.stopPropagation(); return; }
@@ -7286,7 +7306,8 @@ function backToToday() {
   calViewDay = todayISO();
   boardWeek = null;
   planWk = null;
-  if (route.tab !== 'home' || route.id || route.page) location.hash = '#/home';
+  planJump = true;
+  if (route.tab !== 'plan' || route.id || route.page) location.hash = '#/plan'; else render();
 }
 document.addEventListener('visibilitychange', () => {
   if (!state) return; // still loading saved data

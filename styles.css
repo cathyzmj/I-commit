@@ -1354,7 +1354,7 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, 
 .home-links a:hover, .home-links button:hover { color: var(--ink); text-decoration: underline; }
 
 /* The floating mini-donut: small in a corner, opens when you point at it (or tap it) */
-/* Clear glass, round: a 58px glass button that opens into a 310px glass circle. It can be dragged anywhere
+/* Clear glass, round: a 58px glass button that opens into a 310px glass circle; the slices keep their full colour. It can be dragged anywhere
    (the spot is remembered), and opens towards the middle of the screen from wherever it sits. The glass is
    see-through (a light blur, no colour of its own), with a bright rim like a lens. */
 .fdonut { position: fixed; right: 18px; bottom: 18px; z-index: 40; width: 58px; height: 58px; border-radius: 50%; padding: 5px; touch-action: none; user-select: none; -webkit-user-select: none;
@@ -1364,25 +1364,25 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, 
   box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.9), inset 0 -6px 14px rgba(255, 255, 255, 0.18), 0 8px 22px -12px rgba(30, 40, 60, 0.35);
   transition: width .22s ease, height .22s ease, padding .22s, box-shadow .22s; }
 .fdonut .donut { width: 100%; max-width: none; }
-.fdonut .donut .dbase { fill-opacity: .34; stroke: rgba(255, 255, 255, 0.85); stroke-width: .8; }
-.fdonut .donut .dprog { fill-opacity: .6; }
-.fdonut .donut .dcentre circle { fill: rgba(255, 255, 255, 0.14); stroke: rgba(255, 255, 255, 0.85); stroke-width: 1; }
-.fdonut .donut .dcentre.on circle { fill: rgba(255, 236, 140, 0.22); stroke: #e6b800; }
+.fdonut .donut .dbase { fill-opacity: 1; stroke: rgba(255, 255, 255, 0.9); stroke-width: .8; }
+.fdonut .donut .dprog { fill-opacity: 1; }
+.fdonut .donut .dcentre circle { fill: rgba(255, 255, 255, 0.92); stroke: rgba(255, 255, 255, 0.95); stroke-width: 1; }
+.fdonut .donut .dcentre.on circle { fill: #fff8d6; stroke: #e6b800; }
 .fdonut .donut .dlabel { font-size: 10px; paint-order: stroke; stroke: rgba(255, 255, 255, 0.7); stroke-width: 2.6px; stroke-linejoin: round; }
 .fdonut .donut .dcentre text { paint-order: stroke; stroke: rgba(255, 255, 255, 0.7); stroke-width: 2.4px; stroke-linejoin: round; }
 .fdonut .dlabel, .fdonut .dcentre text, .fdonut .fd-home, .fdonut .fd-grip { opacity: 0; transition: opacity .15s; }
 .fdonut .fd-home { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); font-size: 11.5px; font-weight: 700; color: var(--accent); text-decoration: none; pointer-events: none;
   text-shadow: 0 0 4px rgba(255, 255, 255, 0.9); }
 .fdonut .fd-grip { position: absolute; top: 3px; left: 50%; transform: translateX(-50%); font-size: 12px; letter-spacing: 1px; color: var(--muted); cursor: grab; pointer-events: none; }
-.fdonut:hover, .fdonut:focus-within, .fdonut.open { width: 310px; height: 310px; padding: 22px;
+.fdonut:focus-within, .fdonut.open { width: 310px; height: 310px; padding: 22px;
   box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.9), inset 0 -18px 36px rgba(255, 255, 255, 0.16), 0 24px 50px -24px rgba(30, 40, 60, 0.45); }
-.fdonut:hover .dlabel, .fdonut:hover .dcentre text, .fdonut:hover .fd-home, .fdonut:hover .fd-grip, .fdonut:focus-within .dlabel, .fdonut:focus-within .dcentre text,
+.fdonut:focus-within .dlabel, .fdonut:focus-within .dcentre text,
 .fdonut:focus-within .fd-home, .fdonut:focus-within .fd-grip, .fdonut.open .dlabel, .fdonut.open .dcentre text, .fdonut.open .fd-home, .fdonut.open .fd-grip { opacity: 1; pointer-events: auto; }
-.fdonut:not(:hover):not(:focus-within):not(.open) .dslice, .fdonut:not(:hover):not(:focus-within):not(.open) .dcentre { pointer-events: none; }
-.fdonut:not(:hover):not(:focus-within):not(.open) .dring { display: none; } /* the "you are here" ring only when open */
-.fdonut:not(:hover):not(:focus-within):not(.open) { cursor: grab; }
+.fdonut:not(:focus-within):not(.open) .dslice, .fdonut:not(:focus-within):not(.open) .dcentre { pointer-events: none; }
+.fdonut:not(:focus-within):not(.open) .dring { display: none; } /* the "you are here" ring only when open */
+.fdonut:not(:focus-within):not(.open) { cursor: grab; }
 /* while being dragged it stays a small button that follows the pointer */
-.fdonut.dragging, .fdonut.dragging:hover { width: 58px; height: 58px; padding: 5px; cursor: grabbing; transition: none; }
+.fdonut.dragging { width: 58px; height: 58px; padding: 5px; cursor: grabbing; transition: none; }
 .fdonut.dragging .dlabel, .fdonut.dragging .dcentre text, .fdonut.dragging .fd-home, .fdonut.dragging .fd-grip, .fdonut.dragging .dring { opacity: 0; display: none; }
 .fdonut.dragging .dslice, .fdonut.dragging .dcentre { pointer-events: none; }
 @media (max-width: 899px) { .fdonut { bottom: calc(76px + env(safe-area-inset-bottom)); right: 12px; width: 50px; height: 50px; } .fdonut.dragging { width: 50px; height: 50px; } }
