@@ -6527,10 +6527,55 @@ function homeHtml() {
 function floatDonutHtml() {
   if (route.tab === 'home') return '';
   const current = CENTRE_TABS.includes(route.tab) ? 'centre' : (HOME_AREAS.find((a) => a.tabs.includes(route.tab)) || {}).key || null;
-  return `<nav class="fdonut" aria-label="Go to another part of I Commit!">${donutSvg({ current })}<a class="fd-home" href="#/home">Overview</a></nav>`;
+  return `<nav class="fdonut" aria-label="Go to another part of I Commit!" ${fdPlace()}>${donutSvg({ current })}<span class="fd-grip" title="Drag to move" aria-hidden="true">⠿</span><a class="fd-home" href="#/home">Overview</a></nav>`;
 }
+// Where you've dragged it to (its centre, kept on this device). It's anchored to the nearest corner so
+// it opens towards the middle of the screen.
+let fdPos = null;
+try { fdPos = JSON.parse(localStorage.getItem('fdonutPos') || 'null'); } catch {}
+function fdPlace() {
+  if (!fdPos) return '';
+  const r = 29, x = Math.min(innerWidth - r - 6, Math.max(r + 6, fdPos.x)), y = Math.min(innerHeight - r - 6, Math.max(r + 6, fdPos.y));
+  const h = x < innerWidth / 2 ? `left:${Math.round(x - r)}px;right:auto` : `right:${Math.round(innerWidth - x - r)}px;left:auto`;
+  const v = y < innerHeight / 2 ? `top:${Math.round(y - r)}px;bottom:auto` : `bottom:${Math.round(innerHeight - y - r)}px;top:auto`;
+  return `style="${h};${v}"`;
+}
+// Dragging it: grab the small button (or the open panel by its edge or the ⠿ grip) and move it anywhere.
+let fdDrag = null, fdNoClick = 0;
+document.addEventListener('pointerdown', (e) => {
+  const fd = e.target.closest && e.target.closest('.fdonut');
+  if (!fd || e.button > 0) return;
+  const small = fd.offsetWidth < 80;
+  if (!small && e.target.closest('.dslice, .dcentre, .fd-home')) return; // open: the slices are links
+  fdDrag = { fd, sx: e.clientX, sy: e.clientY, moved: false };
+  fd.setPointerCapture(e.pointerId);
+  e.preventDefault(); // no text selection while moving it
+});
+document.addEventListener('pointermove', (e) => {
+  const d = fdDrag;
+  if (!d) return;
+  if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 6) return;
+  d.moved = true;
+  d.fd.classList.add('dragging');
+  d.fd.classList.remove('open');
+  const r = d.fd.offsetWidth / 2;
+  Object.assign(d.fd.style, { left: `${e.clientX - r}px`, top: `${e.clientY - r}px`, right: 'auto', bottom: 'auto' });
+});
+document.addEventListener('pointerup', (e) => {
+  const d = fdDrag;
+  fdDrag = null;
+  if (!d || !d.moved) return;
+  fdNoClick = Date.now();
+  fdPos = { x: e.clientX, y: e.clientY };
+  try { localStorage.setItem('fdonutPos', JSON.stringify(fdPos)); } catch {}
+  d.fd.setAttribute('style', fdPlace().replace(/^style="|"$/g, ''));
+  setTimeout(() => d.fd.classList.remove('dragging'), 250);
+});
+document.addEventListener('pointercancel', () => { if (fdDrag) { fdDrag.fd.classList.remove('dragging'); fdDrag = null; } });
+window.addEventListener('resize', () => { const fd = document.querySelector('.fdonut'); if (fd && fdPos) fd.setAttribute('style', fdPlace().replace(/^style="|"$/g, '')); });
 // On a touch screen there's no hover: the first tap opens it, a tap outside closes it.
 document.addEventListener('click', (e) => {
+  if (Date.now() - fdNoClick < 400 && e.target.closest && e.target.closest('.fdonut')) { e.preventDefault(); e.stopPropagation(); return; }
   const fd = e.target.closest && e.target.closest('.fdonut');
   const open = document.querySelector('.fdonut.open');
   if (open && !fd) { open.classList.remove('open'); e.preventDefault(); e.stopPropagation(); return; } // closing shouldn't also tap what's underneath
