@@ -1273,15 +1273,6 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, 
 /* ---------- Academics: the week-by-week board ---------- */
 .pformat.two { grid-template-columns: 1fr 1fr; }
 @media (max-width: 480px) { .pformat.two { grid-template-columns: 1fr; } }
-.astrip { display: flex; gap: 5px; flex-wrap: wrap; margin: 2px 0 10px; }
-.astripw { width: 34px; height: 38px; border-radius: 9px; border: 2px solid var(--line); background: rgba(255, 255, 255, 0.7); padding: 0; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: inherit; color: var(--ink); }
-.astripw b { font-size: 12.5px; }
-.astripw i { width: 14px; height: 5px; border-radius: 3px; background: var(--line); }
-.astripw.full { border-color: var(--accent); } .astripw.full i { background: var(--fill); }
-.astripw.late { border-color: #f4a79d; } .astripw.late i { background: #f4a79d; }
-.astripw.now { border-color: #e6b800; background: rgba(255, 215, 0, 0.3); } .astripw.now i { background: #e6b800; }
-.astripw.ahead { opacity: .6; } .astripw.empty { opacity: .4; }
-.astripw.cur { box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.45); }
 .agroup h3 { display: flex; align-items: baseline; gap: 8px; margin: 14px 2px 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .agroup h3 small { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .aweek { border: 1.5px solid var(--line); border-radius: 14px; margin-bottom: 8px; background: rgba(255, 255, 255, 0.55); overflow: hidden; }
@@ -1363,34 +1354,35 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, 
 .home-links a:hover, .home-links button:hover { color: var(--ink); text-decoration: underline; }
 
 /* The floating mini-donut: small in a corner, opens when you point at it (or tap it) */
-/* Frosted, see-through glass: a 58px button that opens into a 300px panel. It can be dragged anywhere
-   (the spot is remembered), and opens towards the middle of the screen from wherever it sits. */
+/* Clear glass, round: a 58px glass button that opens into a 310px glass circle. It can be dragged anywhere
+   (the spot is remembered), and opens towards the middle of the screen from wherever it sits. The glass is
+   see-through (a light blur, no colour of its own), with a bright rim like a lens. */
 .fdonut { position: fixed; right: 18px; bottom: 18px; z-index: 40; width: 58px; height: 58px; border-radius: 50%; padding: 5px; touch-action: none; user-select: none; -webkit-user-select: none;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  background: rgba(255, 255, 255, 0.16); border: 1px solid rgba(255, 255, 255, 0.6);
-  -webkit-backdrop-filter: blur(14px) saturate(1.8); backdrop-filter: blur(14px) saturate(1.8);
-  box-shadow: 0 8px 22px -10px rgba(30, 40, 60, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.65), inset 0 -1px 0 rgba(255, 255, 255, 0.15);
-  transition: width .22s ease, height .22s ease, border-radius .22s, padding .22s, box-shadow .22s, background .22s; }
+  background: rgba(255, 255, 255, 0.07); border: 1.5px solid rgba(255, 255, 255, 0.8);
+  -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.9), inset 0 -6px 14px rgba(255, 255, 255, 0.18), 0 8px 22px -12px rgba(30, 40, 60, 0.35);
+  transition: width .22s ease, height .22s ease, padding .22s, box-shadow .22s; }
 .fdonut .donut { width: 100%; max-width: none; }
-.fdonut .donut .dbase { fill-opacity: .5; }
-.fdonut .donut .dprog { fill-opacity: .78; }
-.fdonut .donut .dcentre circle { fill: rgba(255, 255, 255, 0.28); stroke: rgba(255, 255, 255, 0.7); }
-.fdonut .donut .dcentre.on circle { fill: rgba(255, 236, 140, 0.35); stroke: #e6b800; }
-.fdonut .donut .dlabel { font-size: 10px; paint-order: stroke; stroke: rgba(255, 255, 255, 0.55); stroke-width: 2.4px; stroke-linejoin: round; }
-.fdonut .donut .dcentre text { paint-order: stroke; stroke: rgba(255, 255, 255, 0.5); stroke-width: 2px; }
+.fdonut .donut .dbase { fill-opacity: .34; stroke: rgba(255, 255, 255, 0.85); stroke-width: .8; }
+.fdonut .donut .dprog { fill-opacity: .6; }
+.fdonut .donut .dcentre circle { fill: rgba(255, 255, 255, 0.14); stroke: rgba(255, 255, 255, 0.85); stroke-width: 1; }
+.fdonut .donut .dcentre.on circle { fill: rgba(255, 236, 140, 0.22); stroke: #e6b800; }
+.fdonut .donut .dlabel { font-size: 10px; paint-order: stroke; stroke: rgba(255, 255, 255, 0.7); stroke-width: 2.6px; stroke-linejoin: round; }
+.fdonut .donut .dcentre text { paint-order: stroke; stroke: rgba(255, 255, 255, 0.7); stroke-width: 2.4px; stroke-linejoin: round; }
 .fdonut .dlabel, .fdonut .dcentre text, .fdonut .fd-home, .fdonut .fd-grip { opacity: 0; transition: opacity .15s; }
-.fdonut .fd-home { position: absolute; bottom: 8px; font-size: 12.5px; font-weight: 650; color: var(--accent); text-decoration: none; pointer-events: none; }
-.fdonut .fd-grip { position: absolute; top: 8px; left: 12px; font-size: 13px; letter-spacing: 1px; color: var(--muted); cursor: grab; pointer-events: none; user-select: none; }
-.fdonut:hover, .fdonut:focus-within, .fdonut.open { width: 300px; height: 330px; border-radius: 26px; padding: 14px 14px 32px;
-  background: rgba(255, 255, 255, 0.2); -webkit-backdrop-filter: blur(22px) saturate(1.9); backdrop-filter: blur(22px) saturate(1.9);
-  box-shadow: 0 22px 50px -20px rgba(30, 40, 60, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.7); }
+.fdonut .fd-home { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); font-size: 11.5px; font-weight: 700; color: var(--accent); text-decoration: none; pointer-events: none;
+  text-shadow: 0 0 4px rgba(255, 255, 255, 0.9); }
+.fdonut .fd-grip { position: absolute; top: 3px; left: 50%; transform: translateX(-50%); font-size: 12px; letter-spacing: 1px; color: var(--muted); cursor: grab; pointer-events: none; }
+.fdonut:hover, .fdonut:focus-within, .fdonut.open { width: 310px; height: 310px; padding: 22px;
+  box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.9), inset 0 -18px 36px rgba(255, 255, 255, 0.16), 0 24px 50px -24px rgba(30, 40, 60, 0.45); }
 .fdonut:hover .dlabel, .fdonut:hover .dcentre text, .fdonut:hover .fd-home, .fdonut:hover .fd-grip, .fdonut:focus-within .dlabel, .fdonut:focus-within .dcentre text,
 .fdonut:focus-within .fd-home, .fdonut:focus-within .fd-grip, .fdonut.open .dlabel, .fdonut.open .dcentre text, .fdonut.open .fd-home, .fdonut.open .fd-grip { opacity: 1; pointer-events: auto; }
 .fdonut:not(:hover):not(:focus-within):not(.open) .dslice, .fdonut:not(:hover):not(:focus-within):not(.open) .dcentre { pointer-events: none; }
 .fdonut:not(:hover):not(:focus-within):not(.open) .dring { display: none; } /* the "you are here" ring only when open */
 .fdonut:not(:hover):not(:focus-within):not(.open) { cursor: grab; }
 /* while being dragged it stays a small button that follows the pointer */
-.fdonut.dragging, .fdonut.dragging:hover { width: 58px; height: 58px; border-radius: 50%; padding: 5px; cursor: grabbing; transition: none; }
+.fdonut.dragging, .fdonut.dragging:hover { width: 58px; height: 58px; padding: 5px; cursor: grabbing; transition: none; }
 .fdonut.dragging .dlabel, .fdonut.dragging .dcentre text, .fdonut.dragging .fd-home, .fdonut.dragging .fd-grip, .fdonut.dragging .dring { opacity: 0; display: none; }
 .fdonut.dragging .dslice, .fdonut.dragging .dcentre { pointer-events: none; }
 @media (max-width: 899px) { .fdonut { bottom: calc(76px + env(safe-area-inset-bottom)); right: 12px; width: 50px; height: 50px; } .fdonut.dragging { width: 50px; height: 50px; } }
@@ -1466,3 +1458,56 @@ li.wb { padding: 3px 4px; }
 @media (max-width: 860px) { .wbcol { max-height: none; } .wb-list { flex-direction: row; overflow-x: auto; padding-bottom: 4px; } .wsticky { flex: 0 0 160px; } }
 
 .home-donut .help.center { text-align: center; }
+
+/* ---------- Academics course page: week overview on the left, then "do now" and a folded reference column ---------- */
+.acourse { display: grid; grid-template-columns: 220px minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px; align-items: start; margin: 10px 0 90px; }
+.acourse > .card, .acmain > .card, .acref > .card { margin: 0; }
+.acmain, .acref { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.acside { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 14px; }
+.acs-name { font-size: 18px; }
+.acs-full { color: var(--muted); font-size: 12.5px; margin-top: -6px; }
+.acside .achip { align-self: flex-start; }
+.acs-prog { display: flex; flex-direction: column; gap: 3px; }
+.acs-prog b { font-size: 22px; }
+.acs-prog span { font-size: 12px; color: var(--muted); }
+.acs-weeks { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.acs-w { display: grid; grid-template-columns: 34px 1fr auto auto; align-items: center; gap: 7px; width: 100%; border: 0; border-radius: 9px; padding: 5px 7px; background: none; font: inherit; color: var(--ink); cursor: pointer; text-align: left; }
+.acs-w:hover { background: rgba(255, 255, 255, 0.65); }
+.acs-w b { font-size: 12.5px; }
+.acs-w small { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.acs-w em { font-style: normal; font-size: 10.5px; font-weight: 700; padding: 0 6px; border-radius: 99px; background: rgba(255, 215, 0, 0.45); color: #633806; }
+.acs-w em.late { background: rgba(250, 128, 114, 0.35); color: #712b13; }
+.acs-bar { height: 6px; border-radius: 99px; background: rgba(27, 31, 29, 0.08); overflow: hidden; }
+.acs-bar i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+.acs-w.late .acs-bar i { background: #f08a7c; }
+.acs-w.full .acs-bar i { background: var(--fill); }
+.acs-w.ahead, .acs-w.empty { opacity: .6; }
+.acs-w.cur { background: rgba(255, 248, 214, 0.9); box-shadow: inset 0 0 0 1.5px #e6b800; }
+.acs-links { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 12.5px; }
+.acs-links a, .acs-links button { color: var(--accent); text-decoration: none; background: none; border: 0; padding: 2px 0; font: inherit; font-weight: 600; cursor: pointer; }
+.ainfo { font-size: 12px; color: var(--muted); }
+.ainfo summary { cursor: pointer; }
+.ainfo p { margin: 6px 0 0; line-height: 1.45; }
+/* the reference column: every part folded until you open it */
+.afold { padding: 0; }
+.afold > summary { display: flex; align-items: baseline; gap: 8px; padding: 13px 16px; cursor: pointer; list-style: none; }
+.afold > summary::-webkit-details-marker { display: none; }
+.afold > summary::before { content: '▸'; color: var(--muted); transition: transform .15s; }
+.afold[open] > summary::before { transform: rotate(90deg); }
+.afold > summary h2 { margin: 0; font-size: 16px; }
+.afold > summary .hint { margin-left: auto; }
+.afold-b { padding: 0 14px 14px; }
+.afold-b > .card { box-shadow: none; border: 0; background: transparent; padding: 0; margin: 6px 0 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.afold .aweek .arow { grid-template-columns: 1fr; }
+.afold .aweek .arow-l { flex-direction: row; align-items: baseline; gap: 8px; padding-top: 0; }
+.afold .aweek .arow-l .mini-btn { margin: 0 0 0 auto; }
+@media (max-width: 1150px) { .acourse { grid-template-columns: 200px minmax(0, 1fr); } .acref { grid-column: 2; } }
+@media (max-width: 760px) {
+  .acourse { grid-template-columns: 1fr; }
+  .acref { grid-column: auto; }
+  .acside { position: static; max-height: none; }
+  .acs-weeks { flex-direction: row; flex-wrap: wrap; }
+  .acs-weeks li { flex: 0 0 auto; }
+  .acs-w { grid-template-columns: auto; padding: 5px 9px; border: 1.5px solid var(--line); }
+  .acs-w .acs-bar, .acs-w small { display: none; }
+}

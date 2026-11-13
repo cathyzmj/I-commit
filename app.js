@@ -5952,20 +5952,6 @@ function acadWeekHtml(c, w) {
     <div class="arows">${acadTopicRow(c, w)}${LANE_ORDER.map((l) => acadLaneHtml(c, w, l)).join('')}</div>
   </details>`;
 }
-function acadBoardHtml(c) {
-  const wk = c.weeks;
-  const groups = [
-    ['This week', wk.filter((w) => w.week === c.cur)],
-    ['Catch up', wk.filter((w) => w.week < c.cur && w.left > 0)],
-    ['Coming up', wk.filter((w) => w.week > c.cur)],
-    ['Done', wk.filter((w) => w.week < c.cur && w.left === 0)],
-  ].filter(([, list]) => list.length);
-  if (!wk.length) return '<p class="muted small pad">This course doesn’t label its sections by week, so everything is under Course info below.</p>';
-  const strip = `<div class="astrip" role="list">${wk.map((w) => `<button class="astripw ${w.state} ${w.week === c.cur ? 'cur' : ''}" data-act="acad-jump" data-week="${w.week}" role="listitem"
-    aria-label="Week ${w.week}"><b>${w.week}</b><i></i></button>`).join('')}</div>`;
-  return `${strip}${groups.map(([name, list]) => `<div class="agroup"><h3>${name}${name === 'Catch up' ? `<small>${c.catchUp.length} item${c.catchUp.length === 1 ? '' : 's'}, oldest first</small>` : ''}</h3>${list.map((w) => acadWeekHtml(c, w)).join('')}</div>`).join('')}`;
-}
-
 // The knowledge tree for a course: the same builder as the technicals (paste Claude's outline), kept with the course.
 function acadKnowledgeHtml(meta) {
   const trees = state.trees.filter((t) => t.courseId === meta.id);
@@ -6058,28 +6044,56 @@ function courseHtml() {
   const meta = (acad.courses || []).find((c) => c.id === route.courseId);
   if (!meta) return `<header class="top">${topBar({ left: back, title: 'Not found' })}</header><section class="card empty"><p>This course isn’t in your Moodle list.</p><a class="btn" href="#/academics">Academics</a></section>`;
   const c = acadCourse(meta.id), st = acadStatus(c), [ink, fill, mid] = acadColor(meta.id), notes = acad.notes.get(meta.id);
-  const header = `<header class="top">${topBar({ left: back, label: 'Course', title: escapeHtml(meta.shortname || meta.fullname), right: '<button class="txt-btn" data-act="acad-course-settings">Settings</button>' })}
-    <p class="amuted">${escapeHtml(meta.fullname)}</p>
-    <div class="pmeta"><span class="ppill achip ${st.cls}">${escapeHtml(st.text)}</span>
-      <a class="mini-btn" href="${escapeHtml(`${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${meta.id}`)}" target="_blank" rel="noopener">Moodle page ↗</a>
-      ${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener">Notes ↗</a>` : '<button class="mini-btn" data-act="acad-course-settings">+ Notes link</button>'}</div></header>`;
+  const header = `<header class="top">${topBar({ left: back, label: 'Course', title: escapeHtml(meta.shortname || meta.fullname), right: '<button class="txt-btn" data-act="acad-course-settings">Settings</button>' })}</header>`;
   if (!c) return header + `<section class="card"><p class="muted pad">${escapeHtml(acad.errors.get(meta.id) || (acad.tracked.has(meta.id) ? 'Loading…' : 'This course isn’t tracked. Choose it on the Academics page.'))}</p></section>`;
   const done = c.items.filter(acadDone).length;
-  return header + `
-    <section class="card" data-section="Weeks">
-      <div class="card-head"><h2>Week by week</h2><span class="hint">${done} of ${c.items.length} done · ${acadKind(meta.id) === 'qual' ? 'reading counts' : 'reading optional'}</span></div>
-      ${c.byItem ? `<p class="help">Moodle groups this course by type (Lectures, Problem sets…), so each item is placed in the week its title names, e.g. “Problem set 3” in week 3${c.maxLecture > 10 || c.lpw > 1 ? `. Lectures are numbered across the term (there are ${c.maxLecture}), so ${c.lpw} a week ${c.lpwAuto ? 'is assumed' : 'is your setting'}: lectures 1 and 2 are week 1. Change it in <b>Settings</b>` : ''}. Items without a week in their title are under Course info.</p>`
-        : c.guessed ? `<p class="help">This course’s Moodle page doesn’t number its weeks, so they follow the order of its sections (the first section is week ${1 + c.offset}). Wrong? Change where the course starts in <b>Settings</b>.</p>` : ''}
-      ${acadBoardHtml(c)}
-    </section>
-    ${c.tests.length ? `<section class="card" data-section="Tests">
-      <div class="card-head"><h2>Tests</h2><span class="hint">${c.tests.filter(acadDone).length} of ${c.tests.length} done</span></div>
-      ${c.tests.map((i) => acadItemHtml(i)).join('')}</section>` : ''}
-    ${acadKnowledgeHtml(meta)}
-    ${c.info.length ? `<section class="card" data-section="Course info">
-      <div class="card-head"><h2>Course info</h2><span class="hint">${c.info.length}</span></div>
-      ${c.info.map((i) => acadItemHtml(i)).join('')}</section>` : ''}`;
+  const g = acadGroups(c), cid = meta.id;
+  const how = c.byItem ? `Moodle groups this course by type (Lectures, Problem sets…), so each item is placed in the week its title names, e.g. “Problem set 3” in week 3${c.maxLecture > 10 || c.lpw > 1 ? `. Lectures are numbered across the term (there are ${c.maxLecture}), so ${c.lpw} a week ${c.lpwAuto ? 'is assumed' : 'is your setting'}: lectures 1 and 2 are week 1. Change it in Settings` : ''}. Items without a week in their title are under Course info.`
+    : c.guessed ? `This course’s Moodle page doesn’t number its weeks, so they follow the order of its sections (the first section is week ${1 + c.offset}). Wrong? Change where the course starts in Settings.` : '';
+  // left: the week overview; middle: what to do now; right: reference, every part folded until opened
+  const side = `<aside class="card acside" data-section="Overview">
+    <b class="acs-name">${escapeHtml(meta.shortname || meta.fullname)}</b><small class="acs-full">${escapeHtml(meta.fullname)}</small>
+    <span class="achip ${st.cls}">${escapeHtml(st.text)}</span>
+    <div class="acs-prog"><b>${c.items.length ? Math.round((done / c.items.length) * 100) : 0}%</b><span>${done} of ${c.items.length} done · ${acadKind(cid) === 'qual' ? 'reading counts' : 'reading optional'}</span>
+      <i class="abar"><i style="width:${c.items.length ? (done / c.items.length) * 100 : 0}%"></i></i></div>
+    ${c.weeks.length ? `<ol class="acs-weeks">${c.weeks.map((w) => {
+      const n = w.items.length, d = w.items.filter(acadDone).length;
+      return `<li><button class="acs-w ${w.state} ${w.week === c.cur ? 'cur' : ''}" data-act="acad-jump" data-week="${w.week}" title="${escapeHtml(w.topic || `Week ${w.week}`)}">
+        <b>W${w.week}</b><span class="acs-bar"><i style="width:${n ? (d / n) * 100 : 0}%"></i></span><small>${d}/${n}</small>${w.week === c.cur ? '<em>now</em>' : w.state === 'late' ? '<em class="late">!</em>' : ''}</button></li>`;
+    }).join('')}</ol>` : ''}
+    <div class="acs-links"><a href="${escapeHtml(`${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${cid}`)}" target="_blank" rel="noopener">Moodle page ↗</a>
+      ${notes ? `<a href="${escapeHtml(notes)}" target="_blank" rel="noopener">Notes ↗</a>` : '<button data-act="acad-course-settings">+ Notes link</button>'}
+      <button data-act="acad-course-settings">Settings</button></div>
+    ${how ? `<details class="ainfo"><summary>ⓘ How the weeks are worked out</summary><p>${escapeHtml(how)}</p></details>` : ''}
+  </aside>`;
+  const weekCard = (title, list, hint) => `<section class="card" data-section="${title}"><div class="card-head"><h2>${title}</h2>${hint ? `<span class="hint">${hint}</span>` : ''}</div>${list.map((w) => acadWeekHtml(c, w)).join('')}</section>`;
+  const main = `<div class="acmain">
+    ${g.now.length ? weekCard('This week', g.now, `Week ${c.cur} · ${acadWeekDates(c.cur)}`) : ''}
+    ${g.catchUp.length ? weekCard('Catch up', g.catchUp, `${c.catchUp.length} item${c.catchUp.length === 1 ? '' : 's'}, oldest first`) : ''}
+    ${!g.now.length && !g.catchUp.length ? `<section class="card empty"><p><b>${c.weeks.length ? 'Nothing to do right now' : 'No weeks found'}</b></p><p class="small muted">${c.weeks.length ? 'You’re up to date. Coming up has the next weeks.' : 'This course doesn’t label anything by week, so everything is under Course info.'}</p></section>` : ''}
+  </div>`;
+  const tests = c.tests.length ? c.tests.map((i) => acadItemHtml(i)).join('') : '';
+  const info = c.info.length ? c.info.map((i) => acadItemHtml(i)).join('') : '';
+  const trees = state.trees.filter((t) => t.courseId === cid);
+  const ref = `<div class="acref">
+    ${g.coming.length ? acadFold(cid, 'coming', 'Coming up', `${g.coming.length} week${g.coming.length === 1 ? '' : 's'}`, g.coming.map((w) => acadWeekHtml(c, w)).join('')) : ''}
+    ${g.done.length ? acadFold(cid, 'done', 'Done', `${g.done.length} week${g.done.length === 1 ? '' : 's'}`, g.done.map((w) => acadWeekHtml(c, w)).join('')) : ''}
+    ${tests ? acadFold(cid, 'tests', 'Tests', `${c.tests.filter(acadDone).length} of ${c.tests.length} done`, tests) : ''}
+    ${acadFold(cid, 'tree', 'Knowledge tree', trees.length ? `${trees.length} tree${trees.length === 1 ? '' : 's'}` : 'not built yet', acadKnowledgeHtml(meta))}
+    ${info ? acadFold(cid, 'info', 'Course info', String(c.info.length), info) : ''}
+  </div>`;
+  return header + `<div class="acourse">${side}${main}${ref}</div>`;
 }
+// The week groups of a course page.
+function acadGroups(c) {
+  const wk = c.weeks;
+  return { now: wk.filter((w) => w.week === c.cur), catchUp: wk.filter((w) => w.week < c.cur && w.left > 0),
+    coming: wk.filter((w) => w.week > c.cur), done: wk.filter((w) => w.week < c.cur && w.left === 0) };
+}
+// A folded part of the reference column; it stays open or folded as you leave it (this session).
+const acadRefOpen = new Map();
+const acadFold = (cid, key, title, hint, body) => `<details class="card afold" data-afold="${cid}:${key}" ${acadRefOpen.get(`${cid}:${key}`) ? 'open' : ''}>
+  <summary><h2>${title}</h2>${hint ? `<span class="hint">${escapeHtml(hint)}</span>` : ''}</summary><div class="afold-b">${body}</div></details>`;
 
 // Today: the next thing to study in each course (a catch-up item if you're behind), one tap to open.
 function studyTodayHtml() {
@@ -6221,12 +6235,19 @@ function acadJump(week) {
   const w = c && c.weeks.find((x) => x.week === week);
   if (!w) return;
   acadOpenWeeks.set(acadWeekKey(c, w), true);
+  const g = acadGroups(c), cid = c.meta.id;
+  if (g.coming.includes(w)) acadRefOpen.set(`${cid}:coming`, true);
+  if (g.done.includes(w)) acadRefOpen.set(`${cid}:done`, true);
   render();
   const el = $app.querySelector(`[data-asec="${CSS.escape(acadWeekKey(c, w))}"]`);
   if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 // Weeks you open or fold on a course page stay that way when the page redraws.
-document.addEventListener('toggle', (e) => { const d = e.target; if (d.dataset && d.dataset.asec) acadOpenWeeks.set(d.dataset.asec, d.open); }, true);
+document.addEventListener('toggle', (e) => {
+  const d = e.target;
+  if (d.dataset && d.dataset.asec) acadOpenWeeks.set(d.dataset.asec, d.open);
+  if (d.dataset && d.dataset.afold) { acadRefOpen.set(d.dataset.afold, d.open); if (d.open && d.querySelector('.kmap')) initMaps(); } // a map drawn while folded needs placing
+}, true);
 
 // ---------- This week: the simplified dashboard ----------
 // Monday to Sunday top to bottom, each day a plain bullet list (daily routines, periodic ones on the days
