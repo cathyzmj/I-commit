@@ -1511,3 +1511,17 @@ li.wb { padding: 3px 4px; }
   .acs-w { grid-template-columns: auto; padding: 5px 9px; border: 1.5px solid var(--line); }
   .acs-w .acs-bar, .acs-w small { display: none; }
 }
+
+/* Study on the weekly list */
+.wstudy { padding: 10px 14px 12px; border-radius: 16px; background: var(--card); border: 1px solid var(--glass-border); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.wstudy-t { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; font-size: 13px; }
+.wstudy-t b { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.wstudy-t a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.wstudy-c { padding: 6px 0 4px; border-top: 1px solid var(--line); }
+.wstudy-c:first-of-type { border-top: 0; }
+.wstudy-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+.wstudy-h a { color: var(--ink); text-decoration: none; font-size: 15px; }
+.wstudy .wb .mini-btn { margin-left: auto; text-decoration: none; color: var(--ink); }
+.wstudy .wb .mini-btn.go { background: var(--fill); font-weight: 650; }
+.wstudy li.wb small { color: var(--muted); font-size: 11.5px; }
+.wcatch { display: inline-block; margin: 2px 0 0 28px; font-size: 12.5px; color: #712b13; text-decoration: none; font-weight: 600; }

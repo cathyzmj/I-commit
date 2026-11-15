@@ -2289,7 +2289,7 @@ let buddyView = null, buddyError = null, buddyBusy = false, buddyAutoDate = null
 let myInvites = [];
 let calPeople = []; // calendar_people(): link_id, user_id, name, email, accepted, incoming, my_level, their_level
 const typing = () => { const a = document.activeElement; return a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
-const rerenderBuddy = () => { if (['buddy', 'today', 'cal'].includes(route.tab) && !route.id && !typing()) render(); };
+const rerenderBuddy = () => { if (['buddy', 'today', 'cal', 'plan', 'home'].includes(route.tab) && !route.id && !typing() && !wDrag) render(); };
 
 // The Supabase client, made once the server has said where the database is.
 async function getSb() {
@@ -5675,14 +5675,18 @@ async function moodleApi(body) {
 // ---- remembered between visits, so the tab opens at once (links are refreshed after a few hours)
 function acadSaveCache() {
   try {
-    localStorage.setItem('acadCache', JSON.stringify({ v: 4, at: acad.at, name: acad.name, courses: acad.courses, contents: [...acad.contents] }));
+    localStorage.setItem('acadCache', JSON.stringify({ v: 5, at: acad.at, name: acad.name, courses: acad.courses, contents: [...acad.contents], site: acad.site || '',
+      mine: { tracked: [...acad.tracked], progress: [...acad.progress], notes: [...acad.notes], kinds: [...acad.kinds], lanes: [...acad.lanes], offsets: [...acad.offsets], lpw: [...acad.lpw], termStart: acad.termStart } }));
   } catch { /* storage full or blocked */ }
 }
 (function acadRestore() {
   try {
     const c = JSON.parse(localStorage.getItem('acadCache') || 'null');
-    if (!c || c.v !== 4 || !Array.isArray(c.courses)) return;
-    acad.conn = true; acad.name = c.name || ''; acad.courses = c.courses; acad.contents = new Map(c.contents || []); acad.at = c.at || 0;
+    if (!c || c.v !== 5 || !Array.isArray(c.courses)) return;
+    acad.conn = true; acad.name = c.name || ''; acad.courses = c.courses; acad.contents = new Map(c.contents || []); acad.at = c.at || 0; acad.site = c.site || acad.site;
+    const m = c.mine || {};
+    acad.tracked = new Set(m.tracked || []); acad.progress = new Map(m.progress || []); acad.notes = new Map(m.notes || []); acad.kinds = new Map(m.kinds || []);
+    acad.lanes = new Map(m.lanes || []); acad.offsets = new Map(m.offsets || []); acad.lpw = new Map(m.lpw || []); acad.termStart = m.termStart || acad.termStart;
   } catch { /* nothing usable */ }
 })();
 function acadReset() {
@@ -5690,7 +5694,7 @@ function acadReset() {
   acad.contents.clear(); acad.errors.clear(); acad.progress.clear(); acad.tracked.clear(); acad.notes.clear(); acad.kinds.clear(); acad.lanes.clear(); acad.offsets.clear(); acad.lpw.clear();
   try { localStorage.removeItem('acadCache'); } catch {}
 }
-const rerenderAcad = () => { if (['academics', 'today'].includes(route.tab) && !sheetCtx && !typing()) render(); };
+const rerenderAcad = () => { if (['academics', 'today', 'plan', 'home'].includes(route.tab) && !sheetCtx && !typing() && !wDrag && !cardDrag) render(); };
 
 // ---- loading: your choices from Supabase, then Moodle
 async function acadLoad({ force = false } = {}) {
@@ -6102,7 +6106,7 @@ const acadFold = (cid, key, title, hint, body) => `<details class="card afold" d
 
 // Today: the next thing to study in each course (a catch-up item if you're behind), one tap to open.
 function studyTodayHtml() {
-  if (!sbUser || acad.conn !== true || !acad.courses) return '';
+  if (acad.conn !== true || !acad.courses) return '';
   acadEnsure();
   const rows = (acad.courses || []).filter((m) => acad.tracked.has(m.id)).map((m) => acadCourse(m.id)).filter(Boolean)
     .sort((a, b) => b.behind - a.behind || a.meta.id - b.meta.id);
@@ -6122,6 +6126,7 @@ async function acadTick(itemId, courseId) {
   const done = acad.progress.has(itemId);
   if (done) acad.progress.delete(itemId); else { acad.progress.set(itemId, new Date().toISOString()); acad.just = itemId; setTimeout(() => { acad.just = null; }, 900); }
   render();
+  acadSaveCache();
   try { if (done) await acadDb.untick(itemId); else await acadDb.tick(itemId, courseId); }
   catch (e) { if (done) acad.progress.set(itemId, new Date().toISOString()); else acad.progress.delete(itemId); render(); toast(sbErr(e)); }
 }
@@ -6296,19 +6301,33 @@ function planDayHtml(wk, w, i) {
   const extra = [];
   if (planExtras.projects) for (const x of projectItemsOn(d)) extra.push(`<li class="wx"><span class="wdot" style="--c:${pcol(x.p)[2]}"></span><a href="#/gallery/${x.p.id}">${x.time ? `<small class="wtime">${x.time}</small> ` : ''}${escapeHtml(x.title)}<small> · ${escapeHtml(x.p.name)}</small></a></li>`);
   if (planExtras.apps) for (const e of appEvents().filter((e) => e.date === d)) extra.push(`<li class="wx"><span class="wdot" style="--c:#e6b800"></span><a href="#/apps/${d}">${escapeHtml(e.a.company)} ${e.kind === 'open' ? 'opens' : e.kind === 'close' ? 'closes' : 'due'}</a></li>`);
-  if (planExtras.study && d === today) {
-    for (const c of (acad.courses || []).filter((m) => acad.tracked.has(m.id)).map((m) => acadCourse(m.id)).filter((c) => c && c.next)) {
-      const i2 = c.next, f = (i2.files || [])[0];
-      extra.push(`<li class="wx study"><button class="wbox" data-act="acad-tick" data-id="${i2.id}" data-course="${c.meta.id}" aria-label="${escapeHtml(i2.name)} done"></button>
-        <a href="#/academics/${c.meta.id}">${escapeHtml(c.meta.shortname || c.meta.fullname)}: ${escapeHtml(i2.name)}</a>${f ? `<a class="mini-btn go" href="${escapeHtml(f.link)}" target="_blank" rel="noopener">Open</a>` : ''}</li>`);
-    }
-  }
   return `<section class="wday ${d === today ? 'today' : d < today ? 'past' : ''} ${wbPick ? 'placing' : ''}" data-wday="${d}">
     <button class="wday-h" data-act="wday-place" data-day="${d}" ${wbPick ? '' : 'tabindex="-1"'}>
       <b>${DAY_NAMES[i]}</b><span>${fmtDay(parseISO(d), { day: 'numeric', month: 'short' })}</span>${d === today ? '<em>today</em>' : ''}
       ${total ? `<small>${done}/${total}</small>` : ''}${wbPick ? '<i>Place here</i>' : ''}</button>
     <ul class="wlist">${rows.join('')}${extra.join('')}${!rows.length && !extra.length ? '<li class="wempty">Nothing planned</li>' : ''}</ul>
   </section>`;
+}
+// Study on the weekly list: for each course you track, this week's lectures and problem sets (and reading,
+// where it counts), tickable, each with Open. Moodle gives a week, not a day, so they sit with the week.
+function planStudyHtml(wk) {
+  if (!planExtras.study || acad.conn !== true || !acad.courses || wk !== currentWeekKey()) return ''; // drawn from the remembered copy; the sign-in can finish later
+  acadEnsure();
+  const cs = acad.courses.filter((m) => acad.tracked.has(m.id)).map((m) => acadCourse(m.id)).filter(Boolean).sort((a, b) => b.behind - a.behind || a.meta.id - b.meta.id);
+  if (!cs.length) return '';
+  const blocks = cs.map((c) => {
+    const w = c.weeks.find((x) => x.week === c.cur), items = w ? w.items.filter(countsFor) : [], st = acadStatus(c);
+    const rows = items.map((i) => {
+      const ok = acadDone(i), f = (i.files || [])[0];
+      return `<li class="wb ${ok ? 'done' : ''}"><button class="wbox" data-act="acad-tick" data-id="${i.id}" data-course="${c.meta.id}" aria-pressed="${ok}" aria-label="${escapeHtml(i.name)} ${ok ? 'done' : 'not done'}" ${i.moodleDone && !acad.progress.has(i.id) ? 'disabled' : ''}>${ok ? CHECK : ''}</button>
+        <a class="wname" href="#/academics/${c.meta.id}">${escapeHtml(i.name)}</a><small>${escapeHtml(LANE_SHORT[i.lane])}</small>${f ? `<a class="mini-btn go" href="${escapeHtml(f.link)}" target="_blank" rel="noopener">Open</a>` : ''}</li>`;
+    }).join('');
+    return `<div class="wstudy-c"><div class="wstudy-h"><a href="#/academics/${c.meta.id}"><b>${escapeHtml(c.meta.shortname || c.meta.fullname)}</b></a>
+      <span class="achip ${st.cls}">${escapeHtml(st.text)}</span></div>
+      <ul class="wlist">${rows || `<li class="wempty">${c.weeks.length ? 'Nothing posted for this week yet' : 'No weeks found in Moodle'}</li>`}</ul>
+      ${c.catchUp.length ? `<a class="wcatch" href="#/academics/${c.meta.id}">${c.catchUp.length} to catch up from earlier weeks ›</a>` : ''}</div>`;
+  }).join('');
+  return `<section class="wstudy" data-section="Study"><div class="wstudy-t"><b>Study this week</b><a href="#/academics">Academics ›</a></div>${blocks}</section>`;
 }
 function planWeeklyHtml(wk, w) {
   const weekly = w ? itemsOf(w, 'weekly') : [];
@@ -6347,7 +6366,7 @@ function planHtml() {
         <span class="plan-show">Show:${PLAN_EXTRAS.map(([k, l]) => `<button class="mini-btn ${planExtras[k] ? 'on' : ''}" data-act="plan-extra" data-k="${k}" aria-pressed="${!!planExtras[k]}">${l}</button>`).join('')}</span></div>
     </header>
     <div class="plan">
-      <div class="plan-days" data-section="Week">${planWeeklyHtml(wk, w)}${DAY_NAMES.map((_, i) => planDayHtml(wk, w, i)).join('')}</div>
+      <div class="plan-days" data-section="Week">${planWeeklyHtml(wk, w)}${planStudyHtml(wk)}${DAY_NAMES.map((_, i) => planDayHtml(wk, w, i)).join('')}</div>
       ${whiteboardColHtml()}
     </div>`;
 }
