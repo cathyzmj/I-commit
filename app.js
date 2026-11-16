@@ -6619,9 +6619,15 @@ document.addEventListener('pointerup', (e) => {
 });
 document.addEventListener('pointercancel', () => { if (fdDrag) { fdDrag.fd.classList.remove('dragging'); fdDrag = null; } });
 window.addEventListener('resize', () => { const fd = document.querySelector('.fdonut'); if (fd && fdPos) fd.setAttribute('style', fdPlace().replace(/^style="|"$/g, '')); });
-// With a mouse it opens when the pointer rests on its middle (not its rim) for a moment, and closes once the
-// pointer has clearly left the circle. On a touch screen the first tap opens it and a tap outside closes it.
-let fdTimer = null;
+// With a mouse it opens when the pointer rests on its middle (not its rim) for a moment. Once open it stays
+// open for at least 5 seconds after the pointer was last over it, so there's time to look and aim; moving
+// back over it keeps it open. On a touch screen the first tap opens it and a tap outside closes it.
+const FD_STAY_MS = 5000;
+let fdTimer = null, fdCloseTimer = null, fdLastOver = 0, fdInside = false, fdHome = null; // fdHome: where the small button was
+function fdScheduleClose(fd) {
+  clearTimeout(fdCloseTimer);
+  fdCloseTimer = setTimeout(() => { fdCloseTimer = null; if (!fd.matches(':focus-within')) fd.classList.remove('open'); }, Math.max(0, fdLastOver + FD_STAY_MS - Date.now()));
+}
 document.addEventListener('pointermove', (e) => {
   if (e.pointerType === 'touch' || fdDrag) return;
   const fd = document.querySelector('.fdonut');
@@ -6629,9 +6635,21 @@ document.addEventListener('pointermove', (e) => {
   const r = fd.getBoundingClientRect(), dist = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
   if (!fd.classList.contains('open')) {
     const middle = dist < r.width * 0.3; // the inner part of the button only
-    if (middle && !fdTimer) fdTimer = setTimeout(() => { fdTimer = null; fd.classList.add('open'); }, 160);
+    if (middle && !fdTimer) fdTimer = setTimeout(() => {
+      fdTimer = null;
+      const h = fd.getBoundingClientRect();
+      fdHome = { x: h.left + h.width / 2, y: h.top + h.height / 2, r: h.width / 2 + 12 }; // the open circle grows towards the middle, so this spot ends up outside it
+      fd.classList.add('open'); fdLastOver = Date.now(); fdInside = true;
+    }, 160);
     else if (!middle && fdTimer) { clearTimeout(fdTimer); fdTimer = null; }
-  } else if (dist > r.width / 2 + 14) fd.classList.remove('open');
+    return;
+  }
+  const onIt = dist <= r.width / 2 + 14 || (fdHome && Math.hypot(e.clientX - fdHome.x, e.clientY - fdHome.y) <= fdHome.r);
+  if (onIt) { fdInside = true; fdLastOver = Date.now(); clearTimeout(fdCloseTimer); fdCloseTimer = null; } // over it: keep it open
+  else {                                                                                                                         // left it: close 5 s after leaving
+    if (fdInside) { fdInside = false; fdLastOver = Date.now(); }
+    if (!fdCloseTimer) fdScheduleClose(fd);
+  }
 }, { passive: true });
 // On a touch screen there's no hover: the first tap opens it, a tap outside closes it.
 document.addEventListener('click', (e) => {
