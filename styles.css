@@ -1548,8 +1548,18 @@ li.wb { padding: 3px 4px; }
 .pz-credit { font-size: 12.5px; color: var(--muted); margin: 10px 2px 6px; }
 .pz-credit a { color: var(--accent); }
 .pz-coll { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 6px; }
-.pz-cell { position: relative; display: block; height: 100px; border-radius: 12px; overflow: hidden; background: #e4eaef center / cover no-repeat; text-decoration: none; color: var(--ink); }
-.pz-cell:not(.full) > span { background: none; top: 0; justify-content: center; align-items: center; text-align: center; }
-.pz-cell > span { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; padding: 14px 8px 6px; display: flex; flex-direction: column; font-size: 11.5px; background: linear-gradient(transparent, rgba(255, 255, 255, 0.9)); font-weight: 600; }
+.pz-cell { position: relative; display: block; width: 100%; border: 0; padding: 0; font: inherit; text-align: left; cursor: pointer; height: 100px; border-radius: 12px; overflow: hidden; background: #e4eaef center / cover no-repeat; text-decoration: none; color: var(--ink); }
+.pz-cell > span { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; padding: 26px 8px 6px; display: flex; flex-direction: column; font-size: 11.5px; line-height: 1.25; background: linear-gradient(transparent, rgba(255, 255, 255, 0.95) 60%); font-weight: 600; }
 .pz-cell > span b { font-weight: 750; }
 .pz-cell.full > span b { color: var(--accent); }
+
+/* series + archive */
+button.pz-chip { border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; }
+.pz-series { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
+.pz-series.on .pzs-name b { color: var(--accent); }
+.pzs-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pzs-name span { font-size: 12.5px; color: var(--muted); }
+.pzs-on { font-size: 12px; font-weight: 700; color: var(--accent); }
+.pz-big { display: block; width: 100%; max-height: 50vh; object-fit: contain; border-radius: 10px; background: rgba(27, 31, 29, 0.05); }
+.pz-cell > span { text-shadow: none; }
+.warn-text { color: #b3261e; min-height: 1em; margin: 0; }

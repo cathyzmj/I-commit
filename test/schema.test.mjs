@@ -190,14 +190,17 @@ assert.equal((await as(null, 'select * from academic_progress')).length, 0, 'sig
 await as('cathy', "insert into focus_sessions (task_id, task_name, day, minutes, mode) values ('t1', 'Problem set 7', '2026-11-23', 42.5, 'down')");
 await fails('cathy', "insert into focus_sessions (task_id, task_name, day, minutes, mode) values ('t1', 'x', '2026-11-23', 0, 'up')", [], /check/);
 await fails('cathy', "insert into focus_sessions (task_id, task_name, day, minutes, mode) values ('t1', 'x', '2026-11-23', 5, 'sideways')", [], /check/);
-await as('cathy', `insert into puzzle_weeks (week, image, placed, seen) values ('2026-11-23', '{"title":"File:Lake.jpg"}', '{3,7}', 6)`);
-await as('cathy', `update puzzle_weeks set lock = '{"cols":6,"rows":4}', placed = '{3,7,9}' where week = '2026-11-23'`);
-for (const table of ['focus_sessions', 'puzzle_weeks']) {
+await as('cathy', `insert into puzzle_state (state) values ('{"start":"2026-11-23","archive":[{"name":"Paris"}]}')`);
+await as('cathy', `update puzzle_state set state = '{"start":"2026-11-23","archive":[]}'`);
+await fails('cathy', `insert into puzzle_state (state) values ('{}')`, [], /duplicate key/); // one row each
+for (const table of ['focus_sessions', 'puzzle_state']) {
   assert.equal((await as('han', `select * from ${table}`)).length, 0, `others can't see ${table}`);
   assert.equal((await as('cathy', `select * from ${table}`)).length, 1);
 }
-await fails('han', `insert into puzzle_weeks (user_id, week) values ($1, '2026-11-23')`, [ids.cathy], /row-level security/);
-await as('han', "update puzzle_weeks set placed = '{}'");
-assert.deepEqual((await as('cathy', 'select placed from puzzle_weeks'))[0].placed, [3, 7, 9], 'nobody else can move your pieces');
+await fails('han', `insert into puzzle_state (user_id, state) values ($1, '{}')`, [ids.cathy], /row-level security/);
+await as('han', `update puzzle_state set state = '{}'`);
+assert.deepEqual((await as('cathy', 'select state from puzzle_state'))[0].state.archive, [], 'nobody else can change your puzzles');
+await fails('cathy', `update puzzle_state set state = jsonb_build_object('x', repeat('a', 450000))`, [], /check/);
+await as('cathy', `update projects set done_on = '2026-11-23' where name = 'Castore consulting project'`); // completing a project
 await db.exec(fs.readFileSync(new URL('../supabase/focus-puzzle.sql', import.meta.url), 'utf8')); // safe to run again
 console.log('ALL DATABASE RULE TESTS PASSED');

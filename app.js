@@ -545,7 +545,7 @@ function parseHash() {
   if (a === 'tests') return { tab: 'routine', page: 'tests', testId: b || null };
   if (a === 'board') return { tab: 'cal', page: 'board' };
   if (a === 'academics') return /^\d+$/.test(b || '') ? { tab: 'academics', page: 'course', courseId: +b } : { tab: 'academics' };
-  if (a === 'puzzle') return { tab: 'plan', page: 'puzzle', wk: /^\d{4}-\d{2}-\d{2}$/.test(b || '') ? b : null };
+  if (a === 'puzzle') return { tab: 'plan', page: 'puzzle' };
   if (a === 'gallery' && b) return { tab: 'gallery', page: b === 'new' || c === 'edit' ? 'project-edit' : 'project', projId: b };
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
   return { tab: ['home', 'plan', 'today', 'routine', 'cal', 'buddy', 'gallery', 'academics', 'commitments'].includes(a) ? a : 'plan' };
@@ -588,6 +588,7 @@ const $sheet = document.getElementById('sheet');
 
 function render() {
   if (!state) return; // still loading saved data
+  puzMemo = null; // pieces earned are worked out again from the latest ticks
   let html;
   if (route.page === 'sync') html = syncPageHtml();
   else if (route.page === 'account') html = accountPageHtml();
@@ -5195,6 +5196,7 @@ function projectPageHtml() {
   return `
     <header class="top">${topBar({ left: back, label: 'Project', title: escapeHtml(p.name), right: `<a class="txt-btn" href="#/gallery/${p.id}/edit">Edit</a>` })}
       <div class="pmeta">${logo ? `<img class="plogo" src="${logo}" alt="">` : ''}<span class="ppill" style="background:${fill};color:${ink}">${projStatus(p)}</span>
+        <button class="mini-btn" data-act="proj-done">${p.done_on ? '✓ Complete · reopen' : `Mark complete · +${puzProjectPieces(p)} pieces`}</button>
         ${p.notion_url ? `<a class="mini-btn" href="${escapeHtml(notionAppUrl(p.notion_url))}" target="_blank" rel="noopener">N Notion page</a>` : `<a class="mini-btn" href="#/gallery/${p.id}/edit">+ Add Notion page</a>`}</div>
     </header>
     ${linksHtml(p, 'file')}
@@ -6777,27 +6779,98 @@ function discardFocus() {
 }
 function weekFocusMin(w) { return w ? Object.values(w.items).reduce((n, it) => n + focusSum(it), 0) : 0; }
 
-// ---------- Weekly jigsaw ----------
-// Each week has a landscape jigsaw. Pieces come from your routines and the appointments in your calendar
-// (dated tasks), so the week's total is known up front. When you finish everything planned for a DAY you
-// receive that day's group of pieces and can start placing them; weekly routines give a piece each when
-// reached; finishing everything adds the last few so the picture can be completed. Pieces earned are worked
-// out from your ticks (nothing to store); which pieces are placed, and the picture, are saved per week
-// (supabase/focus-puzzle.sql, with a copy on this device).
-const PUZ_MIN = 50, PUZ_CAP = 60; // every week's jigsaw has between 50 and 60 pieces
+// ---------- Jigsaw ----------
+// One 10 × 5 jigsaw (50 pieces) at a time. Pieces come from what you finish, and pile up in a pool:
+//   a routine ticked on a day = 10, a one-off task (or appointment) done = 5,
+//   a project marked complete = 30, or 10 per week of its length when that is more.
+// Pieces earned are worked out from your ticks (nothing to store, counted from the day you started).
+// Each finished jigsaw goes to the Archive and the next picture comes from the active series: a list of things
+// you asked for (e.g. "top 10 highest mountains"), each with a photo found on Wikimedia Commons. While you
+// solve it the picture's name and source stay hidden; they show once it is in the archive.
+// What's placed, your series and the archive are saved on this device and in Supabase (supabase/focus-puzzle.sql).
+const PUZ_COLS = 10, PUZ_ROWS = 5, PUZ_A = 50;
+const PUZ_ROUTINE = 10, PUZ_ONCE = 5, PUZ_PROJECT_MIN = 30, PUZ_PROJECT_WEEK = 10;
 const PUZ_CATS = ['Featured_pictures_of_landscapes', 'Featured_pictures_of_mountains', 'Featured_pictures_of_lakes', 'Featured_pictures_of_beaches', 'Featured_pictures_of_waterfalls', 'Featured_pictures_of_forests'];
-let puzCache = {}, puzCloudOff = false, puzLoaded = false;
-const puzBusy = new Set();
-try { puzCache = JSON.parse(localStorage.getItem('puzzles') || '{}') || {}; } catch {}
-const puzSaveLocal = () => { try { localStorage.setItem('puzzles', JSON.stringify(puzCache)); } catch {} };
-function rngFrom(str) { // a small seeded random generator, so a week's shuffle is the same on every device
-  let h = 2166136261;
-  for (const ch of String(str)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
-  return () => { h |= 0; h = (h + 0x6D2B79F5) | 0; let t = Math.imul(h ^ (h >>> 15), 1 | h); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
-const safeImg = (u) => (/^https:\/\//i.test(u || '') ? String(u).replace(/["'()\s<>\\]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`) : '');
+const puzProjectPieces = (p) => (noTime(p) ? PUZ_PROJECT_MIN : Math.max(PUZ_PROJECT_MIN, PUZ_PROJECT_WEEK * (p.weeks || 1)));
 
-// ---- what's planned, what's done, what's earned
+// ---- the topics I can fill in by myself ("Name|extra words" = a clue for the picture search, "Name=Wikipedia title")
+const PUZ_TOPICS = [
+  { key: 'capitals', title: 'World capitals', ask: 'all the world capitals', words: /capital/, hint: 'city', items: [
+    'Kabul|Afghanistan', 'Tirana|Albania', 'Algiers|Algeria', 'Andorra la Vella|Andorra', 'Luanda|Angola', 'Saint John’s|Antigua and Barbuda=St. John\'s, Antigua and Barbuda', 'Buenos Aires|Argentina', 'Yerevan|Armenia', 'Canberra|Australia', 'Vienna|Austria',
+    'Baku|Azerbaijan', 'Nassau|Bahamas=Nassau, Bahamas', 'Manama|Bahrain', 'Dhaka|Bangladesh', 'Bridgetown|Barbados', 'Minsk|Belarus', 'Brussels|Belgium', 'Belmopan|Belize', 'Porto-Novo|Benin', 'Thimphu|Bhutan',
+    'Sucre|Bolivia', 'Sarajevo|Bosnia and Herzegovina', 'Gaborone|Botswana', 'Brasília|Brazil', 'Bandar Seri Begawan|Brunei', 'Sofia|Bulgaria', 'Ouagadougou|Burkina Faso', 'Gitega|Burundi', 'Praia|Cabo Verde', 'Phnom Penh|Cambodia',
+    'Yaoundé|Cameroon', 'Ottawa|Canada', 'Bangui|Central African Republic', 'N\'Djamena|Chad', 'Santiago|Chile=Santiago', 'Beijing|China', 'Bogotá|Colombia', 'Moroni|Comoros=Moroni, Comoros', 'Brazzaville|Republic of the Congo', 'Kinshasa|DR Congo',
+    'San José|Costa Rica=San José, Costa Rica', 'Yamoussoukro|Côte d\'Ivoire', 'Zagreb|Croatia', 'Havana|Cuba', 'Nicosia|Cyprus', 'Prague|Czechia', 'Copenhagen|Denmark', 'Djibouti|Djibouti=Djibouti (city)', 'Roseau|Dominica', 'Santo Domingo|Dominican Republic',
+    'Quito|Ecuador', 'Cairo|Egypt', 'San Salvador|El Salvador', 'Malabo|Equatorial Guinea', 'Asmara|Eritrea', 'Tallinn|Estonia', 'Mbabane|Eswatini', 'Addis Ababa|Ethiopia', 'Suva|Fiji', 'Helsinki|Finland',
+    'Paris|France', 'Libreville|Gabon', 'Banjul|Gambia', 'Tbilisi|Georgia', 'Berlin|Germany', 'Accra|Ghana', 'Athens|Greece', 'St. George’s|Grenada=St. George\'s, Grenada', 'Guatemala City|Guatemala', 'Conakry|Guinea',
+    'Bissau|Guinea-Bissau', 'Georgetown|Guyana=Georgetown, Guyana', 'Port-au-Prince|Haiti', 'Tegucigalpa|Honduras', 'Budapest|Hungary', 'Reykjavík|Iceland', 'New Delhi|India', 'Jakarta|Indonesia', 'Tehran|Iran', 'Baghdad|Iraq',
+    'Dublin|Ireland', 'Jerusalem|Israel', 'Rome|Italy', 'Kingston|Jamaica=Kingston, Jamaica', 'Tokyo|Japan', 'Amman|Jordan', 'Astana|Kazakhstan', 'Nairobi|Kenya', 'Tarawa|Kiribati=South Tarawa', 'Kuwait City|Kuwait',
+    'Bishkek|Kyrgyzstan', 'Vientiane|Laos', 'Riga|Latvia', 'Beirut|Lebanon', 'Maseru|Lesotho', 'Monrovia|Liberia', 'Tripoli|Libya=Tripoli, Libya', 'Vaduz|Liechtenstein', 'Vilnius|Lithuania', 'Luxembourg City|Luxembourg',
+    'Antananarivo|Madagascar', 'Lilongwe|Malawi', 'Kuala Lumpur|Malaysia', 'Malé|Maldives', 'Bamako|Mali', 'Valletta|Malta', 'Majuro|Marshall Islands', 'Nouakchott|Mauritania', 'Port Louis|Mauritius', 'Mexico City|Mexico',
+    'Palikir|Micronesia', 'Chișinău|Moldova', 'Monaco|Monaco', 'Ulaanbaatar|Mongolia', 'Podgorica|Montenegro', 'Rabat|Morocco', 'Maputo|Mozambique', 'Naypyidaw|Myanmar', 'Windhoek|Namibia', 'Yaren|Nauru',
+    'Kathmandu|Nepal', 'Amsterdam|Netherlands', 'Wellington|New Zealand', 'Managua|Nicaragua', 'Niamey|Niger', 'Abuja|Nigeria', 'Pyongyang|North Korea', 'Skopje|North Macedonia', 'Oslo|Norway', 'Muscat|Oman',
+    'Islamabad|Pakistan', 'Ngerulmud|Palau', 'Panama City|Panama', 'Port Moresby|Papua New Guinea', 'Asunción|Paraguay', 'Lima|Peru', 'Manila|Philippines', 'Warsaw|Poland', 'Lisbon|Portugal', 'Doha|Qatar',
+    'Bucharest|Romania', 'Moscow|Russia', 'Kigali|Rwanda', 'Basseterre|Saint Kitts and Nevis', 'Castries|Saint Lucia', 'Kingstown|Saint Vincent and the Grenadines', 'Apia|Samoa', 'San Marino|San Marino=City of San Marino', 'São Tomé|São Tomé and Príncipe', 'Riyadh|Saudi Arabia',
+    'Dakar|Senegal', 'Belgrade|Serbia', 'Victoria|Seychelles=Victoria, Seychelles', 'Freetown|Sierra Leone', 'Singapore|Singapore', 'Bratislava|Slovakia', 'Ljubljana|Slovenia', 'Honiara|Solomon Islands', 'Mogadishu|Somalia', 'Pretoria|South Africa',
+    'Seoul|South Korea', 'Juba|South Sudan', 'Madrid|Spain', 'Sri Jayawardenepura Kotte|Sri Lanka', 'Khartoum|Sudan', 'Paramaribo|Suriname', 'Stockholm|Sweden', 'Bern|Switzerland', 'Damascus|Syria', 'Dushanbe|Tajikistan',
+    'Dodoma|Tanzania', 'Bangkok|Thailand', 'Dili|Timor-Leste', 'Lomé|Togo', 'Nukuʻalofa|Tonga', 'Port of Spain|Trinidad and Tobago', 'Tunis|Tunisia', 'Ankara|Türkiye', 'Ashgabat|Turkmenistan', 'Funafuti|Tuvalu',
+    'Kampala|Uganda', 'Kyiv|Ukraine', 'Abu Dhabi|United Arab Emirates', 'London|United Kingdom', 'Washington, D.C.|United States', 'Montevideo|Uruguay', 'Tashkent|Uzbekistan', 'Port Vila|Vanuatu', 'Caracas|Venezuela', 'Hanoi|Vietnam',
+    'Sanaa|Yemen', 'Lusaka|Zambia', 'Harare|Zimbabwe'] },
+  { key: 'famous-mountains', title: 'Famous mountains', ask: 'top 10 famous mountains', words: /(famous|iconic|well.known).*(mountain|peak)/, hint: 'mountain', items: [
+    'Matterhorn', 'Mount Fuji', 'Mount Kilimanjaro', 'Denali', 'Mont Blanc', 'Aconcagua', 'Mount Kenya', 'Table Mountain', 'Ben Nevis', 'Snowdon', 'Eiger', 'Mount Elbrus', 'Aoraki / Mount Cook', 'Half Dome', 'Mount Olympus'] },
+  { key: 'mountains', title: 'Highest mountains', ask: 'top 10 highest mountains', words: /mountain|peak|eight.?thousand/, hint: 'mountain', items: [
+    'Mount Everest', 'K2', 'Kangchenjunga', 'Lhotse', 'Makalu', 'Cho Oyu', 'Dhaulagiri', 'Manaslu', 'Nanga Parbat', 'Annapurna I=Annapurna', 'Gasherbrum I', 'Broad Peak', 'Gasherbrum II', 'Shishapangma'] },
+  { key: 'rivers', title: 'Longest rivers', ask: 'top 10 longest rivers', words: /river/, hint: 'river', items: [
+    'Nile', 'Amazon River', 'Yangtze', 'Mississippi River', 'Yenisey', 'Yellow River', 'Ob River', 'Paraná River', 'Congo River', 'Amur River', 'Lena River', 'Mekong', 'Mackenzie River', 'Niger River', 'Murray River'] },
+  { key: 'lakes', title: 'Largest lakes', ask: 'top 10 largest lakes', words: /lake/, hint: 'lake', items: [
+    'Caspian Sea', 'Lake Superior', 'Lake Victoria', 'Lake Huron', 'Lake Michigan', 'Lake Tanganyika', 'Lake Baikal', 'Great Bear Lake', 'Lake Malawi', 'Great Slave Lake', 'Lake Erie', 'Lake Ontario'] },
+  { key: 'waterfalls', title: 'Waterfalls', ask: 'top 10 waterfalls', words: /waterfall|falls/, hint: 'waterfall', items: [
+    'Angel Falls', 'Victoria Falls', 'Niagara Falls', 'Iguazu Falls', 'Yosemite Falls', 'Kaieteur Falls', 'Gullfoss', 'Skógafoss', 'Seljalandsfoss', 'Dettifoss', 'Havasu Falls', 'Multnomah Falls', 'Rhine Falls', 'Jog Falls', 'Krimml Waterfalls'] },
+  { key: 'islands', title: 'Largest islands', ask: 'top 10 largest islands', words: /island/, hint: 'island', items: [
+    'Greenland', 'New Guinea', 'Borneo', 'Madagascar', 'Baffin Island', 'Sumatra', 'Honshu', 'Victoria Island|Canada=Victoria Island (Canada)', 'Great Britain', 'Ellesmere Island'] },
+  { key: 'deserts', title: 'Deserts', ask: 'top 10 largest deserts', words: /desert/, hint: 'desert', items: [
+    'Sahara', 'Arabian Desert', 'Gobi Desert', 'Kalahari Desert', 'Patagonian Desert', 'Syrian Desert', 'Great Victoria Desert', 'Atacama Desert', 'Namib', 'Mojave Desert', 'Thar Desert', 'Sonoran Desert', 'Taklamakan Desert'] },
+  { key: 'volcanoes', title: 'Volcanoes', ask: 'top 10 famous volcanoes', words: /volcano/, hint: 'volcano', items: [
+    'Mount Fuji', 'Mount Etna', 'Mount Vesuvius', 'Eyjafjallajökull', 'Mount St. Helens', 'Krakatoa', 'Mauna Loa', 'Mount Rainier', 'Popocatépetl', 'Mount Merapi', 'Cotopaxi', 'Mount Pinatubo', 'Kīlauea', 'Mount Erebus', 'Stromboli'] },
+  { key: 'parks', title: 'National parks', ask: 'top 10 national parks', words: /national park|\bparks?\b/, hint: 'national park', items: [
+    'Yellowstone National Park', 'Grand Canyon National Park', 'Yosemite National Park', 'Banff National Park', 'Torres del Paine National Park', 'Serengeti National Park', 'Zion National Park', 'Fiordland National Park', 'Plitvice Lakes National Park', 'Lake District',
+    'Glacier National Park (U.S.)', 'Jasper National Park', 'Kruger National Park', 'Arches National Park', 'Bryce Canyon National Park', 'Sagarmatha National Park'] },
+  { key: 'wonders', title: 'Wonders & landmarks', ask: 'top 10 wonders of the world', words: /wonder|landmark|monument/, hint: '', items: [
+    'Great Wall of China', 'Petra', 'Christ the Redeemer (statue)', 'Machu Picchu', 'Chichen Itza', 'Colosseum', 'Taj Mahal', 'Eiffel Tower', 'Angkor Wat', 'Sagrada Família', 'Stonehenge', 'Giza pyramid complex|Egypt', 'Acropolis of Athens', 'Sydney Opera House',
+    'Elizabeth Tower|Big Ben', 'Statue of Liberty', 'Golden Gate Bridge', 'Burj Khalifa', 'Mount Rushmore', 'Neuschwanstein Castle'] },
+];
+function puzItem(s) { // "Paris|France=Paris" → { n: 'Paris, France', t: 'Paris', h: 'France' }
+  const [front, title] = String(s).split('='), [name, extra] = front.split('|');
+  return { n: (extra ? `${name}, ${extra}` : name).slice(0, 80), t: (title || name).slice(0, 100), h: (extra || '').slice(0, 60) };
+}
+
+// ---- saved state: this device, and one private row in Supabase when signed in
+function puzFresh() { return { v: 3, rev: 0, start: todayISO(), seen: 0, active: 'landscapes', series: [{ id: 'landscapes', title: 'Random landscapes', items: null, next: 0 }], cur: null, archive: [] }; }
+let puz = null, puzCloudOff = false, puzLoaded = false, puzTimer = null, puzMemo = null, puzBusy = false;
+try { puz = JSON.parse(localStorage.getItem('puzzles3') || 'null'); } catch {}
+if (!puz || puz.v !== 3 || !Array.isArray(puz.series) || !Array.isArray(puz.archive)) puz = puzFresh();
+try { localStorage.removeItem('puzzles'); } catch {} // the old weekly jigsaws
+const puzDb = {
+  async load() { const { data, error } = await sb.from('puzzle_state').select('state').maybeSingle(); if (error) throw error; return data && data.state; },
+  async save() { const { error } = await sb.from('puzzle_state').upsert({ user_id: sbUser.id, state: puz, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }); if (error) throw error; },
+};
+const puzCloudErr = (e) => { if (/does not exist|schema cache/i.test((e && e.message) || '')) puzCloudOff = true; };
+function puzSave() {
+  puz.rev = (puz.rev || 0) + 1;
+  try { localStorage.setItem('puzzles3', JSON.stringify(puz)); } catch {}
+  if (sbUser && sb && !puzCloudOff) { clearTimeout(puzTimer); puzTimer = setTimeout(() => puzDb.save().catch(puzCloudErr), 800); }
+}
+async function puzLoadCloud() {
+  if (puzLoaded || !sbUser || !sb || puzCloudOff) return;
+  puzLoaded = true;
+  try {
+    const cloud = await puzDb.load();
+    if (cloud && cloud.v === 3 && (cloud.rev || 0) > (puz.rev || 0)) { puz = cloud; try { localStorage.setItem('puzzles3', JSON.stringify(puz)); } catch {} if (['plan', 'puzzle'].includes(route.tab) && !typing() && !pzDrag) render(); }
+    else if (!cloud || (cloud.rev || 0) < (puz.rev || 0)) await puzDb.save();
+  } catch (e) { puzLoaded = false; puzCloudErr(e); }
+}
+
+// ---- what you've earned
 function onceDoneP(id, it) { // an appointment: ticked, or (if it came from a synced calendar) once it has passed
   if (periodDone(it)) return true;
   const c = state.commitments.find((x) => x.id === id);
@@ -6805,133 +6878,217 @@ function onceDoneP(id, it) { // an appointment: ticked, or (if it came from a sy
   const now = new Date(), t = it.endTime || it.time, hm = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   return it.date < todayISO() || (it.date === todayISO() && (!t || t <= hm));
 }
-function allocate(raw, cap) { // share `cap` pieces between the day groups in proportion to what's planned (each planned thing is worth several pieces when there are few)
-  const N = raw.reduce((a, b) => a + b, 0);
-  if (!N || N === cap) return raw.slice();
-  const exact = raw.map((n) => (n * cap) / N), out = exact.map((x, i) => (raw[i] ? Math.max(1, Math.floor(x)) : 0));
-  let left = cap - out.reduce((a, b) => a + b, 0);
-  const order = exact.map((x, i) => [x - Math.floor(x), i]).sort((a, b) => b[0] - a[0]);
-  for (let k = 0; left > 0 && k < 400; k++) { const i = order[k % order.length][1]; if (raw[i]) { out[i]++; left--; } }
-  while (left < 0) { const i = out.indexOf(Math.max(...out)); out[i]--; left++; }
-  return out;
-}
-function chooseGrid(S) { // a landscape-shaped rectangle with room for S pieces (the few spare ones are the finishing bonus)
-  S = Math.max(S, PUZ_MIN);
-  let best = null;
-  for (let rows = 2; rows <= 8; rows++) for (let cols = rows; cols <= 10; cols++) {
-    const A = rows * cols;
-    if (A < S || A > S + 9) continue;
-    const score = (A - S) * 1.2 + Math.abs(cols / rows - 1.5) * 4;
-    if (!best || score < best.score) best = { cols, rows, A, score };
-  }
-  return best || { cols: 8, rows: 8, A: 64 };
-}
-function puzzleSpec(wk, rec) {
-  const w = state.weeks[wk] || (wk === currentWeekKey() ? getWeek(wk) : null);
-  const groups = Array.from({ length: 8 }, () => ({ total: 0, done: 0 })); // Mon..Sun, then the weekly routines
-  if (w) {
+function puzEarned() {
+  const start = puz.start;
+  let n = 0;
+  const once = new Set();
+  for (const wk of Object.keys(state.weeks)) {
+    const w = state.weeks[wk];
+    if (!w || addDaysISO(wk, 6) < start) continue;
     for (let i = 0; i < 7; i++) {
-      const d = isoDate(dayDate(wk, i)), g = groups[i];
-      for (const [, it] of itemsOf(w, 'daily')) { g.total++; if (dayDone(it, i)) g.done++; }
-      for (const [id, it] of itemsOf(w, 'periodic')) { const st = periodicOn(id, it, d); if (st) { g.total++; if (st === 'done' || dayDone(it, i)) g.done++; } }
-      for (const [id, it] of itemsOf(w, 'once')) if (it.date === d && !it.schedule) { g.total++; if (onceDoneP(id, it)) g.done++; }
+      const d = isoDate(dayDate(wk, i));
+      if (d < start) continue;
+      for (const [, it] of itemsOf(w, 'daily')) if (dayDone(it, i)) n += PUZ_ROUTINE;
+      for (const [id, it] of itemsOf(w, 'periodic')) { const st = periodicOn(id, it, d); if (st === 'done' || (st && dayDone(it, i))) n += PUZ_ROUTINE; }
     }
-    for (const [, it] of itemsOf(w, 'weekly')) { groups[7].total++; if (periodDone(it)) groups[7].done++; }
+    for (const [, it] of itemsOf(w, 'weekly')) if (periodDone(it)) n += PUZ_ROUTINE;
+    for (const [id, it] of itemsOf(w, 'once')) {
+      if (it.schedule || once.has(id) || (it.date && it.date < start)) continue;
+      if (onceDoneP(id, it)) { once.add(id); n += PUZ_ONCE; }
+    }
   }
-  const raw = groups.map((g) => g.total), N = raw.reduce((a, b) => a + b, 0);
-  const lock = rec && rec.lock && rec.lock.cols && rec.lock.rows ? rec.lock : null;
-  const grid = lock ? { cols: lock.cols, rows: lock.rows, A: lock.cols * lock.rows } : chooseGrid(Math.max(PUZ_MIN, Math.min(N, PUZ_CAP)));
-  const alloc = allocate(raw, lock ? Math.min(PUZ_CAP, grid.A) : Math.max(PUZ_MIN, Math.min(N, PUZ_CAP)));
-  const S = alloc.reduce((a, b) => a + b, 0), bonus = Math.max(0, grid.A - S);
-  let earned = 0, all = N > 0;
-  groups.forEach((g, gi) => { if (g.total > 0) { if (g.done >= g.total) earned += alloc[gi]; else all = false; } });
-  if (all) earned += bonus;
-  return { groups, alloc, N, S, grid, A: grid.A, bonus, earned: Math.min(earned, grid.A), complete: all };
+  for (const p of projects || []) if (p.done_on && p.done_on >= start) n += puzProjectPieces(p);
+  return n;
 }
-function pieceOrder(wk, A) { // the order pieces are handed out in: shuffled, the same on every device
-  const rnd = rngFrom(`order${wk}${A}`), a = Array.from({ length: A }, (_, i) => i);
-  for (let i = A - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+function puzStatus() {
+  if (puzMemo === null) puzMemo = puzEarned();
+  const pool = Math.max(0, puzMemo - puz.archive.length * PUZ_A), placed = puz.cur ? puz.cur.placed.length : 0;
+  return { earned: puzMemo, pool, placed, tray: Math.max(0, Math.min(PUZ_A, pool) - placed), waiting: Math.max(0, pool - PUZ_A) };
+}
+function pieceOrder(id) { // the order pieces are handed out in: shuffled, the same on every device
+  const rnd = rngFrom(`order${id}`), a = Array.from({ length: PUZ_A }, (_, i) => i);
+  for (let i = PUZ_A - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
   return a;
 }
-const puzTray = (wk, sp, rec) => pieceOrder(wk, sp.A).slice(0, sp.earned).filter((i) => !(rec.placed || []).includes(i));
+const puzTray = () => pieceOrder(puz.cur.id).slice(0, Math.min(PUZ_A, puzStatus().pool)).filter((i) => !puz.cur.placed.includes(i));
+function rngFrom(str) { // a small seeded random generator, so a shuffle is the same on every device
+  let h = 2166136261;
+  for (const ch of String(str)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return () => { h |= 0; h = (h + 0x6D2B79F5) | 0; let t = Math.imul(h ^ (h >>> 15), 1 | h); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const safeImg = (u) => (/^https:\/\//i.test(u || '') ? String(u).replace(/["'()\s<>\\]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`) : '');
+const puzSeries = (id) => puz.series.find((s) => s.id === id);
 
-// ---- the picture: a landscape from Wikimedia Commons' featured photos (free to use, with credit)
+// ---- the puzzle in progress
+function puzNext() { // start the next puzzle from the active series
+  let s = puzSeries(puz.active) || puz.series[0];
+  if (s.items && s.next >= s.items.length) { toast(`${s.title} is finished! 🎉 Back to random landscapes`); s = puz.series.find((x) => !x.items); puz.active = s.id; }
+  const it = s.items ? s.items[s.next] : null;
+  puz.cur = { id: uid(), sid: s.id, name: it ? it.n : '', t: it ? it.t : '', h: it ? it.h || s.hint || '' : '', image: null, placed: [], fail: false, tries: 0 };
+  if (it) s.next++;
+}
+function puzEnsure() {
+  if (!puz.cur) { puzNext(); puzSave(); }
+  const c = puz.cur;
+  if (!c.image && !c.fail && !puzBusy) puzFetch();
+  return c;
+}
+async function puzFetch() {
+  const c = puz.cur;
+  if (!c || c.image || puzBusy) return;
+  puzBusy = true;
+  const id = c.id, rnd = rngFrom(`pic${id}${c.tries}`);
+  let img = null;
+  try { img = c.name ? await puzFindImage(c.t, c.h, rnd) : await commonsPick(rnd); } catch { /* offline or blocked */ }
+  if (!img && !c.name) img = { title: 'Random photo', url: `https://picsum.photos/seed/${id}/1600/1000`, w: 1600, h: 1000, page: 'https://picsum.photos', credit: 'Photo from Lorem Picsum (Unsplash)', source: 'Lorem Picsum' };
+  puzBusy = false;
+  if (!puz.cur || puz.cur.id !== id) return;
+  if (img) puz.cur.image = img; else puz.cur.fail = true;
+  puzSave();
+  if (['plan', 'today', 'puzzle'].includes(route.tab) && !typing() && !pzDrag) render();
+}
+function puzSkip() { // put this picture aside for a new one (a named item goes to the back of its series)
+  const c = puz.cur;
+  if (!c || c.placed.length) return;
+  const s = puzSeries(c.sid);
+  if (s && s.items && c.name) s.items.push({ n: c.name, t: c.t, h: c.h });
+  puz.cur = null; puzNext(); puzSave(); render();
+}
+function puzActivate(id) {
+  const s = puzSeries(id);
+  if (!s) return;
+  puz.active = id;
+  const c = puz.cur;
+  if (c && !c.placed.length) { // nothing placed yet: switch straight away and hand the picture back
+    const old = puzSeries(c.sid);
+    if (old && old.items && c.name && old.items[old.next - 1] && old.items[old.next - 1].n === c.name) old.next--;
+    puz.cur = null; puzNext();
+  }
+  puzSave(); render();
+}
+function puzDeleteSeries(id) {
+  const s = puzSeries(id);
+  if (!s || !s.items || !confirm(`Delete the series “${s.title}”? Pictures you already finished stay in your archive.`)) return;
+  puz.series = puz.series.filter((x) => x.id !== id);
+  if (puz.active === id) puz.active = 'landscapes';
+  if (puz.cur && puz.cur.sid === id) { if (puz.cur.placed.length) puz.cur.sid = 'landscapes'; else puz.cur = null; }
+  puzSave(); render();
+}
+function puzFinish() {
+  const c = puz.cur, s = puzSeries(c.sid);
+  const entry = { id: c.id, sid: c.sid, st: s ? s.title : '', n: c.name || c.image.title, image: c.image, at: todayISO() };
+  puz.archive.unshift(entry);
+  puz.cur = null; puzNext(); puzSave();
+  render();
+  openArchiveSheet(entry.id, true);
+}
+
+// ---- finding a picture on Wikimedia Commons (free to use, with credit)
+const WIKI_API = 'https://en.wikipedia.org/w/api.php', COMMONS_API = 'https://commons.wikimedia.org/w/api.php';
+const puzBadTitle = /\b(map|maps|flag|logo|coat of arms|locator|diagram|chart|seal|stamp|poster|plan|route|profile|montage|collage|print|engraving|lithograph|painting|drawing|illustration|postcard|map of|aerial view of port)\b|\.(svg|png|gif|pdf|tif|tiff|webp)$/i;
+const puzStrip = (h) => String((h && h.value) || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+const puzJson = async (url) => (await fetch(url, { signal: AbortSignal.timeout(12000) })).json();
+function puzImg(ii, title) {
+  const m = ii.extmetadata || {};
+  return { title: String(title).replace(/^File:/, '').replace(/\.[a-z]+$/i, '').slice(0, 120), url: ii.thumburl, w: ii.thumbwidth || 1600, h: ii.thumbheight || Math.round(1600 / (ii.width / ii.height)),
+    page: ii.descriptionurl || '', credit: `${puzStrip(m.Artist).slice(0, 80) || 'Unknown photographer'} · ${puzStrip(m.LicenseShortName).slice(0, 30) || 'see the page'}`, source: 'Wikimedia Commons' };
+}
+const puzShape = (ii, minW = 1400) => { const ar = ii.width / ii.height; return ii.thumburl && ii.width >= minW && ar >= 1.3 && ar <= 2.1; };
+const commonsPages = (j) => Object.values((j.query && j.query.pages) || {}).filter((p) => p.imageinfo && p.imageinfo[0]).map((p) => ({ title: p.title, ii: p.imageinfo[0], index: p.index || 0 }));
+const COMMONS_INFO = 'prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth=1600&format=json&origin=*';
+async function puzFindImage(title, hint, rnd) {
+  try { // the picture at the top of the Wikipedia article
+    const j = await puzJson(`${WIKI_API}?action=query&titles=${encodeURIComponent(title)}&redirects=1&prop=pageimages&piprop=name&format=json&origin=*`);
+    const pg = Object.values(j.query.pages)[0], file = pg && pg.pageimage;
+    if (file && /\.jpe?g$/i.test(file) && !puzBadTitle.test(file)) {
+      const [c] = commonsPages(await puzJson(`${COMMONS_API}?action=query&titles=${encodeURIComponent('File:' + file)}&${COMMONS_INFO}`));
+      if (c && puzShape(c.ii)) return puzImg(c.ii, c.title);
+    }
+  } catch { /* try the search below */ }
+  for (const term of [`${title} ${hint || ''}`.trim(), title]) {
+    try {
+      const list = commonsPages(await puzJson(`${COMMONS_API}?action=query&generator=search&gsrsearch=${encodeURIComponent(term + ' filetype:bitmap')}&gsrnamespace=6&gsrlimit=25&${COMMONS_INFO}`))
+        .sort((a, b) => a.index - b.index).filter((c) => /\.jpe?g$/i.test(c.title) && !puzBadTitle.test(c.title) && puzShape(c.ii));
+      if (list.length) { const c = list[Math.floor(rnd() * Math.min(3, list.length))]; return puzImg(c.ii, c.title); }
+    } catch { /* next term */ }
+  }
+  return null;
+}
 async function commonsTitles(cat) {
   try { const c = JSON.parse(localStorage.getItem(`puzCat:${cat}`) || 'null'); if (c && Date.now() - c.at < 7 * 864e5 && c.titles.length) return c.titles; } catch {}
-  const res = await fetch(`https://commons.wikimedia.org/w/api.php?action=query&list=categorymembers&cmtitle=Category:${cat}&cmtype=file&cmlimit=500&format=json&origin=*`, { signal: AbortSignal.timeout(12000) });
-  const titles = ((await res.json()).query.categorymembers || []).map((m) => m.title).filter((t) => /\.jpe?g$/i.test(t));
+  const titles = ((await puzJson(`${COMMONS_API}?action=query&list=categorymembers&cmtitle=Category:${cat}&cmtype=file&cmlimit=500&format=json&origin=*`)).query.categorymembers || []).map((m) => m.title).filter((t) => /\.jpe?g$/i.test(t));
   try { localStorage.setItem(`puzCat:${cat}`, JSON.stringify({ at: Date.now(), titles })); } catch {}
   return titles;
 }
-async function commonsPick(rand) {
+async function commonsPick(rand) { // a random featured landscape
   for (let t = 0; t < 8; t++) {
     const cat = PUZ_CATS[Math.floor(rand() * PUZ_CATS.length)], titles = await commonsTitles(cat);
     if (!titles.length) continue;
     const title = titles[Math.floor(rand() * titles.length)];
-    const res = await fetch(`https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth=1600&format=json&origin=*`, { signal: AbortSignal.timeout(12000) });
-    const page = Object.values((await res.json()).query.pages)[0], ii = page && page.imageinfo && page.imageinfo[0];
-    if (!ii || !ii.thumburl) continue;
-    const ar = ii.width / ii.height;
-    if (ar < 1.25 || ar > 1.9 || ii.width < 1600) continue; // not a panorama, not tiny
-    const m = ii.extmetadata || {}, strip = (h) => String((h && h.value) || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-    return { title: title.replace(/^File:/, '').replace(/\.[a-z]+$/i, '').slice(0, 120), url: ii.thumburl, w: ii.thumbwidth || 1600, h: ii.thumbheight || Math.round(1600 / ar),
-      page: ii.descriptionurl || '', credit: `${strip(m.Artist).slice(0, 80) || 'Unknown photographer'} · ${strip(m.LicenseShortName).slice(0, 30) || 'see the page'}`, source: 'Wikimedia Commons' };
+    const [c] = commonsPages(await puzJson(`${COMMONS_API}?action=query&titles=${encodeURIComponent(title)}&${COMMONS_INFO}`));
+    if (c && puzShape(c.ii, 1600) && c.ii.width / c.ii.height <= 1.9) return puzImg(c.ii, c.title);
   }
   return null;
 }
-async function puzFetchImage(wk, reroll = false) {
-  if (puzBusy.has(wk)) return;
-  puzBusy.add(wk);
-  let img = null;
-  try { img = await commonsPick(reroll ? Math.random : rngFrom(`pic${wk}`)); } catch { /* offline or blocked */ }
-  if (!img) img = { title: 'Random photo', url: `https://picsum.photos/seed/${wk}${reroll ? Math.floor(Math.random() * 999) : ''}/1600/1000`, w: 1600, h: 1000, page: 'https://picsum.photos', credit: 'Photo from Lorem Picsum (Unsplash)', source: 'Lorem Picsum' };
-  const r = puzCache[wk];
-  puzBusy.delete(wk);
-  if (!r) return;
-  r.image = img; puzSave(r);
-  if (['plan', 'today'].includes(route.tab) && !typing() && !pzDrag) render();
-}
-function puzRec(wk, create) {
-  let r = puzCache[wk];
-  if (!r && create) { r = puzCache[wk] = { week: wk, image: null, lock: null, placed: [], seen: 0 }; puzSaveLocal(); }
-  if (r && wk === currentWeekKey() && r.lock && r.lock.cols * r.lock.rows < PUZ_MIN) { r.lock = null; r.placed = []; r.seen = 0; puzSave(r); } // this week was started before jigsaws had at least 50 pieces
-  if (r && !r.image) puzFetchImage(wk);
-  return r || null;
+
+// "+10 pieces": told once when your pool grows.
+function puzzleNotify() {
+  const e = puzStatus().earned;
+  if (e > (puz.seen || 0)) { const d = e - puz.seen; puz.seen = e; puzSave(); toast(`+${d} jigsaw piece${d === 1 ? '' : 's'}! Place ${d === 1 ? 'it' : 'them'} on the Puzzle page`); }
+  else if (e < (puz.seen || 0)) { puz.seen = e; puzSave(); }
 }
 
-// ---- saved per week (on this device, and in Supabase when signed in)
-const puzDb = {
-  async load() { const { data, error } = await sb.from('puzzle_weeks').select('*'); if (error) throw error; return data || []; },
-  async save(r) {
-    const { error } = await sb.from('puzzle_weeks').upsert({ user_id: sbUser.id, week: r.week, image: r.image || {}, lock: r.lock || null, placed: r.placed || [], seen: Math.min(80, r.seen || 0), updated_at: new Date().toISOString() }, { onConflict: 'user_id,week' });
-    if (error) throw error;
-  },
-};
-function puzSave(r) {
-  puzSaveLocal();
-  if (sbUser && sb && !puzCloudOff) puzDb.save(r).catch((e) => { if (/does not exist|schema cache/i.test(e.message || '')) puzCloudOff = true; });
+// ---- series: type what you want
+function puzParseSeries(phrase, list) {
+  const p = String(phrase || '').trim().replace(/\s+/g, ' ');
+  let lines = String(list || '').split(/\n|;/).map((s) => s.trim()).filter(Boolean);
+  if (lines.length === 1 && lines[0].includes(',')) lines = lines[0].split(',').map((s) => s.trim()).filter(Boolean);
+  if (lines.length) {
+    const items = lines.slice(0, 200).map((l) => { const [n, h] = l.split('|').map((x) => x.trim()); return { n: n.slice(0, 80), t: n.slice(0, 100), h: (h || '').slice(0, 60) }; });
+    return { title: (p || 'My series').slice(0, 60), hint: '', items };
+  }
+  if (!p) return { error: 'Type what you want, for example “top 10 highest mountains”.' };
+  const low = p.toLowerCase(), topic = PUZ_TOPICS.find((t) => t.words.test(low));
+  if (!topic) return { error: `I can’t find “${p}” by myself yet. Pick one of the topics below, or type your own list (one per line) and I’ll find a picture for each.` };
+  const m = low.match(/(?:top|first|best)\s*(\d+)|(\d+)\s*(?:highest|longest|largest|tallest|biggest|famous|most)/) || low.match(/\b(\d+)\b/);
+  const want = /\ball\b/.test(low) || !m ? Infinity : +(m[1] || m[2]);
+  const items = topic.items.slice(0, Math.max(1, Math.min(want, topic.items.length))).map(puzItem);
+  return { title: p[0].toUpperCase() + p.slice(1), hint: topic.hint, items, short: want !== Infinity && want > topic.items.length ? topic.items.length : 0 };
 }
-async function puzLoadCloud() {
-  if (puzLoaded || !sbUser || !sb || puzCloudOff) return;
-  puzLoaded = true;
-  try {
-    for (const row of await puzDb.load()) {
-      const mine = puzCache[row.week];
-      if (!mine || (row.placed || []).length >= (mine.placed || []).length) {
-        puzCache[row.week] = { week: row.week, image: row.image && row.image.url ? row.image : (mine && mine.image) || null, lock: row.lock || (mine && mine.lock) || null, placed: row.placed || [], seen: Math.max(row.seen || 0, mine ? mine.seen || 0 : 0) };
-      }
-    }
-    puzSaveLocal();
-    if (['plan', 'puzzle'].includes(route.tab) && !typing() && !pzDrag) render();
-  } catch (e) { puzLoaded = false; if (/does not exist|schema cache/i.test(e.message || '')) puzCloudOff = true; }
+function createSeries(form) {
+  const f = new FormData(form), r = puzParseSeries(f.get('phrase'), f.get('list'));
+  if (r.error) { const el = $sheet.querySelector('[data-series-msg]'); if (el) el.textContent = r.error; return; }
+  const s = { id: uid(), title: r.title, hint: r.hint, items: r.items, next: 0 };
+  puz.series.push(s);
+  closeSheet();
+  puzActivate(s.id);
+  toast(`${s.title}: ${s.items.length} pictures${r.short ? ` (that’s all I have for this topic)` : ''}`);
 }
-// "+4 pieces": told once when a day's group arrives.
-function puzzleNotify() {
-  const wk = currentWeekKey(), r = puzCache[wk];
-  if (!r) return;
-  const sp = puzzleSpec(wk, r);
-  if (sp.earned > (r.seen || 0)) { const d = sp.earned - (r.seen || 0); r.seen = sp.earned; puzSave(r); toast(`+${d} jigsaw piece${d === 1 ? '' : 's'}! Put ${d === 1 ? 'it' : 'them'} in place on the Puzzle page`); }
-  else if (sp.earned < (r.seen || 0)) { r.seen = sp.earned; puzSaveLocal(); }
+function openSeriesSheet() {
+  openSheet(`<div class="sheet-head"><h3>New series</h3><p class="muted">A series is a list of pictures, one jigsaw each, in order. Say what you want and I’ll find the pictures. Names and sources stay hidden until each jigsaw is finished.</p></div>
+    <form class="form flat" data-form="series-new">
+      <label class="f">What series?<input name="phrase" placeholder="top 10 highest mountains" autocomplete="off" autocapitalize="off"></label>
+      <div class="pz-chips">${PUZ_TOPICS.map((t) => `<button type="button" class="pz-chip" data-act="series-topic" data-v="${escapeHtml(t.ask)}">${escapeHtml(t.title)}</button>`).join('')}</div>
+      <label class="f">…or your own list<textarea name="list" rows="5" placeholder="One per line, for example:&#10;Mount Everest&#10;K2&#10;Lhotse"></textarea>
+        <span class="help">If you fill this in it is used instead of the topic. Add “| extra words” after a name to help find the right photo.</span></label>
+      <p class="small warn-text" data-series-msg></p>
+      <button class="btn primary" type="submit">Create series</button>
+      <button type="button" class="btn" data-act="close">Cancel</button>
+    </form>`);
+}
+
+// ---- project complete → pieces
+async function projToggleDone(id) {
+  const p = projById(id);
+  if (!p) return;
+  const on = !p.done_on;
+  try { const saved = await projDb.save('projects', { id, done_on: on ? todayISO() : null }); p.done_on = saved.done_on || null; } catch (e) {
+    toast(/done_on|column|schema cache/i.test((e && e.message) || '') ? 'Run supabase/focus-puzzle.sql in Supabase first, then try again' : sbErr(e)); return;
+  }
+  puzMemo = null;
+  puz.seen = Math.max(puz.seen || 0, puzEarned()); puzSave();
+  toast(on ? `Project complete! +${puzProjectPieces(p)} jigsaw pieces` : 'Project reopened');
+  render();
 }
 
 // ---- jigsaw pieces: a rectangle with a tab or a slot on each inner edge
@@ -6944,38 +7101,37 @@ function edgeD(P, Q, n) { // from P to Q; n is the outward direction times the t
   for (const s of TAB.slice(1)) d += `C${at(s[0], s[1])} ${at(s[2], s[3])} ${at(s[4], s[5])} `;
   return `${d}L${Q[0].toFixed(1)} ${Q[1].toFixed(1)} `;
 }
-function pzSigns(wk, cols, rows) {
-  const rnd = rngFrom(`tabs${wk}${cols}x${rows}`), pick = () => (rnd() < 0.5 ? 1 : -1);
-  return { hs: Array.from({ length: Math.max(0, rows - 1) }, () => Array.from({ length: cols }, pick)), vs: Array.from({ length: rows }, () => Array.from({ length: Math.max(0, cols - 1) }, pick)) };
+function pzSigns(id) {
+  const rnd = rngFrom(`tabs${id}`), pick = () => (rnd() < 0.5 ? 1 : -1);
+  return { hs: Array.from({ length: PUZ_ROWS - 1 }, () => Array.from({ length: PUZ_COLS }, pick)), vs: Array.from({ length: PUZ_ROWS }, () => Array.from({ length: PUZ_COLS - 1 }, pick)) };
 }
 function pzPath(r, c, g, sg) {
   const { w, h, k, cols, rows } = g, x0 = k, y0 = k, x1 = k + w, y1 = k + h;
   const top = r > 0 ? -sg.hs[r - 1][c] : 0, bottom = r < rows - 1 ? sg.hs[r][c] : 0, left = c > 0 ? -sg.vs[r][c - 1] : 0, right = c < cols - 1 ? sg.vs[r][c] : 0;
   return `M${x0} ${y0} ${edgeD([x0, y0], [x1, y0], [0, -top])}${edgeD([x1, y0], [x1, y1], [right, 0])}${edgeD([x1, y1], [x0, y1], [0, bottom])}${edgeD([x0, y1], [x0, y0], [-left, 0])}Z`;
 }
-function pzGeometry(sp, rec, W) {
-  const { cols, rows } = sp.grid, H = W * (rec.image.h / rec.image.w), w = W / cols, h = H / rows;
-  return { cols, rows, W, H, w, h, k: Math.ceil(Math.max(w, h) * 0.32) };
+function pzGeometry(cur, W) {
+  const H = W * (cur.image.h / cur.image.w), w = W / PUZ_COLS, h = H / PUZ_ROWS;
+  return { cols: PUZ_COLS, rows: PUZ_ROWS, W, H, w, h, k: Math.ceil(Math.max(w, h) * 0.32) };
 }
-function pzPiece(idx, g, sg, rec) {
+function pzPiece(idx, g, sg, cur) {
   const r = Math.floor(idx / g.cols), c = idx % g.cols, el = document.createElement('div');
   el.className = 'pz-piece';
-  Object.assign(el.style, { width: `${g.w + 2 * g.k}px`, height: `${g.h + 2 * g.k}px`, backgroundImage: `url("${safeImg(rec.image.url)}")`, backgroundSize: `${g.W}px ${g.H}px`,
+  Object.assign(el.style, { width: `${g.w + 2 * g.k}px`, height: `${g.h + 2 * g.k}px`, backgroundImage: `url("${safeImg(cur.image.url)}")`, backgroundSize: `${g.W}px ${g.H}px`,
     backgroundPosition: `${g.k - c * g.w}px ${g.k - r * g.h}px`, backgroundRepeat: 'no-repeat', clipPath: `path('${pzPath(r, c, g, sg)}')` });
   return el;
 }
 let pzDrag = null;
 function layoutPuzzle() {
   const board = $app.querySelector('.pz-board'), tray = $app.querySelector('[data-pz-tray]');
-  if (!board) return;
-  const wk = board.dataset.pz, rec = puzCache[wk];
-  if (!rec || !rec.image || !board.clientWidth) return;
-  const sp = puzzleSpec(wk, rec), g = pzGeometry(sp, rec, board.clientWidth), sg = pzSigns(wk, g.cols, g.rows);
+  const cur = puz.cur;
+  if (!board || !cur || !cur.image || !board.clientWidth) return;
+  const g = pzGeometry(cur, board.clientWidth), sg = pzSigns(cur.id);
   board.style.height = `${g.H}px`;
   board.style.setProperty('--cw', `${g.w}px`); board.style.setProperty('--ch', `${g.h}px`);
   board.innerHTML = '';
-  for (const idx of rec.placed || []) {
-    const el = pzPiece(idx, g, sg, rec), r = Math.floor(idx / g.cols), c = idx % g.cols;
+  for (const idx of cur.placed) {
+    const el = pzPiece(idx, g, sg, cur), r = Math.floor(idx / g.cols), c = idx % g.cols;
     Object.assign(el.style, { left: `${c * g.w - g.k}px`, top: `${r * g.h - g.k}px` });
     el.classList.add('placed');
     board.appendChild(el);
@@ -6983,26 +7139,26 @@ function layoutPuzzle() {
   if (tray) {
     tray.innerHTML = '';
     const ts = Math.min(1, 92 / g.h);
-    for (const idx of puzTray(wk, sp, rec)) {
-      const wrap = document.createElement('div'), el = pzPiece(idx, g, sg, rec);
+    for (const idx of puzTray()) {
+      const wrap = document.createElement('div'), el = pzPiece(idx, g, sg, cur);
       wrap.className = 'pz-item'; wrap.dataset.idx = idx;
       Object.assign(wrap.style, { width: `${(g.w + 2 * g.k) * ts}px`, height: `${(g.h + 2 * g.k) * ts}px` });
       Object.assign(el.style, { transform: `scale(${ts})`, transformOrigin: '0 0' });
       wrap.appendChild(el); tray.appendChild(wrap);
     }
-    if (!tray.children.length) tray.innerHTML = `<p class="muted small">${sp.earned >= sp.A ? 'Every piece is in place.' : 'No pieces to place right now. Finish a day’s routines and its group of pieces arrives here.'}</p>`;
+    if (!tray.children.length) tray.innerHTML = '<p class="muted small">No pieces to place right now. Tick a routine (+10), finish a one-off task (+5) or complete a project and they arrive here.</p>';
   }
   pzDrag = null;
-  window.__pzGeom = { wk, g, sg, rec };
+  window.__pzGeom = { g, sg, cur };
 }
 document.addEventListener('pointerdown', (e) => {
   const item = e.target.closest && e.target.closest('.pz-item');
   if (!item || e.button > 0 || route.page !== 'puzzle' || !window.__pzGeom) return;
-  const { wk, g, sg, rec } = window.__pzGeom, idx = +item.dataset.idx;
-  const ghost = pzPiece(idx, g, sg, rec);
+  const { g, sg, cur } = window.__pzGeom, idx = +item.dataset.idx;
+  const ghost = pzPiece(idx, g, sg, cur);
   ghost.className = 'pz-piece pz-ghostpiece';
   document.body.appendChild(ghost);
-  pzDrag = { idx, ghost, wk, g, rec, x: e.clientX, y: e.clientY, item };
+  pzDrag = { idx, ghost, g, cur, x: e.clientX, y: e.clientY, item };
   item.classList.add('lifted');
   pzMoveGhost(e.clientX, e.clientY);
   pzDrag.scroll = setInterval(() => { if (pzDrag.y < 70) window.scrollBy(0, -14); else if (pzDrag.y > innerHeight - 70) window.scrollBy(0, 14); }, 16);
@@ -7023,14 +7179,11 @@ document.addEventListener('pointerup', (e) => {
   if (!board) { pzDrag = null; return; }
   const b = board.getBoundingClientRect(), r = Math.floor(d.idx / d.g.cols), c = d.idx % d.g.cols;
   const cx = b.left + (c + 0.5) * d.g.w, cy = b.top + (r + 0.5) * d.g.h;
-  if (Math.hypot(e.clientX - cx, e.clientY - cy) < Math.max(d.g.w, d.g.h) * 0.6) { // close enough to its own spot: it snaps in
-    const rec = d.rec, sp = puzzleSpec(d.wk, rec);
-    if (!rec.lock) rec.lock = { cols: sp.grid.cols, rows: sp.grid.rows }; // the grid is now fixed for the week
-    rec.placed = [...(rec.placed || []), d.idx];
-    puzSave(rec);
+  if (Math.hypot(e.clientX - cx, e.clientY - cy) < Math.max(d.g.w, d.g.h) * 0.6 && puz.cur && puz.cur.id === d.cur.id && !puz.cur.placed.includes(d.idx)) { // close enough to its own spot: it snaps in
+    puz.cur.placed.push(d.idx);
+    puzSave();
     pzDrag = null;
-    if (rec.placed.length >= sp.A) toast('Puzzle complete! 🎉');
-    render();
+    if (puz.cur.placed.length >= PUZ_A) puzFinish(); else render();
   } else {
     d.item.animate([{ transform: 'translateX(-5px)' }, { transform: 'translateX(5px)' }, { transform: 'none' }], { duration: 220 }); // not there: back to the tray
     pzDrag = null;
@@ -7040,50 +7193,59 @@ document.addEventListener('pointercancel', () => { if (pzDrag) { clearInterval(p
 window.addEventListener('resize', () => { if (route.page === 'puzzle' && !pzDrag) layoutPuzzle(); });
 
 // ---- the card on This week, and the Puzzle page
-const DAY3 = DAY_NAMES;
-function puzzleChips(sp) {
-  return `<div class="pz-chips">${sp.groups.map((g, gi) => g.total ? `<span class="pz-chip ${g.done >= g.total ? 'got' : ''}" title="${g.done} of ${g.total} done">${gi < 7 ? DAY3[gi] : 'Week'} <b>${sp.alloc[gi]}</b></span>` : '').join('')}</div>`;
-}
 function puzzleCardHtml() {
-  const wk = currentWeekKey(), sp0 = puzzleSpec(wk);
-  if (!sp0.N) return `<aside class="card pzcard" data-section="Puzzle"><div class="card-head"><h2>Puzzle</h2></div><p class="small muted">Pieces come from your routines and dated appointments. Add some and this week’s jigsaw appears.</p></aside>`;
-  const rec = puzRec(wk, true), sp = puzzleSpec(wk, rec), placed = (rec.placed || []).length, tray = Math.max(0, sp.earned - placed), pct = sp.A ? placed / sp.A : 0;
+  const cur = puzEnsure(), st = puzStatus();
   return `<aside class="card pzcard" data-section="Puzzle">
-    <div class="card-head"><h2>Puzzle</h2><span class="hint">${placed}/${sp.A} placed</span></div>
-    <span class="pz-bar" style="--p:${Math.round(pct * 100)}%" aria-hidden="true"><i></i></span>
-    ${puzzleChips(sp)}
-    <p class="small">${sp.earned} of ${sp.A} pieces earned${sp.earned < sp.A ? ' · the rest arrive as you finish each day' : ''}</p>
-    <a class="btn ${tray ? 'primary' : ''}" href="#/puzzle">${tray ? `Place ${tray} piece${tray === 1 ? '' : 's'} ›` : 'Open puzzle ›'}</a>
+    <div class="card-head"><h2>Puzzle</h2><span class="hint">${cur.placed.length}/${PUZ_A} placed</span></div>
+    <span class="pz-bar" style="--p:${Math.round((cur.placed.length / PUZ_A) * 100)}%" aria-hidden="true"><i></i></span>
+    <p class="small">${st.tray} piece${st.tray === 1 ? '' : 's'} ready to place${st.waiting ? ` · ${st.waiting} saved for the next jigsaw` : ''}</p>
+    <p class="small muted">Routine tick +${PUZ_ROUTINE} · one-off task +${PUZ_ONCE} · project complete +${PUZ_PROJECT_MIN}, or ${PUZ_PROJECT_WEEK} a week for long ones</p>
+    <a class="btn ${st.tray ? 'primary' : ''}" href="#/puzzle">${st.tray ? `Place ${st.tray} piece${st.tray === 1 ? '' : 's'} ›` : 'Open puzzle ›'}</a>
   </aside>`;
 }
+function puzzleSeriesHtml() {
+  const rows = puz.series.map((s) => {
+    const done = puz.archive.filter((a) => a.sid === s.id).length, on = puz.active === s.id;
+    return `<div class="pz-series ${on ? 'on' : ''}"><div class="pzs-name"><b>${escapeHtml(s.title)}</b><span>${s.items ? `${done} of ${s.items.length} done` : `${done} done · never runs out`}</span></div>
+      ${on ? '<span class="pzs-on">Next up</span>' : `<button class="mini-btn" data-act="series-use" data-id="${s.id}">Use next</button>`}
+      ${s.items ? `<button class="icon-btn small" data-act="series-del" data-id="${s.id}" aria-label="Delete series ${escapeHtml(s.title)}">✕</button>` : ''}</div>`;
+  }).join('');
+  return `<section class="card" data-section="Series"><div class="card-head"><h2>Series</h2><button class="mini-btn push" data-act="series-new">+ New series</button></div>
+    <p class="small muted">The next jigsaw comes from the series marked “Next up”.</p>${rows}</section>`;
+}
+function puzzleArchiveHtml() {
+  if (!puz.archive.length) return `<section class="card" data-section="Archive"><div class="card-head"><h2>Archive</h2></div><p class="small muted">Finished jigsaws are kept here, with the picture’s name and source.</p></section>`;
+  return `<section class="card" data-section="Archive"><div class="card-head"><h2>Archive</h2><span class="hint">${puz.archive.length} finished</span></div>
+    <div class="pz-coll">${puz.archive.map((a) => `<button class="pz-cell full" data-act="arch-open" data-id="${a.id}" style="background-image:url('${safeImg(a.image.url)}')"><span>${escapeHtml(a.n)}<b>${escapeHtml(a.st || '')}</b></span></button>`).join('')}</div></section>`;
+}
+function openArchiveSheet(id, justDone = false) {
+  const a = puz.archive.find((x) => x.id === id);
+  if (!a) return;
+  openSheet(`<div class="sheet-head"><h3>${justDone ? 'Complete! 🎉 ' : ''}${escapeHtml(a.n)}</h3><p class="muted small">${escapeHtml(a.st || '')}${a.st ? ' · ' : ''}finished ${fmtShort(a.at)}</p></div>
+    <img class="pz-big" src="${safeImg(a.image.url)}" alt="${escapeHtml(a.n)}">
+    <p class="pz-credit">${escapeHtml(a.image.title)} · ${escapeHtml(a.image.credit)}${a.image.page ? ` · <a href="${escapeHtml(a.image.page)}" target="_blank" rel="noopener">source ↗</a>` : ''}</p>
+    <button class="btn" data-act="close">${justDone ? 'Next jigsaw' : 'Close'}</button>`);
+}
 function puzzlePageHtml() {
-  const wk = route.wk || currentWeekKey(), cur = wk === currentWeekKey();
-  const sp0 = puzzleSpec(wk), rec = puzRec(wk, cur && sp0.N > 0);
+  const cur = puzEnsure(), st = puzStatus(), s = puzSeries(cur.sid);
   const back = '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>';
-  const head = `<header class="top">${topBar({ left: back, label: cur ? 'This week' : weekLabel(wk), title: weekRange(wk), right: '<a class="txt-btn" href="#/plan">Week ›</a>' })}</header>`;
-  const coll = puzzleCollectionHtml(wk);
-  if (!rec) return `${head}<section class="card empty"><p><b>${sp0.N ? 'No puzzle for this week' : 'No pieces this week yet'}</b></p><p class="small muted">Pieces come from your routines and the dated appointments in your calendar. Add some and a puzzle appears.</p><a class="btn" href="#/plan">Go to This week</a></section>${coll}`;
-  const sp = puzzleSpec(wk, rec), placed = (rec.placed || []).length, tray = Math.max(0, sp.earned - placed), done = placed >= sp.A;
+  const head = `<header class="top">${topBar({ left: back, label: 'Puzzle', title: 'Jigsaw', right: '<a class="txt-btn" href="#/plan">Week ›</a>' })}</header>`;
+  const sub = s && s.items ? `${escapeHtml(s.title)} · ${puz.archive.filter((a) => a.sid === s.id).length + 1} of ${s.items.length}` : 'Random landscape';
+  let body;
+  if (cur.image) {
+    body = `<div class="pz-board" data-pz="${cur.id}"></div>
+      <div class="pz-trayhead">${st.tray ? `Pieces to place (${st.tray}). Drag each to its spot.` : 'Pieces to place'}${st.waiting ? ` · ${st.waiting} more saved for the next jigsaw` : ''}</div><div class="pz-tray" data-pz-tray></div>
+      ${cur.placed.length ? '' : '<button class="btn" data-act="pz-skip">Pick a different picture</button>'}`;
+  } else if (cur.fail) {
+    body = `<p class="muted pad">I couldn’t find a good photo for this one.</p><div class="btn-row"><button class="btn primary" data-act="pz-retry">Try again</button><button class="btn" data-act="pz-skip">Skip it</button></div>`;
+  } else body = '<p class="muted pad">Finding a picture…</p>';
   return `${head}
     <section class="card pzmain" data-section="Puzzle">
-      <div class="card-head"><h2>${done ? 'Complete! 🎉' : 'Jigsaw'}</h2><span class="hint">${sp.earned} earned · ${placed} placed · ${sp.A} pieces</span></div>
-      ${puzzleChips(sp)}
-      ${rec.image ? `<div class="pz-board" data-pz="${wk}"></div>
-        <div class="pz-trayhead">${tray ? `Pieces to place (${tray}). Drag each to its spot.` : 'Pieces to place'}</div><div class="pz-tray" data-pz-tray></div>
-        <p class="pz-credit"><b>${escapeHtml(rec.image.title)}</b> · ${escapeHtml(rec.image.credit)}${rec.image.page ? ` · <a href="${escapeHtml(rec.image.page)}" target="_blank" rel="noopener">source ↗</a>` : ''}</p>
-        ${placed === 0 && cur ? '<button class="btn" data-act="pz-reroll">Pick a different picture</button>' : ''}`
-        : '<p class="muted pad">Choosing a landscape…</p>'}
-    </section>${coll}`;
-}
-function puzzleCollectionHtml(cur) {
-  const list = Object.values(puzCache).filter((r) => r.image && r.week !== cur).sort((a, b) => b.week.localeCompare(a.week));
-  if (!list.length) return '';
-  return `<section class="card" data-section="Collection"><div class="card-head"><h2>Collection</h2><span class="hint">${list.length} week${list.length === 1 ? '' : 's'}</span></div>
-    <div class="pz-coll">${list.map((r) => {
-      const sp = puzzleSpec(r.week, r), n = (r.placed || []).length, full = n >= sp.A && sp.A > 0;
-      return `<a class="pz-cell ${full ? 'full' : ''}" href="#/puzzle/${r.week}" ${full ? `style="background-image:url('${safeImg(r.image.url)}')"` : ''}>
-        <span>${weekRange(r.week)}<b>${full ? '✓ complete' : `${n}/${sp.A}`}</b></span></a>`;
-    }).join('')}</div></section>`;
+      <div class="card-head"><h2>Jigsaw</h2><span class="hint">${cur.placed.length}/${PUZ_A} placed</span></div>
+      <p class="small muted">${sub} · the picture and its name are a surprise until you finish.</p>
+      ${body}
+      <p class="small muted">Earn pieces: routine tick +${PUZ_ROUTINE} · one-off task +${PUZ_ONCE} · project complete +${PUZ_PROJECT_MIN}, or ${PUZ_PROJECT_WEEK} a week for long ones.</p>
+    </section>${puzzleSeriesHtml()}${puzzleArchiveHtml()}`;
 }
 
 // ---------- Sheets (bottom modals) ----------
@@ -7405,7 +7567,14 @@ document.addEventListener('click', (e) => {
     case 'focus-stop': openFocusStop(); break;
     case 'focus-resume': closeSheet(); if (focusT && focusT.pausedAt) focusPause(); break;
     case 'focus-discard': discardFocus(); break;
-    case 'pz-reroll': { const wk = route.wk || currentWeekKey(); if (puzCache[wk]) { puzCache[wk].image = null; puzSaveLocal(); puzFetchImage(wk, true); render(); } break; }
+    case 'pz-skip': puzSkip(); break;
+    case 'pz-retry': if (puz.cur) { puz.cur.fail = false; puz.cur.tries = (puz.cur.tries || 0) + 1; puzSave(); render(); } break;
+    case 'series-new': openSeriesSheet(); break;
+    case 'series-topic': { const el = $sheet.querySelector('[name="phrase"]'); if (el) { el.value = btn.dataset.v; el.focus(); } break; }
+    case 'series-use': puzActivate(btn.dataset.id); break;
+    case 'series-del': puzDeleteSeries(btn.dataset.id); break;
+    case 'arch-open': openArchiveSheet(btn.dataset.id); break;
+    case 'proj-done': projToggleDone(route.projId); break;
     case 'plan-week': { const d = +btn.dataset.d; planWk = d === 0 ? null : addDaysISO(planWk || currentWeekKey(), d * 7); if (planWk === currentWeekKey()) planWk = null; render(); break; }
     case 'plan-extra': planExtras[btn.dataset.k] = !planExtras[btn.dataset.k]; try { localStorage.setItem('planExtras', JSON.stringify(planExtras)); } catch {} render(); break;
     case 'wday-place': if (wbPick) placeOnDay(wbPick, btn.dataset.day); break;
@@ -7708,6 +7877,7 @@ document.addEventListener('submit', (e) => {
   else if (form === 'step-quick') quickStep(e.target);
   else if (form === 'focus-custom') { const m = num(new FormData(e.target).get('min'), 0); if (m >= 1) startFocus('down', m); else toast('Enter the minutes'); }
   else if (form === 'focus-stop') saveFocus(e.target);
+  else if (form === 'series-new') createSeries(e.target);
   else if (form === 'wb-add') wbAdd(e.target);
   else if (form === 'acad-connect') acadConnect(e.target);
   else if (form === 'acad-course') acadSaveCourse(e.target);
