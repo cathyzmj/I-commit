@@ -199,7 +199,7 @@ let reorderMode = false;
 function newCommitment(fields) {
   return {
     id: uid(), name: '', section: 'Other', freq: 'daily', kind: 'task', target: 1, unit: '', step: 1,
-    hours: 1, everyDays: 7, date: null, time: null, endTime: null, notes: '', notionUrl: '', links: [], source: null, schedule: false,
+    hours: 1, everyDays: 7, date: null, time: null, endTime: null, notes: '', notionUrl: '', links: [], source: null, schedule: false, track: false,
     archived: false, order: 0, ...fields,
   };
 }
@@ -236,6 +236,7 @@ function normaliseItem(it) {
   it.ticks = fit7(it.ticks, false).map(Boolean);
   it.counts = fit7(it.counts, 0).map((n) => num(n));
   it.mins = fit7(it.mins, null).map((m) => (m == null ? null : num(m)));
+  it.focus = fit7(it.focus, 0).map((m) => num(m)); // focus-time minutes per day
   it.count = num(it.count);
   it.done = !!it.done;
   return it;
@@ -315,9 +316,9 @@ function migrate(s) {
 
 // ---------- Weeks ----------
 // A week stores a snapshot of each commitment so past weeks keep the plan they had.
-const SNAPSHOT_FIELDS = ['name', 'section', 'freq', 'kind', 'target', 'unit', 'step', 'hours', 'order', 'date', 'time', 'endTime', 'schedule', 'timeUnit', 'everyDays'];
+const SNAPSHOT_FIELDS = ['name', 'section', 'freq', 'kind', 'target', 'unit', 'step', 'hours', 'order', 'date', 'time', 'endTime', 'schedule', 'timeUnit', 'everyDays', 'track'];
 function blankItem(c) {
-  const it = { ticks: Array(7).fill(false), counts: Array(7).fill(0), mins: Array(7).fill(null), count: 0, done: false };
+  const it = { ticks: Array(7).fill(false), counts: Array(7).fill(0), mins: Array(7).fill(null), focus: Array(7).fill(0), count: 0, done: false };
   for (const f of SNAPSHOT_FIELDS) it[f] = c[f];
   return it;
 }
@@ -376,11 +377,12 @@ const counterHours = (it, n) => (isHourUnit(it.unit) ? n : it.target > 0 ? (it.h
 const dayDone = (it, i) => (it.kind === 'task' ? it.ticks[i] : reached(it.counts[i], it.target));
 const dayStarted = (it, i) => (it.kind === 'task' ? it.ticks[i] : it.counts[i] > 0);
 function dayHours(it, i) {
+  if (it.track && it.focus && it.focus[i] > 0) return it.focus[i] / 60; // recorded focus time is the real time spent
   if (it.mins[i] != null && dayStarted(it, i)) return it.mins[i] / 60;
   return it.kind === 'task' ? (it.ticks[i] ? it.hours : 0) : counterHours(it, it.counts[i]);
 }
 const periodDone = (it) => (it.kind === 'task' ? it.done : reached(it.count, it.target));
-const periodHours = (it) => (it.kind === 'task' ? (it.done ? it.hours : 0) : counterHours(it, it.count));
+const periodHours = (it) => (it.track && it.focus && it.focus.some((m) => m > 0) ? it.focus.reduce((a, b) => a + b, 0) / 60 : it.kind === 'task' ? (it.done ? it.hours : 0) : counterHours(it, it.count));
 
 // ---------- Periodic routines ----------
 // e.g. laundry every 7 days: due on its first date, then N days after it was last done.
@@ -543,6 +545,7 @@ function parseHash() {
   if (a === 'tests') return { tab: 'routine', page: 'tests', testId: b || null };
   if (a === 'board') return { tab: 'cal', page: 'board' };
   if (a === 'academics') return /^\d+$/.test(b || '') ? { tab: 'academics', page: 'course', courseId: +b } : { tab: 'academics' };
+  if (a === 'puzzle') return { tab: 'plan', page: 'puzzle', wk: /^\d{4}-\d{2}-\d{2}$/.test(b || '') ? b : null };
   if (a === 'gallery' && b) return { tab: 'gallery', page: b === 'new' || c === 'edit' ? 'project-edit' : 'project', projId: b };
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
   return { tab: ['home', 'plan', 'today', 'routine', 'cal', 'buddy', 'gallery', 'academics', 'commitments'].includes(a) ? a : 'plan' };
@@ -598,6 +601,7 @@ function render() {
   else if (route.page === 'board') html = boardPageHtml();
   else if (route.page === 'project') html = projectPageHtml();
   else if (route.page === 'course') html = courseHtml();
+  else if (route.page === 'puzzle') html = puzzlePageHtml();
   else if (route.page === 'project-edit') html = projectEditHtml();
   else if (route.id && route.edit) html = editPageHtml();
   else if (route.id) html = detailPageHtml(route.id);
@@ -613,13 +617,15 @@ function render() {
   else html = todayTabHtml();
   $app.dataset.tab = route.id || route.page ? 'page' : route.tab;
   $app.dataset.page = route.page || '';
-  $app.innerHTML = html + tabBarHtml() + floatDonutHtml(); // the floating donut replaces the sidebar
+  $app.innerHTML = html + tabBarHtml() + floatDonutHtml() + focusBarHtml(); // the floating donut replaces the sidebar
   if (route.tab === 'plan' && planJump) { // arriving on This week: bring today into view
     planJump = false;
     setTimeout(() => { const t = $app.querySelector('.wday.today'); if (t) t.scrollIntoView({ block: 'center' }); }, 30); // after the page's own jump to the top
   }
   fillSideSections();
   if (route.page === 'knowledge' || route.page === 'course') initMaps();
+  if (route.page === 'puzzle') layoutPuzzle();
+  if (['plan', 'today', 'home'].includes(route.tab)) puzzleNotify();
   if (route.page === 'board') layoutBoard();
   if (route.page === 'project') scrollTimeline();
 }
@@ -748,7 +754,7 @@ function periodRowHtml(wk, id, it, { showDate = false } = {}) {
         <div class="sub">${sub}</div>
         ${it.kind === 'counter' ? `<div class="mini"><i style="width:${pct}%"></i></div>` : ''}
       </a>
-      ${stageUrlById(id) ? `<a class="mini-btn go-link" href="${escapeHtml(stageUrlById(id))}" target="_blank" rel="noopener" title="Open link">↗</a>` : stepper}
+      ${focusBtn(id, wk, Math.max(0, todayIndex(wk)), it)}${stageUrlById(id) ? `<a class="mini-btn go-link" href="${escapeHtml(stageUrlById(id))}" target="_blank" rel="noopener" title="Open link">↗</a>` : stepper}
     </div>`;
 }
 
@@ -788,8 +794,8 @@ function todayDailyRow(wk, ti, id, it, sub) {
        </div>`;
   return `
     <div class="trow ${it.archived ? 'archived' : ''}">
-      <a class="name" href="#/c/${id}"><div class="n">${escapeHtml(it.name)}</div><div class="sub">${sub}</div></a>
-      ${control}
+      <a class="name" href="#/c/${id}"><div class="n">${escapeHtml(it.name)}</div><div class="sub">${sub}${focusMinOf(it, ti) ? ` · ${fmtMin(focusMinOf(it, ti))} focused` : ''}</div></a>
+      ${focusBtn(id, wk, ti, it)}${control}
     </div>`;
 }
 function todayTabHtml() {
@@ -2363,6 +2369,7 @@ async function refreshBuddy() {
     }
     buddyError = null;
     if (projects === null) loadProjects();
+    puzLoadCloud();
     acadEnsure();
     buddyAutoTick();
     scheduleShare(500);
@@ -3286,6 +3293,8 @@ function editPageHtml() {
           <input name="hours" type="number" inputmode="decimal" min="0" step="${c.timeUnit === 'min' ? 5 : 0.25}" value="${c.timeUnit === 'min' ? Math.round(c.hours * 60) : round2(c.hours)}" aria-label="Planned time">
           <div class="seg">${radio('timeUnit', 'min', 'minutes', c.timeUnit === 'min' ? 'min' : 'h')}${radio('timeUnit', 'h', 'hours', c.timeUnit === 'min' ? 'min' : 'h')}</div>
         </div></div>
+      <div class="f">Time tracking<div class="seg">${radio('track', 'no', 'Just tick', c.track ? 'yes' : 'no')}${radio('track', 'yes', 'Record focus time', c.track ? 'yes' : 'no')}</div>
+        <span class="help">With “Record focus time” the task gets a ▶ button: run a stopwatch or a countdown and the minutes are saved on its day.</span></div>
       <label class="f">What to do<textarea name="notes" rows="5" placeholder="Steps, chapter you're on, checklist…">${escapeHtml(c.notes)}</textarea></label>
       ${c.stage ? `<label class="f">Test / interview link<input name="stageUrl" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(c.stageUrl || '')}" placeholder="HireVue invite, test portal, Zoom…"></label>` : ''}
       <label class="f">Notion page<input name="notionUrl" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(c.notionUrl)}" placeholder="https://www.notion.so/…"></label>
@@ -3320,6 +3329,7 @@ function saveCommitmentForm(form) {
     timeUnit: f.get('timeUnit') === 'min' ? 'min' : 'h',
     hours: kind === 'counter' && isHourUnit(unit) ? target : (f.get('timeUnit') === 'min' ? num(f.get('hours')) / 60 : num(f.get('hours'))),
     notes: String(f.get('notes') || '').trim(),
+    track: f.get('track') === 'yes',
     notionUrl: cleanUrl(f.get('notionUrl')),
     ...(f.has('stageUrl') ? { stageUrl: cleanUrl(f.get('stageUrl')) } : {}),
     links: f.getAll('linkUrl').map((u, i) => ({ label: String(f.getAll('linkLabel')[i] || '').trim(), url: cleanUrl(u) })).filter((l) => l.url),
@@ -6281,7 +6291,7 @@ function planDayHtml(wk, w, i) {
     total++; if (ok) done++;
     const prog = it.kind === 'counter' ? `${round2(it.counts[i])}/${round2(it.target)}${it.unit ? ` ${it.unit}` : ''}` : it.freq === 'periodic' ? `every ${everyLabel(it.everyDays || 7)}` : '';
     rows.push(`<li><button class="wb ${ok ? 'done' : ''}" data-cell="${wk}:${id}:${i}" aria-label="${escapeHtml(cellLabel(it, i))}">
-      <span class="wbox">${ok ? CHECK : ''}</span><span class="wname">${escapeHtml(it.name)}</span>${prog ? `<small>${escapeHtml(prog)}</small>` : ''}</button></li>`);
+      <span class="wbox">${ok ? CHECK : ''}</span><span class="wname">${escapeHtml(it.name)}</span>${prog || focusMinOf(it, i) ? `<small>${escapeHtml([prog, focusMinOf(it, i) ? fmtMin(focusMinOf(it, i)) : ''].filter(Boolean).join(' · '))}</small>` : ''}</button>${focusBtn(id, wk, i, it)}</li>`);
   }
   const ones = w ? itemsOf(w, 'once').filter(([, it]) => it.date === d && !it.schedule) : [];
   if (ones.length) rows.push('<li class="wsep" aria-hidden="true"></li>');
@@ -6290,7 +6300,7 @@ function planDayHtml(wk, w, i) {
     total++; if (ok) done++;
     rows.push(`<li class="wb once ${ok ? 'done' : ''}" data-wdrag="task:${id}">
       <button class="wbox" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-label="${escapeHtml(it.name)} done" aria-pressed="${ok}">${ok ? CHECK : ''}</button>
-      <a class="wname" href="#/c/${id}" draggable="false">${it.time ? `<small class="wtime">${escapeHtml(it.time)}</small> ` : ''}${escapeHtml(it.name)}</a></li>`);
+      <a class="wname" href="#/c/${id}" draggable="false">${it.time ? `<small class="wtime">${escapeHtml(it.time)}</small> ` : ''}${escapeHtml(it.name)}</a>${focusMinOf(it, i) ? `<small>${fmtMin(focusMinOf(it, i))}</small>` : ''}${focusBtn(id, wk, i, it)}</li>`);
   }
   for (const n of notesOn(d)) {
     total++; if (n.done) done++;
@@ -6362,12 +6372,12 @@ function planHtml() {
     <header class="top">${topBar({ left: '<button class="icon-btn" data-act="plan-week" data-d="-1" aria-label="Previous week">‹</button>',
       label: cur ? 'This week' : weekLabel(wk), title: weekRange(wk), titleAct: cur ? '' : 'data-act="plan-week" data-d="0"',
       right: '<button class="icon-btn" data-act="plan-week" data-d="1" aria-label="Next week">›</button>' })}
-      <div class="plan-links"><a href="#/today">Today</a><a href="#/cal">Full calendar</a><a href="#/board">Notes board</a>
+      <div class="plan-links"><a href="#/today">Today</a>${weekFocusMin(w) ? `<span class="plan-focus" title="Focus time recorded this week">⏱ ${fmtMin(weekFocusMin(w))} focused</span>` : ''}<a href="#/cal">Full calendar</a><a href="#/board">Notes board</a>
         <span class="plan-show">Show:${PLAN_EXTRAS.map(([k, l]) => `<button class="mini-btn ${planExtras[k] ? 'on' : ''}" data-act="plan-extra" data-k="${k}" aria-pressed="${!!planExtras[k]}">${l}</button>`).join('')}</span></div>
     </header>
     <div class="plan">
       <div class="plan-days" data-section="Week">${planWeeklyHtml(wk, w)}${planStudyHtml(wk)}${DAY_NAMES.map((_, i) => planDayHtml(wk, w, i)).join('')}</div>
-      ${whiteboardColHtml()}
+      <div class="plan-side">${whiteboardColHtml()}${puzzleCardHtml()}</div>
     </div>`;
 }
 
@@ -6566,7 +6576,7 @@ function homeHtml() {
       <div class="home-donut">${donutSvg({ big: true })}<p class="help center">Tap the centre for your week, or a slice to go there.</p></div>
       <div class="home-areas"><a class="harea centre" href="#/plan"><span class="hdot"></span><b>This week</b><span>Your week, day by day, with the whiteboard</span></a>${areas}</div>
     </section>
-    <nav class="home-links"><a href="#/today">Today</a><a href="#/cal">Calendar</a><a href="#/calendar">Calendars</a><a href="#/reminders">Reminders</a>
+    <nav class="home-links"><a href="#/puzzle">Puzzle</a><a href="#/today">Today</a><a href="#/cal">Calendar</a><a href="#/calendar">Calendars</a><a href="#/reminders">Reminders</a>
       <a href="#/account">${state.account ? 'Account' : 'Sign in'}</a><a href="#/widget">Phone widget</a><button data-act="export-xlsx">Export to Excel</button><button data-act="menu">More…</button></nav>`;
 }
 // The floating mini-donut on every other page.
@@ -6659,6 +6669,426 @@ document.addEventListener('click', (e) => {
   if (open && !fd) { open.classList.remove('open'); e.preventDefault(); e.stopPropagation(); return; } // closing shouldn't also tap what's underneath
   if (fd && !fd.classList.contains('open') && window.matchMedia('(hover: none)').matches) { e.preventDefault(); e.stopPropagation(); fd.classList.add('open'); }
 }, true);
+
+// ---------- Focus time ----------
+// A task can be "just tick" (the default) or "record focus time". A task that records time gets a ▶ button:
+// pick a stopwatch or a countdown, a small timer bar follows you round the app, and when you stop the minutes
+// are added to that task's day (and its planned-vs-actual hours). The timer lives on this device and survives a
+// refresh. Sessions are also kept as history in Supabase (supabase/focus-puzzle.sql).
+const FOCUS_KEY = 'focusTimer';
+let focusT = null; // { id, wk, i, name, mode: 'up' | 'down', target (minutes), start (ms), paused (ms paused so far), pausedAt (ms, 0 while running), alerted }
+try { focusT = JSON.parse(localStorage.getItem(FOCUS_KEY) || 'null'); } catch {}
+const saveFocusT = () => { try { if (focusT) localStorage.setItem(FOCUS_KEY, JSON.stringify(focusT)); else localStorage.removeItem(FOCUS_KEY); } catch {} };
+const focusElapsed = () => (focusT ? (focusT.pausedAt || Date.now()) - focusT.start - focusT.paused : 0);
+const fmtClock = (ms) => {
+  const t = Math.floor(Math.max(0, ms) / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+};
+const fmtMin = (m) => { m = Math.round(m); return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`; };
+function focusShown() {
+  if (!focusT) return '';
+  if (focusT.mode === 'down') { const left = focusT.target * 60000 - focusElapsed(); return left >= 0 ? fmtClock(left) : `+${fmtClock(-left)}`; }
+  return fmtClock(focusElapsed());
+}
+const focusMinOf = (it, i) => Math.round((it && it.focus && it.focus[i]) || 0);
+const focusSum = (it) => (it && it.focus ? it.focus.reduce((a, b) => a + (+b || 0), 0) : 0);
+// the ▶ button on a task that records time
+const focusBtn = (id, wk, i, it) => (it && it.track
+  ? `<button class="fbtn ${focusT && focusT.id === id ? 'on' : ''}" data-act="focus-start" data-id="${id}" data-wk="${wk}" data-day="${i}" aria-label="Focus on ${escapeHtml(it.name)}" title="Start focus time">▶</button>` : '');
+function focusBarHtml() {
+  if (!focusT) return '';
+  const over = focusT.mode === 'down' && focusElapsed() >= focusT.target * 60000;
+  return `<div class="fbar ${focusT.pausedAt ? 'paused' : ''} ${over ? 'over' : ''}" role="timer" aria-label="Focus timer">
+    <span class="fbar-n">${escapeHtml(focusT.name)}</span><b data-ftime>${focusShown()}</b>
+    <button data-act="focus-pause" aria-label="${focusT.pausedAt ? 'Resume' : 'Pause'}">${focusT.pausedAt ? '▶' : '⏸'}</button>
+    <button data-act="focus-stop" aria-label="Stop and save">■</button></div>`;
+}
+function focusTick() {
+  if (!focusT) { if (/^[▶⏸]/.test(document.title)) document.title = 'I Commit!'; return; }
+  const el = document.querySelector('[data-ftime]');
+  if (el) el.textContent = focusShown();
+  document.title = `${focusT.pausedAt ? '⏸' : '▶'} ${focusShown()} · ${focusT.name}`;
+  if (focusT.mode === 'down' && !focusT.alerted && !focusT.pausedAt && focusElapsed() >= focusT.target * 60000) {
+    focusT.alerted = true; saveFocusT();
+    const bar = document.querySelector('.fbar'); if (bar) bar.classList.add('over');
+    toast(`Time’s up: ${focusT.name}`);
+    try { if (window.Notification && Notification.permission === 'granted') new Notification('Focus time is up', { body: focusT.name }); } catch {}
+    try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch {}
+  }
+}
+setInterval(focusTick, 1000);
+
+function openFocusSheet(id, wk, i) {
+  const c = state.commitments.find((x) => x.id === id);
+  if (!c) return;
+  if (focusT) { toast(focusT.id === id ? 'This task is already being timed' : 'Stop the running timer first'); return; }
+  const planned = Math.round(plannedHours(c) * 60);
+  openSheet(`<div class="sheet-head"><h3>Focus: ${escapeHtml(c.name)}</h3></div>
+    <div class="menu">
+      <button class="btn primary" data-act="focus-go" data-mode="up">Stopwatch <small>counts up until you stop</small></button>
+      <div class="f"><span>Countdown</span>
+        <div class="focus-presets">${[...new Set([25, 50, ...(planned > 0 && planned <= 600 ? [planned] : [])])].sort((a, b) => a - b).map((m) =>
+          `<button class="btn" data-act="focus-go" data-mode="down" data-min="${m}">${m} min${m === planned ? ' · planned' : ''}</button>`).join('')}</div>
+        <form class="inline" data-form="focus-custom"><input name="min" type="number" inputmode="numeric" min="1" max="600" placeholder="Other, in minutes"><button class="mini-btn" type="submit">Start</button></form></div>
+      <button class="btn" data-act="close">Cancel</button>
+    </div>`, { focus: { id, wk, i } });
+}
+function startFocus(mode, minutes) {
+  const ctx = sheetCtx && sheetCtx.focus, c = ctx && state.commitments.find((x) => x.id === ctx.id);
+  if (!c || focusT) return;
+  focusT = { id: c.id, wk: ctx.wk, i: ctx.i, name: c.name, mode, target: mode === 'down' ? Math.min(600, Math.max(1, Math.round(minutes))) : 0, start: Date.now(), paused: 0, pausedAt: 0, alerted: false };
+  saveFocusT(); closeSheet(); render();
+  try { if (mode === 'down' && window.Notification && Notification.permission === 'default') Notification.requestPermission(); } catch {} // so the end of a countdown can ping you
+}
+function focusPause() {
+  if (!focusT) return;
+  if (focusT.pausedAt) { focusT.paused += Date.now() - focusT.pausedAt; focusT.pausedAt = 0; } else focusT.pausedAt = Date.now();
+  saveFocusT(); render();
+}
+// Stop: the timer pauses while you check the minutes and say whether the task is done.
+function openFocusStop() {
+  if (!focusT) return;
+  if (!focusT.pausedAt) focusT.pausedAt = Date.now();
+  saveFocusT(); render();
+  const mins = Math.max(1, Math.round(focusElapsed() / 60000)), it = (state.weeks[focusT.wk] || { items: {} }).items[focusT.id];
+  const finished = it && (it.kind === 'task' ? (it.freq === 'daily' || it.freq === 'periodic' ? it.ticks[focusT.i] : it.done) : false);
+  openSheet(`<div class="sheet-head"><h3>${escapeHtml(focusT.name)}</h3></div>
+    <form class="form flat" data-form="focus-stop">
+      <label class="f">Minutes to save<input name="min" type="number" inputmode="numeric" min="1" max="1440" value="${mins}" required>
+        <span class="help">Change it if you forgot to stop the timer.</span></label>
+      ${it && it.kind === 'task' ? `<label class="toggle-row"><input type="checkbox" name="done" ${finished ? 'checked disabled' : ''}><span>${finished ? 'Already ticked off' : 'Tick it off as done'}</span></label>` : ''}
+      <button class="btn primary" type="submit">Save</button>
+      <button type="button" class="btn" data-act="focus-resume">Keep going</button>
+      <button type="button" class="btn warn" data-act="focus-discard">Discard this session</button>
+    </form>`, { focusStop: true });
+}
+function saveFocus(form) {
+  if (!focusT) return;
+  const f = new FormData(form), mins = Math.min(1440, Math.max(1, Math.round(num(f.get('min'), 1))));
+  const w = getWeek(focusT.wk), it = w && w.items[focusT.id];
+  if (it) {
+    it.focus = fit7(it.focus, 0).map((n) => num(n));
+    it.focus[focusT.i] = round2(it.focus[focusT.i] + mins);
+    if (f.get('done') === 'on' && it.kind === 'task') { if (it.freq === 'daily' || it.freq === 'periodic') it.ticks[focusT.i] = true; else it.done = true; }
+  }
+  const t = focusT;
+  focusT = null; saveFocusT(); save(); closeSheet(); render();
+  toast(`Saved ${fmtMin(mins)}${form.querySelector('[name="done"]:checked:not(:disabled)') ? ' and ticked it off' : ''}`);
+  if (sbUser && sb) sb.from('focus_sessions').insert({ task_id: t.id, task_name: t.name.slice(0, 200), day: isoDate(dayDate(t.wk, t.i)), minutes: mins, mode: t.mode }).then(() => {}, () => {}); // history, best effort
+}
+function discardFocus() {
+  if (!confirm('Throw this session away?')) return;
+  focusT = null; saveFocusT(); closeSheet(); render();
+}
+function weekFocusMin(w) { return w ? Object.values(w.items).reduce((n, it) => n + focusSum(it), 0) : 0; }
+
+// ---------- Weekly jigsaw ----------
+// Each week has a landscape jigsaw. Pieces come from your routines and the appointments in your calendar
+// (dated tasks), so the week's total is known up front. When you finish everything planned for a DAY you
+// receive that day's group of pieces and can start placing them; weekly routines give a piece each when
+// reached; finishing everything adds the last few so the picture can be completed. Pieces earned are worked
+// out from your ticks (nothing to store); which pieces are placed, and the picture, are saved per week
+// (supabase/focus-puzzle.sql, with a copy on this device).
+const PUZ_CAP = 60;
+const PUZ_CATS = ['Featured_pictures_of_landscapes', 'Featured_pictures_of_mountains', 'Featured_pictures_of_lakes', 'Featured_pictures_of_beaches', 'Featured_pictures_of_waterfalls', 'Featured_pictures_of_forests'];
+let puzCache = {}, puzCloudOff = false, puzLoaded = false;
+const puzBusy = new Set();
+try { puzCache = JSON.parse(localStorage.getItem('puzzles') || '{}') || {}; } catch {}
+const puzSaveLocal = () => { try { localStorage.setItem('puzzles', JSON.stringify(puzCache)); } catch {} };
+function rngFrom(str) { // a small seeded random generator, so a week's shuffle is the same on every device
+  let h = 2166136261;
+  for (const ch of String(str)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return () => { h |= 0; h = (h + 0x6D2B79F5) | 0; let t = Math.imul(h ^ (h >>> 15), 1 | h); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const safeImg = (u) => (/^https:\/\//i.test(u || '') ? String(u).replace(/["'()\s<>\\]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`) : '');
+
+// ---- what's planned, what's done, what's earned
+function onceDoneP(id, it) { // an appointment: ticked, or (if it came from a synced calendar) once it has passed
+  if (periodDone(it)) return true;
+  const c = state.commitments.find((x) => x.id === id);
+  if (!c || !c.source || !it.date) return false;
+  const now = new Date(), t = it.endTime || it.time, hm = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  return it.date < todayISO() || (it.date === todayISO() && (!t || t <= hm));
+}
+function allocate(raw, cap) { // shrink the day groups proportionally when a week has more than `cap` things
+  const N = raw.reduce((a, b) => a + b, 0);
+  if (N <= cap) return raw.slice();
+  const exact = raw.map((n) => (n * cap) / N), out = exact.map((x, i) => (raw[i] ? Math.max(1, Math.floor(x)) : 0));
+  let left = cap - out.reduce((a, b) => a + b, 0);
+  const order = exact.map((x, i) => [x - Math.floor(x), i]).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; left > 0 && k < 400; k++) { const i = order[k % order.length][1]; if (raw[i]) { out[i]++; left--; } }
+  while (left < 0) { const i = out.indexOf(Math.max(...out)); out[i]--; left++; }
+  return out;
+}
+function chooseGrid(S) { // a landscape-shaped rectangle with room for S pieces (the few spare ones are the finishing bonus)
+  S = Math.max(S, 6);
+  let best = null;
+  for (let rows = 2; rows <= 8; rows++) for (let cols = rows; cols <= 10; cols++) {
+    const A = rows * cols;
+    if (A < S || A > S + 9) continue;
+    const score = (A - S) * 1.2 + Math.abs(cols / rows - 1.5) * 4;
+    if (!best || score < best.score) best = { cols, rows, A, score };
+  }
+  return best || { cols: 8, rows: 8, A: 64 };
+}
+function puzzleSpec(wk, rec) {
+  const w = state.weeks[wk] || (wk === currentWeekKey() ? getWeek(wk) : null);
+  const groups = Array.from({ length: 8 }, () => ({ total: 0, done: 0 })); // Mon..Sun, then the weekly routines
+  if (w) {
+    for (let i = 0; i < 7; i++) {
+      const d = isoDate(dayDate(wk, i)), g = groups[i];
+      for (const [, it] of itemsOf(w, 'daily')) { g.total++; if (dayDone(it, i)) g.done++; }
+      for (const [id, it] of itemsOf(w, 'periodic')) { const st = periodicOn(id, it, d); if (st) { g.total++; if (st === 'done' || dayDone(it, i)) g.done++; } }
+      for (const [id, it] of itemsOf(w, 'once')) if (it.date === d && !it.schedule) { g.total++; if (onceDoneP(id, it)) g.done++; }
+    }
+    for (const [, it] of itemsOf(w, 'weekly')) { groups[7].total++; if (periodDone(it)) groups[7].done++; }
+  }
+  const raw = groups.map((g) => g.total), N = raw.reduce((a, b) => a + b, 0);
+  const lock = rec && rec.lock && rec.lock.cols && rec.lock.rows ? rec.lock : null;
+  const grid = lock ? { cols: lock.cols, rows: lock.rows, A: lock.cols * lock.rows } : chooseGrid(Math.min(N, PUZ_CAP));
+  const alloc = allocate(raw, Math.min(PUZ_CAP, grid.A));
+  const S = alloc.reduce((a, b) => a + b, 0), bonus = Math.max(0, grid.A - S);
+  let earned = 0, all = N > 0;
+  groups.forEach((g, gi) => { if (g.total > 0) { if (g.done >= g.total) earned += alloc[gi]; else all = false; } });
+  if (all) earned += bonus;
+  return { groups, alloc, N, S, grid, A: grid.A, bonus, earned: Math.min(earned, grid.A), complete: all };
+}
+function pieceOrder(wk, A) { // the order pieces are handed out in: shuffled, the same on every device
+  const rnd = rngFrom(`order${wk}${A}`), a = Array.from({ length: A }, (_, i) => i);
+  for (let i = A - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+const puzTray = (wk, sp, rec) => pieceOrder(wk, sp.A).slice(0, sp.earned).filter((i) => !(rec.placed || []).includes(i));
+
+// ---- the picture: a landscape from Wikimedia Commons' featured photos (free to use, with credit)
+async function commonsTitles(cat) {
+  try { const c = JSON.parse(localStorage.getItem(`puzCat:${cat}`) || 'null'); if (c && Date.now() - c.at < 7 * 864e5 && c.titles.length) return c.titles; } catch {}
+  const res = await fetch(`https://commons.wikimedia.org/w/api.php?action=query&list=categorymembers&cmtitle=Category:${cat}&cmtype=file&cmlimit=500&format=json&origin=*`, { signal: AbortSignal.timeout(12000) });
+  const titles = ((await res.json()).query.categorymembers || []).map((m) => m.title).filter((t) => /\.jpe?g$/i.test(t));
+  try { localStorage.setItem(`puzCat:${cat}`, JSON.stringify({ at: Date.now(), titles })); } catch {}
+  return titles;
+}
+async function commonsPick(rand) {
+  for (let t = 0; t < 8; t++) {
+    const cat = PUZ_CATS[Math.floor(rand() * PUZ_CATS.length)], titles = await commonsTitles(cat);
+    if (!titles.length) continue;
+    const title = titles[Math.floor(rand() * titles.length)];
+    const res = await fetch(`https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth=1600&format=json&origin=*`, { signal: AbortSignal.timeout(12000) });
+    const page = Object.values((await res.json()).query.pages)[0], ii = page && page.imageinfo && page.imageinfo[0];
+    if (!ii || !ii.thumburl) continue;
+    const ar = ii.width / ii.height;
+    if (ar < 1.25 || ar > 1.9 || ii.width < 1600) continue; // not a panorama, not tiny
+    const m = ii.extmetadata || {}, strip = (h) => String((h && h.value) || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    return { title: title.replace(/^File:/, '').replace(/\.[a-z]+$/i, '').slice(0, 120), url: ii.thumburl, w: ii.thumbwidth || 1600, h: ii.thumbheight || Math.round(1600 / ar),
+      page: ii.descriptionurl || '', credit: `${strip(m.Artist).slice(0, 80) || 'Unknown photographer'} · ${strip(m.LicenseShortName).slice(0, 30) || 'see the page'}`, source: 'Wikimedia Commons' };
+  }
+  return null;
+}
+async function puzFetchImage(wk, reroll = false) {
+  if (puzBusy.has(wk)) return;
+  puzBusy.add(wk);
+  let img = null;
+  try { img = await commonsPick(reroll ? Math.random : rngFrom(`pic${wk}`)); } catch { /* offline or blocked */ }
+  if (!img) img = { title: 'Random photo', url: `https://picsum.photos/seed/${wk}${reroll ? Math.floor(Math.random() * 999) : ''}/1600/1000`, w: 1600, h: 1000, page: 'https://picsum.photos', credit: 'Photo from Lorem Picsum (Unsplash)', source: 'Lorem Picsum' };
+  const r = puzCache[wk];
+  puzBusy.delete(wk);
+  if (!r) return;
+  r.image = img; puzSave(r);
+  if (['plan', 'today'].includes(route.tab) && !typing() && !pzDrag) render();
+}
+function puzRec(wk, create) {
+  let r = puzCache[wk];
+  if (!r && create) { r = puzCache[wk] = { week: wk, image: null, lock: null, placed: [], seen: 0 }; puzSaveLocal(); }
+  if (r && !r.image) puzFetchImage(wk);
+  return r || null;
+}
+
+// ---- saved per week (on this device, and in Supabase when signed in)
+const puzDb = {
+  async load() { const { data, error } = await sb.from('puzzle_weeks').select('*'); if (error) throw error; return data || []; },
+  async save(r) {
+    const { error } = await sb.from('puzzle_weeks').upsert({ user_id: sbUser.id, week: r.week, image: r.image || {}, lock: r.lock || null, placed: r.placed || [], seen: Math.min(80, r.seen || 0), updated_at: new Date().toISOString() }, { onConflict: 'user_id,week' });
+    if (error) throw error;
+  },
+};
+function puzSave(r) {
+  puzSaveLocal();
+  if (sbUser && sb && !puzCloudOff) puzDb.save(r).catch((e) => { if (/does not exist|schema cache/i.test(e.message || '')) puzCloudOff = true; });
+}
+async function puzLoadCloud() {
+  if (puzLoaded || !sbUser || !sb || puzCloudOff) return;
+  puzLoaded = true;
+  try {
+    for (const row of await puzDb.load()) {
+      const mine = puzCache[row.week];
+      if (!mine || (row.placed || []).length >= (mine.placed || []).length) {
+        puzCache[row.week] = { week: row.week, image: row.image && row.image.url ? row.image : (mine && mine.image) || null, lock: row.lock || (mine && mine.lock) || null, placed: row.placed || [], seen: Math.max(row.seen || 0, mine ? mine.seen || 0 : 0) };
+      }
+    }
+    puzSaveLocal();
+    if (['plan', 'puzzle'].includes(route.tab) && !typing() && !pzDrag) render();
+  } catch (e) { puzLoaded = false; if (/does not exist|schema cache/i.test(e.message || '')) puzCloudOff = true; }
+}
+// "+4 pieces": told once when a day's group arrives.
+function puzzleNotify() {
+  const wk = currentWeekKey(), r = puzCache[wk];
+  if (!r) return;
+  const sp = puzzleSpec(wk, r);
+  if (sp.earned > (r.seen || 0)) { const d = sp.earned - (r.seen || 0); r.seen = sp.earned; puzSave(r); toast(`+${d} jigsaw piece${d === 1 ? '' : 's'}! Put ${d === 1 ? 'it' : 'them'} in place on the Puzzle page`); }
+  else if (sp.earned < (r.seen || 0)) { r.seen = sp.earned; puzSaveLocal(); }
+}
+
+// ---- jigsaw pieces: a rectangle with a tab or a slot on each inner edge
+const TAB = [[0.36, 0], [0.44, 0, 0.42, 0.06, 0.42, 0.10], [0.42, 0.15, 0.36, 0.17, 0.36, 0.22], [0.36, 0.29, 0.45, 0.31, 0.50, 0.31], [0.55, 0.31, 0.64, 0.29, 0.64, 0.22], [0.64, 0.17, 0.58, 0.15, 0.58, 0.10], [0.58, 0.06, 0.56, 0, 0.64, 0]];
+function edgeD(P, Q, n) { // from P to Q; n is the outward direction times the tab's sign (0 = a flat edge)
+  if (!n[0] && !n[1]) return `L${Q[0].toFixed(1)} ${Q[1].toFixed(1)} `;
+  const dx = Q[0] - P[0], dy = Q[1] - P[1], L = Math.hypot(dx, dy);
+  const at = (a, b) => `${(P[0] + dx * a + n[0] * b * L).toFixed(1)} ${(P[1] + dy * a + n[1] * b * L).toFixed(1)}`;
+  let d = `L${at(TAB[0][0], 0)} `;
+  for (const s of TAB.slice(1)) d += `C${at(s[0], s[1])} ${at(s[2], s[3])} ${at(s[4], s[5])} `;
+  return `${d}L${Q[0].toFixed(1)} ${Q[1].toFixed(1)} `;
+}
+function pzSigns(wk, cols, rows) {
+  const rnd = rngFrom(`tabs${wk}${cols}x${rows}`), pick = () => (rnd() < 0.5 ? 1 : -1);
+  return { hs: Array.from({ length: Math.max(0, rows - 1) }, () => Array.from({ length: cols }, pick)), vs: Array.from({ length: rows }, () => Array.from({ length: Math.max(0, cols - 1) }, pick)) };
+}
+function pzPath(r, c, g, sg) {
+  const { w, h, k, cols, rows } = g, x0 = k, y0 = k, x1 = k + w, y1 = k + h;
+  const top = r > 0 ? -sg.hs[r - 1][c] : 0, bottom = r < rows - 1 ? sg.hs[r][c] : 0, left = c > 0 ? -sg.vs[r][c - 1] : 0, right = c < cols - 1 ? sg.vs[r][c] : 0;
+  return `M${x0} ${y0} ${edgeD([x0, y0], [x1, y0], [0, -top])}${edgeD([x1, y0], [x1, y1], [right, 0])}${edgeD([x1, y1], [x0, y1], [0, bottom])}${edgeD([x0, y1], [x0, y0], [-left, 0])}Z`;
+}
+function pzGeometry(sp, rec, W) {
+  const { cols, rows } = sp.grid, H = W * (rec.image.h / rec.image.w), w = W / cols, h = H / rows;
+  return { cols, rows, W, H, w, h, k: Math.ceil(Math.max(w, h) * 0.32) };
+}
+function pzPiece(idx, g, sg, rec) {
+  const r = Math.floor(idx / g.cols), c = idx % g.cols, el = document.createElement('div');
+  el.className = 'pz-piece';
+  Object.assign(el.style, { width: `${g.w + 2 * g.k}px`, height: `${g.h + 2 * g.k}px`, backgroundImage: `url("${safeImg(rec.image.url)}")`, backgroundSize: `${g.W}px ${g.H}px`,
+    backgroundPosition: `${g.k - c * g.w}px ${g.k - r * g.h}px`, backgroundRepeat: 'no-repeat', clipPath: `path('${pzPath(r, c, g, sg)}')` });
+  return el;
+}
+let pzDrag = null;
+function layoutPuzzle() {
+  const board = $app.querySelector('.pz-board'), tray = $app.querySelector('[data-pz-tray]');
+  if (!board) return;
+  const wk = board.dataset.pz, rec = puzCache[wk];
+  if (!rec || !rec.image || !board.clientWidth) return;
+  const sp = puzzleSpec(wk, rec), g = pzGeometry(sp, rec, board.clientWidth), sg = pzSigns(wk, g.cols, g.rows);
+  board.style.height = `${g.H}px`;
+  board.style.setProperty('--cw', `${g.w}px`); board.style.setProperty('--ch', `${g.h}px`);
+  board.innerHTML = `<div class="pz-ghost" style="background-image:url('${safeImg(rec.image.url)}')"></div>`;
+  for (const idx of rec.placed || []) {
+    const el = pzPiece(idx, g, sg, rec), r = Math.floor(idx / g.cols), c = idx % g.cols;
+    Object.assign(el.style, { left: `${c * g.w - g.k}px`, top: `${r * g.h - g.k}px` });
+    el.classList.add('placed');
+    board.appendChild(el);
+  }
+  if (tray) {
+    tray.innerHTML = '';
+    const ts = Math.min(1, 92 / g.h);
+    for (const idx of puzTray(wk, sp, rec)) {
+      const wrap = document.createElement('div'), el = pzPiece(idx, g, sg, rec);
+      wrap.className = 'pz-item'; wrap.dataset.idx = idx;
+      Object.assign(wrap.style, { width: `${(g.w + 2 * g.k) * ts}px`, height: `${(g.h + 2 * g.k) * ts}px` });
+      Object.assign(el.style, { transform: `scale(${ts})`, transformOrigin: '0 0' });
+      wrap.appendChild(el); tray.appendChild(wrap);
+    }
+    if (!tray.children.length) tray.innerHTML = `<p class="muted small">${sp.earned >= sp.A ? 'Every piece is in place.' : 'No pieces to place right now. Finish a day’s routines and its group of pieces arrives here.'}</p>`;
+  }
+  pzDrag = null;
+  window.__pzGeom = { wk, g, sg, rec };
+}
+document.addEventListener('pointerdown', (e) => {
+  const item = e.target.closest && e.target.closest('.pz-item');
+  if (!item || e.button > 0 || route.page !== 'puzzle' || !window.__pzGeom) return;
+  const { wk, g, sg, rec } = window.__pzGeom, idx = +item.dataset.idx;
+  const ghost = pzPiece(idx, g, sg, rec);
+  ghost.className = 'pz-piece pz-ghostpiece';
+  document.body.appendChild(ghost);
+  pzDrag = { idx, ghost, wk, g, rec, x: e.clientX, y: e.clientY, item };
+  item.classList.add('lifted');
+  pzMoveGhost(e.clientX, e.clientY);
+  pzDrag.scroll = setInterval(() => { if (pzDrag.y < 70) window.scrollBy(0, -14); else if (pzDrag.y > innerHeight - 70) window.scrollBy(0, 14); }, 16);
+  item.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+function pzMoveGhost(x, y) {
+  const d = pzDrag;
+  d.x = x; d.y = y;
+  d.ghost.style.transform = `translate(${x - (d.g.w / 2 + d.g.k)}px, ${y - (d.g.h / 2 + d.g.k)}px)`;
+}
+document.addEventListener('pointermove', (e) => { if (pzDrag) pzMoveGhost(e.clientX, e.clientY); });
+document.addEventListener('pointerup', (e) => {
+  const d = pzDrag;
+  if (!d) return;
+  clearInterval(d.scroll); d.ghost.remove(); d.item.classList.remove('lifted');
+  const board = $app.querySelector('.pz-board');
+  if (!board) { pzDrag = null; return; }
+  const b = board.getBoundingClientRect(), r = Math.floor(d.idx / d.g.cols), c = d.idx % d.g.cols;
+  const cx = b.left + (c + 0.5) * d.g.w, cy = b.top + (r + 0.5) * d.g.h;
+  if (Math.hypot(e.clientX - cx, e.clientY - cy) < Math.max(d.g.w, d.g.h) * 0.6) { // close enough to its own spot: it snaps in
+    const rec = d.rec, sp = puzzleSpec(d.wk, rec);
+    if (!rec.lock) rec.lock = { cols: sp.grid.cols, rows: sp.grid.rows }; // the grid is now fixed for the week
+    rec.placed = [...(rec.placed || []), d.idx];
+    puzSave(rec);
+    pzDrag = null;
+    if (rec.placed.length >= sp.A) toast('Puzzle complete! 🎉');
+    render();
+  } else {
+    d.item.animate([{ transform: 'translateX(-5px)' }, { transform: 'translateX(5px)' }, { transform: 'none' }], { duration: 220 }); // not there: back to the tray
+    pzDrag = null;
+  }
+});
+document.addEventListener('pointercancel', () => { if (pzDrag) { clearInterval(pzDrag.scroll); pzDrag.ghost.remove(); pzDrag.item.classList.remove('lifted'); pzDrag = null; } });
+window.addEventListener('resize', () => { if (route.page === 'puzzle' && !pzDrag) layoutPuzzle(); });
+
+// ---- the card on This week, and the Puzzle page
+const DAY3 = DAY_NAMES;
+function puzzleChips(sp) {
+  return `<div class="pz-chips">${sp.groups.map((g, gi) => g.total ? `<span class="pz-chip ${g.done >= g.total ? 'got' : ''}" title="${g.done} of ${g.total} done">${gi < 7 ? DAY3[gi] : 'Week'} <b>${sp.alloc[gi]}</b></span>` : '').join('')}</div>`;
+}
+function puzzleCardHtml() {
+  const wk = currentWeekKey(), sp0 = puzzleSpec(wk);
+  if (!sp0.N) return `<aside class="card pzcard" data-section="Puzzle"><div class="card-head"><h2>Puzzle</h2></div><p class="small muted">Pieces come from your routines and dated appointments. Add some and this week’s jigsaw appears.</p></aside>`;
+  const rec = puzRec(wk, true), sp = puzzleSpec(wk, rec), placed = (rec.placed || []).length, tray = Math.max(0, sp.earned - placed), pct = sp.A ? placed / sp.A : 0;
+  return `<aside class="card pzcard" data-section="Puzzle">
+    <div class="card-head"><h2>Puzzle</h2><span class="hint">${placed}/${sp.A} placed</span></div>
+    <a class="pz-thumb ${rec.image ? '' : 'loading'}" href="#/puzzle" style="${rec.image ? `background-image:url('${safeImg(rec.image.url)}');--clear:${(0.18 + 0.82 * pct).toFixed(2)}` : ''}" aria-label="Open the puzzle"><span>${rec.image ? '' : 'Choosing a landscape…'}</span></a>
+    ${puzzleChips(sp)}
+    <p class="small">${sp.earned} of ${sp.A} pieces earned${sp.earned < sp.A ? ' · the rest arrive as you finish each day' : ''}</p>
+    <a class="btn ${tray ? 'primary' : ''}" href="#/puzzle">${tray ? `Place ${tray} piece${tray === 1 ? '' : 's'} ›` : 'Open puzzle ›'}</a>
+  </aside>`;
+}
+function puzzlePageHtml() {
+  const wk = route.wk || currentWeekKey(), cur = wk === currentWeekKey();
+  const sp0 = puzzleSpec(wk), rec = puzRec(wk, cur && sp0.N > 0);
+  const back = '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>';
+  const head = `<header class="top">${topBar({ left: back, label: cur ? 'This week' : weekLabel(wk), title: weekRange(wk), right: '<a class="txt-btn" href="#/plan">Week ›</a>' })}</header>`;
+  const coll = puzzleCollectionHtml(wk);
+  if (!rec) return `${head}<section class="card empty"><p><b>${sp0.N ? 'No puzzle for this week' : 'No pieces this week yet'}</b></p><p class="small muted">Pieces come from your routines and the dated appointments in your calendar. Add some and a puzzle appears.</p><a class="btn" href="#/plan">Go to This week</a></section>${coll}`;
+  const sp = puzzleSpec(wk, rec), placed = (rec.placed || []).length, tray = Math.max(0, sp.earned - placed), done = placed >= sp.A;
+  return `${head}
+    <section class="card pzmain" data-section="Puzzle">
+      <div class="card-head"><h2>${done ? 'Complete! 🎉' : 'Jigsaw'}</h2><span class="hint">${sp.earned} earned · ${placed} placed · ${sp.A} pieces</span></div>
+      ${puzzleChips(sp)}
+      ${rec.image ? `<div class="pz-board" data-pz="${wk}"></div>
+        <div class="pz-trayhead">${tray ? `Pieces to place (${tray}). Drag each to its spot.` : 'Pieces to place'}</div><div class="pz-tray" data-pz-tray></div>
+        <p class="pz-credit"><b>${escapeHtml(rec.image.title)}</b> · ${escapeHtml(rec.image.credit)}${rec.image.page ? ` · <a href="${escapeHtml(rec.image.page)}" target="_blank" rel="noopener">source ↗</a>` : ''}</p>
+        ${placed === 0 && cur ? '<button class="btn" data-act="pz-reroll">Pick a different picture</button>' : ''}`
+        : '<p class="muted pad">Choosing a landscape…</p>'}
+    </section>${coll}`;
+}
+function puzzleCollectionHtml(cur) {
+  const list = Object.values(puzCache).filter((r) => r.image && r.week !== cur).sort((a, b) => b.week.localeCompare(a.week));
+  if (!list.length) return '';
+  return `<section class="card" data-section="Collection"><div class="card-head"><h2>Collection</h2><span class="hint">${list.length} week${list.length === 1 ? '' : 's'}</span></div>
+    <div class="pz-coll">${list.map((r) => {
+      const sp = puzzleSpec(r.week, r), n = (r.placed || []).length, full = n >= sp.A && sp.A > 0;
+      return `<a class="pz-cell ${full ? 'full' : ''}" href="#/puzzle/${r.week}" style="background-image:url('${safeImg(r.image.url)}');--clear:${(0.2 + 0.8 * (sp.A ? n / sp.A : 0)).toFixed(2)}">
+        <span>${weekRange(r.week)}<b>${full ? '✓ complete' : `${n}/${sp.A}`}</b></span></a>`;
+    }).join('')}</div></section>`;
+}
 
 // ---------- Sheets (bottom modals) ----------
 let sheetCtx = null;
@@ -6973,6 +7403,13 @@ document.addEventListener('click', (e) => {
     case 'step-delete': removeFromSheet('project_steps'); break;
     case 'meet-new': openMeetSheet(null, btn.dataset.day || null); break;
     case 'step-toggle': toggleStep(btn.dataset.id); break;
+    case 'focus-start': openFocusSheet(btn.dataset.id, btn.dataset.wk, +btn.dataset.day || 0); break;
+    case 'focus-go': startFocus(btn.dataset.mode, +btn.dataset.min || 0); break;
+    case 'focus-pause': focusPause(); break;
+    case 'focus-stop': openFocusStop(); break;
+    case 'focus-resume': closeSheet(); if (focusT && focusT.pausedAt) focusPause(); break;
+    case 'focus-discard': discardFocus(); break;
+    case 'pz-reroll': { const wk = route.wk || currentWeekKey(); if (puzCache[wk]) { puzCache[wk].image = null; puzSaveLocal(); puzFetchImage(wk, true); render(); } break; }
     case 'plan-week': { const d = +btn.dataset.d; planWk = d === 0 ? null : addDaysISO(planWk || currentWeekKey(), d * 7); if (planWk === currentWeekKey()) planWk = null; render(); break; }
     case 'plan-extra': planExtras[btn.dataset.k] = !planExtras[btn.dataset.k]; try { localStorage.setItem('planExtras', JSON.stringify(planExtras)); } catch {} render(); break;
     case 'wday-place': if (wbPick) placeOnDay(wbPick, btn.dataset.day); break;
@@ -7273,6 +7710,8 @@ document.addEventListener('submit', (e) => {
   else if (form === 'project') saveProjectForm(e.target);
   else if (form === 'step') saveStep(e.target);
   else if (form === 'step-quick') quickStep(e.target);
+  else if (form === 'focus-custom') { const m = num(new FormData(e.target).get('min'), 0); if (m >= 1) startFocus('down', m); else toast('Enter the minutes'); }
+  else if (form === 'focus-stop') saveFocus(e.target);
   else if (form === 'wb-add') wbAdd(e.target);
   else if (form === 'acad-connect') acadConnect(e.target);
   else if (form === 'acad-course') acadSaveCourse(e.target);

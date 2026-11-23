@@ -21,6 +21,7 @@ await db.exec(fs.readFileSync(new URL('../supabase/calendar-sharing.sql', import
 await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.url), 'utf8'));
 await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.url), 'utf8')); // safe to run again
 await db.exec(fs.readFileSync(new URL('../supabase/academics.sql', import.meta.url), 'utf8'));
+await db.exec(fs.readFileSync(new URL('../supabase/focus-puzzle.sql', import.meta.url), 'utf8'));
 
 const ids = { cathy: '00000000-0000-0000-0000-00000000000c', han: '00000000-0000-0000-0000-00000000000a', eve: '00000000-0000-0000-0000-00000000000e' };
 const emails = { cathy: 'Cathy@Gmail.com', han: 'han@gmail.com', eve: 'eve@gmail.com' };
@@ -185,4 +186,18 @@ assert.equal((await as('cathy', 'select * from academic_progress')).length, 1, '
 await as('cathy', "insert into academic_progress (item_id, course_id) values (1001, 11) on conflict (user_id, item_id) do nothing"); // ticking twice is fine
 assert.equal((await as('cathy', 'select * from academic_progress')).length, 1);
 assert.equal((await as(null, 'select * from academic_progress')).length, 0, 'signed-out visitors see nothing');
+// --- focus sessions and puzzles: private to you
+await as('cathy', "insert into focus_sessions (task_id, task_name, day, minutes, mode) values ('t1', 'Problem set 7', '2026-11-23', 42.5, 'down')");
+await fails('cathy', "insert into focus_sessions (task_id, task_name, day, minutes, mode) values ('t1', 'x', '2026-11-23', 0, 'up')", [], /check/);
+await fails('cathy', "insert into focus_sessions (task_id, task_name, day, minutes, mode) values ('t1', 'x', '2026-11-23', 5, 'sideways')", [], /check/);
+await as('cathy', `insert into puzzle_weeks (week, image, placed, seen) values ('2026-11-23', '{"title":"File:Lake.jpg"}', '{3,7}', 6)`);
+await as('cathy', `update puzzle_weeks set lock = '{"cols":6,"rows":4}', placed = '{3,7,9}' where week = '2026-11-23'`);
+for (const table of ['focus_sessions', 'puzzle_weeks']) {
+  assert.equal((await as('han', `select * from ${table}`)).length, 0, `others can't see ${table}`);
+  assert.equal((await as('cathy', `select * from ${table}`)).length, 1);
+}
+await fails('han', `insert into puzzle_weeks (user_id, week) values ($1, '2026-11-23')`, [ids.cathy], /row-level security/);
+await as('han', "update puzzle_weeks set placed = '{}'");
+assert.deepEqual((await as('cathy', 'select placed from puzzle_weeks'))[0].placed, [3, 7, 9], 'nobody else can move your pieces');
+await db.exec(fs.readFileSync(new URL('../supabase/focus-puzzle.sql', import.meta.url), 'utf8')); // safe to run again
 console.log('ALL DATABASE RULE TESTS PASSED');
