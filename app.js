@@ -617,7 +617,7 @@ function render() {
   else html = todayTabHtml();
   $app.dataset.tab = route.id || route.page ? 'page' : route.tab;
   $app.dataset.page = route.page || '';
-  $app.innerHTML = html + tabBarHtml() + floatDonutHtml() + focusBarHtml(); // the floating donut replaces the sidebar
+  $app.innerHTML = html + floatDonutHtml() + focusBarHtml(); // the floating donut replaces the sidebar
   if (route.tab === 'plan' && planJump) { // arriving on This week: bring today into view
     planJump = false;
     setTimeout(() => { const t = $app.querySelector('.wday.today'); if (t) t.scrollIntoView({ block: 'center' }); }, 30); // after the page's own jump to the top
@@ -692,11 +692,6 @@ window.addEventListener('scroll', () => {
   scrollTick = true;
   requestAnimationFrame(() => { scrollTick = false; highlightSection(); });
 }, { passive: true });
-
-function tabBarHtml() {
-  const tab = (t, label) => `<a href="#/${t}" class="${route.tab === t ? 'on' : ''}" ${route.tab === t && !route.id ? 'aria-current="page"' : ''}>${ICONS[t]}<span>${label}</span></a>`;
-  return `<nav class="tabbar">${NAV_PAGES.map(([t, , short]) => tab(t, short)).join('')}</nav>`;
-}
 
 function topBar({ left = '', label = '', title = '', right = '', titleAct = '' }) {
   const t = `<span class="lbl">${label}</span><span class="range">${title}</span>`;
@@ -6789,7 +6784,7 @@ function weekFocusMin(w) { return w ? Object.values(w.items).reduce((n, it) => n
 // reached; finishing everything adds the last few so the picture can be completed. Pieces earned are worked
 // out from your ticks (nothing to store); which pieces are placed, and the picture, are saved per week
 // (supabase/focus-puzzle.sql, with a copy on this device).
-const PUZ_CAP = 60;
+const PUZ_MIN = 50, PUZ_CAP = 60; // every week's jigsaw has between 50 and 60 pieces
 const PUZ_CATS = ['Featured_pictures_of_landscapes', 'Featured_pictures_of_mountains', 'Featured_pictures_of_lakes', 'Featured_pictures_of_beaches', 'Featured_pictures_of_waterfalls', 'Featured_pictures_of_forests'];
 let puzCache = {}, puzCloudOff = false, puzLoaded = false;
 const puzBusy = new Set();
@@ -6810,9 +6805,9 @@ function onceDoneP(id, it) { // an appointment: ticked, or (if it came from a sy
   const now = new Date(), t = it.endTime || it.time, hm = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   return it.date < todayISO() || (it.date === todayISO() && (!t || t <= hm));
 }
-function allocate(raw, cap) { // shrink the day groups proportionally when a week has more than `cap` things
+function allocate(raw, cap) { // share `cap` pieces between the day groups in proportion to what's planned (each planned thing is worth several pieces when there are few)
   const N = raw.reduce((a, b) => a + b, 0);
-  if (N <= cap) return raw.slice();
+  if (!N || N === cap) return raw.slice();
   const exact = raw.map((n) => (n * cap) / N), out = exact.map((x, i) => (raw[i] ? Math.max(1, Math.floor(x)) : 0));
   let left = cap - out.reduce((a, b) => a + b, 0);
   const order = exact.map((x, i) => [x - Math.floor(x), i]).sort((a, b) => b[0] - a[0]);
@@ -6821,7 +6816,7 @@ function allocate(raw, cap) { // shrink the day groups proportionally when a wee
   return out;
 }
 function chooseGrid(S) { // a landscape-shaped rectangle with room for S pieces (the few spare ones are the finishing bonus)
-  S = Math.max(S, 6);
+  S = Math.max(S, PUZ_MIN);
   let best = null;
   for (let rows = 2; rows <= 8; rows++) for (let cols = rows; cols <= 10; cols++) {
     const A = rows * cols;
@@ -6845,8 +6840,8 @@ function puzzleSpec(wk, rec) {
   }
   const raw = groups.map((g) => g.total), N = raw.reduce((a, b) => a + b, 0);
   const lock = rec && rec.lock && rec.lock.cols && rec.lock.rows ? rec.lock : null;
-  const grid = lock ? { cols: lock.cols, rows: lock.rows, A: lock.cols * lock.rows } : chooseGrid(Math.min(N, PUZ_CAP));
-  const alloc = allocate(raw, Math.min(PUZ_CAP, grid.A));
+  const grid = lock ? { cols: lock.cols, rows: lock.rows, A: lock.cols * lock.rows } : chooseGrid(Math.max(PUZ_MIN, Math.min(N, PUZ_CAP)));
+  const alloc = allocate(raw, lock ? Math.min(PUZ_CAP, grid.A) : Math.max(PUZ_MIN, Math.min(N, PUZ_CAP)));
   const S = alloc.reduce((a, b) => a + b, 0), bonus = Math.max(0, grid.A - S);
   let earned = 0, all = N > 0;
   groups.forEach((g, gi) => { if (g.total > 0) { if (g.done >= g.total) earned += alloc[gi]; else all = false; } });
@@ -6899,6 +6894,7 @@ async function puzFetchImage(wk, reroll = false) {
 function puzRec(wk, create) {
   let r = puzCache[wk];
   if (!r && create) { r = puzCache[wk] = { week: wk, image: null, lock: null, placed: [], seen: 0 }; puzSaveLocal(); }
+  if (r && wk === currentWeekKey() && r.lock && r.lock.cols * r.lock.rows < PUZ_MIN) { r.lock = null; r.placed = []; r.seen = 0; puzSave(r); } // this week was started before jigsaws had at least 50 pieces
   if (r && !r.image) puzFetchImage(wk);
   return r || null;
 }
@@ -6977,7 +6973,7 @@ function layoutPuzzle() {
   const sp = puzzleSpec(wk, rec), g = pzGeometry(sp, rec, board.clientWidth), sg = pzSigns(wk, g.cols, g.rows);
   board.style.height = `${g.H}px`;
   board.style.setProperty('--cw', `${g.w}px`); board.style.setProperty('--ch', `${g.h}px`);
-  board.innerHTML = `<div class="pz-ghost" style="background-image:url('${safeImg(rec.image.url)}')"></div>`;
+  board.innerHTML = '';
   for (const idx of rec.placed || []) {
     const el = pzPiece(idx, g, sg, rec), r = Math.floor(idx / g.cols), c = idx % g.cols;
     Object.assign(el.style, { left: `${c * g.w - g.k}px`, top: `${r * g.h - g.k}px` });
@@ -7054,7 +7050,7 @@ function puzzleCardHtml() {
   const rec = puzRec(wk, true), sp = puzzleSpec(wk, rec), placed = (rec.placed || []).length, tray = Math.max(0, sp.earned - placed), pct = sp.A ? placed / sp.A : 0;
   return `<aside class="card pzcard" data-section="Puzzle">
     <div class="card-head"><h2>Puzzle</h2><span class="hint">${placed}/${sp.A} placed</span></div>
-    <a class="pz-thumb ${rec.image ? '' : 'loading'}" href="#/puzzle" style="${rec.image ? `background-image:url('${safeImg(rec.image.url)}');--clear:${(0.18 + 0.82 * pct).toFixed(2)}` : ''}" aria-label="Open the puzzle"><span>${rec.image ? '' : 'Choosing a landscape…'}</span></a>
+    <span class="pz-bar" style="--p:${Math.round(pct * 100)}%" aria-hidden="true"><i></i></span>
     ${puzzleChips(sp)}
     <p class="small">${sp.earned} of ${sp.A} pieces earned${sp.earned < sp.A ? ' · the rest arrive as you finish each day' : ''}</p>
     <a class="btn ${tray ? 'primary' : ''}" href="#/puzzle">${tray ? `Place ${tray} piece${tray === 1 ? '' : 's'} ›` : 'Open puzzle ›'}</a>
@@ -7085,7 +7081,7 @@ function puzzleCollectionHtml(cur) {
   return `<section class="card" data-section="Collection"><div class="card-head"><h2>Collection</h2><span class="hint">${list.length} week${list.length === 1 ? '' : 's'}</span></div>
     <div class="pz-coll">${list.map((r) => {
       const sp = puzzleSpec(r.week, r), n = (r.placed || []).length, full = n >= sp.A && sp.A > 0;
-      return `<a class="pz-cell ${full ? 'full' : ''}" href="#/puzzle/${r.week}" style="background-image:url('${safeImg(r.image.url)}');--clear:${(0.2 + 0.8 * (sp.A ? n / sp.A : 0)).toFixed(2)}">
+      return `<a class="pz-cell ${full ? 'full' : ''}" href="#/puzzle/${r.week}" ${full ? `style="background-image:url('${safeImg(r.image.url)}')"` : ''}>
         <span>${weekRange(r.week)}<b>${full ? '✓ complete' : `${n}/${sp.A}`}</b></span></a>`;
     }).join('')}</div></section>`;
 }

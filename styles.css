@@ -34,7 +34,7 @@ body {
   background-attachment: fixed;
   color: var(--ink);
   font: 15px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-  padding: env(safe-area-inset-top) max(12px, env(safe-area-inset-right)) calc(84px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  padding: env(safe-area-inset-top) max(12px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   -webkit-tap-highlight-color: transparent;
 }
 body.locked { overflow: hidden; }
@@ -221,22 +221,6 @@ a.name, a.crow { color: inherit; text-decoration: none; }
 .txt-btn.strong { font-weight: 700; }
 .card-head .txt-btn { padding: 0; font-size: 14px; }
 
-/* ---------- Tab bar ---------- */
-.tabbar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: flex; justify-content: space-around;
-  background: color-mix(in srgb, var(--card) 92%, transparent);
-  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
-  border-top: 1px solid var(--line);
-  padding: 6px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
-}
-.tabbar a {
-  flex: 1; max-width: 140px; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  color: var(--muted); text-decoration: none; font-size: 11px; font-weight: 600; padding: 4px 0;
-}
-.tabbar a.on { color: var(--accent); }
-.tabbar svg { width: 25px; height: 25px; }
-
 /* ---------- Today rows ---------- */
 .trow {
   display: flex; align-items: center; gap: 10px; padding: 6px 2px 6px 4px; border-top: 1px solid var(--line);
@@ -362,7 +346,7 @@ a.btn.primary { color: var(--fill-ink); }
 .rrow input { width: 22px; height: 22px; min-height: 0; accent-color: var(--accent); flex: none; }
 .rrow .ctext .n, .rrow .ctext .sub { display: block; }
 .sticky-actions {
-  position: sticky; bottom: calc(64px + env(safe-area-inset-bottom)); padding: 10px 0 4px;
+  position: sticky; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 10px 0 4px;
   background: linear-gradient(transparent, var(--bg) 30%);
 }
 .help.center { text-align: center; display: block; color: var(--muted); }
@@ -458,8 +442,6 @@ textarea.code { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; min-
 .rrow select { flex: none; width: auto; min-height: 36px; font-size: 14px; padding: 4px 8px; }
 
 /* ---------- Applications ---------- */
-.tabbar a span { white-space: nowrap; }
-@media (max-width: 400px) { .tabbar { padding-left: 4px; padding-right: 4px; } .tabbar a { font-size: 9.5px; letter-spacing: -0.1px; } .tabbar svg { width: 22px; height: 22px; } }
 .arow2 { display: flex; gap: 10px; padding: 10px 4px; border-top: 1px solid var(--line); align-items: flex-start; }
 .card-head + .arow2, .sec + .arow2, summary + .arow2 { border-top: 0; }
 .arow2.urgent .n::after { content: ' ⏳'; }
@@ -563,7 +545,6 @@ textarea.code { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; min-
 .card { scroll-margin-top: 14px; }
 @media (min-width: 900px) {
   body { padding-left: 260px; padding-bottom: 28px; }
-  .tabbar { display: none; }
   #toast { bottom: 24px; }
   .sticky-actions { bottom: 0; }
   .sidenav {
@@ -604,7 +585,7 @@ textarea.code { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; min-
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
 /* ---------- Glass surfaces ---------- */
-.card, .tabbar, .sidenav, .sheet, .banner {
+.card, .sidenav, .sheet, .banner {
   background: var(--card);
   -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%);
   border: 1px solid var(--glass-border);
@@ -613,7 +594,6 @@ textarea.code { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; min-
 .sheet { background: rgba(255, 255, 255, 0.82); }
 .banner { background: rgba(144, 238, 144, 0.30); border-color: rgba(47, 143, 91, 0.35); }
 .sidenav { border-width: 0 1px 0 0; }
-.tabbar { border-width: 1px 0 0; }
 input, select, textarea { background: rgba(255, 255, 255, 0.7); }
 .btn, .mini-btn, .chip, .seg, .stepper button, .ctr-minus, .round { background: rgba(255, 255, 255, 0.6); }
 .btn.primary, .mini-btn.primary-mini, .chip.on { background: var(--fill); color: var(--fill-ink) !important; }
@@ -658,7 +638,7 @@ input, select, textarea { background: rgba(255, 255, 255, 0.7); }
 #bgpic[hidden] { display: none; }
 body.has-bg { background: var(--bg); }
 /* Over a picture, surfaces turn to frosted glass so text stays readable. */
-body.has-bg .card, body.has-bg .tabbar, body.has-bg .sidenav, body.has-bg .banner {
+body.has-bg .card, body.has-bg .sidenav, body.has-bg .banner {
   background: color-mix(in srgb, var(--card) 72%, transparent);
   -webkit-backdrop-filter: blur(18px) saturate(150%); backdrop-filter: blur(18px) saturate(150%);
 }
@@ -680,8 +660,6 @@ body.has-bg .card, body.has-bg .tabbar, body.has-bg .sidenav, body.has-bg .banne
 .steps li { margin: 4px 0; }
 button.chead { border: 0; background: none; font: inherit; color: inherit; cursor: pointer; padding: 2px 0 6px; border-radius: 8px; }
 button.chead.sel b { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
-/* Six tabs on the phone tab bar */
-.tabbar a span { font-size: 10.5px; }
 
 /* ---------- Calendar: My plan (routines, own one-offs, applications) ---------- */
 .pgrid-head, .pcols { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0 6px; }
@@ -1385,7 +1363,7 @@ form[data-layout="weeks"] .only-months, form[data-layout="months"] .only-weeks, 
 .fdonut.dragging { width: 58px; height: 58px; padding: 5px; cursor: grabbing; transition: none; }
 .fdonut.dragging .dlabel, .fdonut.dragging .dcentre text, .fdonut.dragging .fd-home, .fdonut.dragging .fd-grip, .fdonut.dragging .dring { opacity: 0; display: none; }
 .fdonut.dragging .dslice, .fdonut.dragging .dcentre { pointer-events: none; }
-@media (max-width: 899px) { .fdonut { bottom: calc(76px + env(safe-area-inset-bottom)); right: 12px; width: 50px; height: 50px; } .fdonut.dragging { width: 50px; height: 50px; } }
+@media (max-width: 899px) { .fdonut { bottom: calc(16px + env(safe-area-inset-bottom)); right: 12px; width: 50px; height: 50px; } .fdonut.dragging { width: 50px; height: 50px; } }
 @media print { .fdonut { display: none; } }
 
 /* ---------- This week: the dashboard ---------- */
@@ -1547,17 +1525,14 @@ li.wb { padding: 3px 4px; }
 @keyframes fpulse { 50% { box-shadow: 0 0 0 7px rgba(255, 215, 0, 0.3), 0 10px 30px -14px rgba(30, 40, 60, 0.5); } }
 
 /* ---------- Jigsaw ---------- */
-.pzcard .pz-thumb { display: block; position: relative; height: 130px; margin: 4px 0 10px; border-radius: 14px; overflow: hidden; background: #d9e3ec center / cover no-repeat; text-decoration: none; }
-.pzcard .pz-thumb::after { content: ''; position: absolute; inset: 0; background: #eef2f6; opacity: calc(1 - var(--clear, .2)); transition: opacity .6s; } /* clearer as you place pieces */
-.pz-thumb > span { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--muted); }
+.pz-bar { display: block; height: 8px; margin: 4px 0 10px; border-radius: 99px; background: var(--track); overflow: hidden; }
+.pz-bar i { display: block; height: 100%; width: var(--p, 0%); background: var(--accent); border-radius: 99px; transition: width .6s; }
 .pz-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 8px; }
 .pz-chip { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 99px; background: var(--track); color: var(--muted); }
 .pz-chip b { font-weight: 750; }
 .pz-chip.got { background: rgba(144, 238, 144, 0.55); color: var(--ink); }
 .pzcard .btn { width: 100%; text-align: center; text-decoration: none; }
 .pz-board { position: relative; width: 100%; max-width: 760px; margin: 8px auto; border-radius: 6px; background: rgba(27, 31, 29, 0.05); box-shadow: inset 0 0 0 2px rgba(27, 31, 29, 0.12); touch-action: pan-y; }
-.pz-ghost { position: absolute; inset: 0; background: center / 100% 100% no-repeat; opacity: .16; filter: grayscale(.7); pointer-events: none; border-radius: 4px;
-  -webkit-mask-image: none; }
 .pz-board::after { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .5;
   background-image: linear-gradient(to right, rgba(27, 31, 29, 0.14) 1px, transparent 1px), linear-gradient(to bottom, rgba(27, 31, 29, 0.14) 1px, transparent 1px); background-size: var(--cw) var(--ch); }
 .pz-piece { position: absolute; background-color: #cfd8e0; pointer-events: none; }
@@ -1573,8 +1548,8 @@ li.wb { padding: 3px 4px; }
 .pz-credit { font-size: 12.5px; color: var(--muted); margin: 10px 2px 6px; }
 .pz-credit a { color: var(--accent); }
 .pz-coll { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 6px; }
-.pz-cell { position: relative; display: block; height: 100px; border-radius: 12px; overflow: hidden; background: #d9e3ec center / cover no-repeat; text-decoration: none; color: var(--ink); }
-.pz-cell::after { content: ''; position: absolute; inset: 0; background: #eef2f6; opacity: calc(1 - var(--clear, .3)); }
+.pz-cell { position: relative; display: block; height: 100px; border-radius: 12px; overflow: hidden; background: #e4eaef center / cover no-repeat; text-decoration: none; color: var(--ink); }
+.pz-cell:not(.full) > span { background: none; top: 0; justify-content: center; align-items: center; text-align: center; }
 .pz-cell > span { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; padding: 14px 8px 6px; display: flex; flex-direction: column; font-size: 11.5px; background: linear-gradient(transparent, rgba(255, 255, 255, 0.9)); font-weight: 600; }
 .pz-cell > span b { font-weight: 750; }
 .pz-cell.full > span b { color: var(--accent); }
