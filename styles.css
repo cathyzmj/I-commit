@@ -1581,3 +1581,6 @@ button.pz-chip { border: 0; cursor: pointer; font: inherit; font-size: 12px; fon
 
 .pz-tray { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; justify-items: center; align-items: center; }
 .pz-tray > p { grid-column: 1 / -1; }
+
+.logo-btn { display: inline-flex; align-items: center; gap: 3px; padding-left: 5px; }
+.logo-btn img { width: 16px; height: 16px; border-radius: 4px; display: block; }

@@ -5930,7 +5930,7 @@ function acadItemHtml(i, { inWeek = false } = {}) {
     <button class="acheck" data-act="acad-tick" data-id="${i.id}" data-course="${i.courseId}" aria-pressed="${done}" ${moodle ? 'disabled title="Done in Moodle"' : ''}
       aria-label="${escapeHtml(i.name)} ${done ? 'done' : 'not done'}">${done ? CHECK : ''}</button>
     <div class="aitem-main"><b>${escapeHtml(i.name)}</b>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</div>
-    <div class="aitem-go">${open}${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener" title="Your notes for this course">Notes</a>` : ''}<button class="mini-btn ghost" data-act="acad-plan" data-id="${i.id}" data-course="${i.courseId}" aria-label="Add ${escapeHtml(i.name)} to my plan" title="Add to my plan as a task or routine">＋ Plan</button>${inWeek ? `<button class="mini-btn ghost" data-act="acad-move" data-id="${i.id}" data-course="${i.courseId}" aria-label="Move to another category" title="Move to another category">⋯</button>` : ''}</div>
+    <div class="aitem-go">${open}${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener" title="Your notes for this course">Notes</a>` : ''}<button class="mini-btn ghost logo-btn" data-act="acad-wb" data-id="${i.id}" data-course="${i.courseId}" aria-label="Add ${escapeHtml(i.name)} to this week’s whiteboard" title="Add to this week’s whiteboard"><img src="icons/icon-192.png" alt="">＋</button><button class="mini-btn ghost" data-act="acad-plan" data-id="${i.id}" data-course="${i.courseId}" aria-label="Add ${escapeHtml(i.name)} to my plan" title="Add to my plan as a task or routine">＋ Plan</button>${inWeek ? `<button class="mini-btn ghost" data-act="acad-move" data-id="${i.id}" data-course="${i.courseId}" aria-label="Move to another category" title="Move to another category">⋯</button>` : ''}</div>
   </div>`;
 }
 
@@ -6230,12 +6230,27 @@ function openLaneSheet(cid, itemId) {
       ${set ? '<button class="btn" data-act="acad-lane" data-lane="">Back to automatic</button>' : ''}</div>`, { lane: { cid, itemId } });
 }
 // "＋ Plan": turn a Moodle item (or just the course) into a one-off task or a repeating routine, with its link attached.
-function openAcadPlan(cid, itemId) {
+function acadPlanDefaults(cid, itemId) {
   const meta = (acad.courses || []).find((c) => c.id === cid), data = acad.contents.get(cid);
-  if (!meta) return;
+  if (!meta) return null;
   const item = itemId != null && data ? data.sections.flatMap((s) => s.items).find((i) => i.id === itemId) : null;
   const code = meta.shortname || meta.fullname, name = item ? (item.name.toLowerCase().startsWith(code.toLowerCase()) ? item.name : `${code} ${item.name}`) : `${code} `;
-  const link = (item && item.link) || `${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${cid}`;
+  return { meta, item, name, link: (item && item.link) || `${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${cid}` };
+}
+// The logo button: drop the item straight onto this week's whiteboard (an undated one-off task you can drag onto a day).
+function acadToWhiteboard(cid, itemId) {
+  const d = acadPlanDefaults(cid, itemId);
+  if (!d || !d.item) return;
+  if (state.commitments.some((c) => c.freq === 'once' && !c.date && !c.archived && c.name === d.name)) { toast(`“${d.name}” is already on the whiteboard`); return; }
+  const url = cleanUrl(d.link);
+  state.commitments.push(newCommitment({ name: d.name.slice(0, 80), section: 'Academics', freq: 'once', kind: 'task', hours: 1, date: null, notes: d.meta.fullname, links: url ? [{ label: 'Moodle', url }] : [], order: nextOrder() }));
+  save(); render();
+  toast(`Added “${d.name}” to this week’s whiteboard`);
+}
+function openAcadPlan(cid, itemId) {
+  const d = acadPlanDefaults(cid, itemId);
+  if (!d) return;
+  const { meta, item, name, link } = d;
   openSheet(`<div class="sheet-head"><h3>Add to my plan</h3><p class="muted small">${escapeHtml(meta.fullname)}</p></div>
     <form class="form flat" data-form="acad-plan" data-course="${cid}" data-item="${item ? item.id : ''}">
       <label class="f">What<input name="name" value="${escapeHtml(name)}" maxlength="80" required></label>
@@ -7627,6 +7642,7 @@ document.addEventListener('click', (e) => {
     case 'acad-move': openLaneSheet(+btn.dataset.course, +btn.dataset.id); break;
     case 'acad-lane': acadSetLane(btn.dataset.lane); break;
     case 'acad-copy-list': acadCopyList(); break;
+    case 'acad-wb': acadToWhiteboard(+btn.dataset.course, +btn.dataset.id); break;
     case 'acad-plan': openAcadPlan(+btn.dataset.course, btn.dataset.id ? +btn.dataset.id : null); break;
     case 'acad-tree-new': treeNewCourse = +btn.dataset.course; location.hash = '#/knowledge/new'; break;
     case 'acad-untrack': { const id = route.courseId; closeSheet(); acadSetTracked(id, false).then(() => { location.hash = '#/academics'; }); break; }
