@@ -1572,9 +1572,12 @@ button.pz-chip { border: 0; cursor: pointer; font: inherit; font-size: 12px; fon
 
 /* the pieces sit to the right of the board on wider screens, below it on a phone */
 @media (min-width: 760px) {
-  .pz-layout { display: grid; grid-template-columns: minmax(0, 640px) minmax(230px, 300px); justify-content: center; gap: 20px; align-items: start; }
-  .pz-layout .pz-board { margin: 8px 0; max-width: none; }
+  .pz-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 440px); gap: 20px; align-items: start; }
+  .pz-layout .pz-board { margin: 8px auto; max-width: 640px; }
   .pz-layout .pz-right { position: sticky; top: 12px; }
   .pz-layout .pz-trayhead, .pz-layout .pz-tray { max-width: none; margin-left: 0; margin-right: 0; }
   .pz-layout .pz-tray { max-height: calc(100vh - 130px); overflow-y: auto; align-content: flex-start; }
 }
+
+.pz-tray { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; justify-items: center; align-items: center; }
+.pz-tray > p { grid-column: 1 / -1; }

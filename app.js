@@ -7176,7 +7176,7 @@ function layoutPuzzle() {
   }
   if (tray) {
     tray.innerHTML = '';
-    const ts = Math.min(1, 92 / g.h, 76 / (g.w + 2 * g.k));
+    const ts = Math.min(1, ((tray.clientWidth - 16 - 4 * 10) / 5) / (g.w + 2 * g.k)); // five pieces to a row
     for (const idx of puzTray()) {
       const wrap = document.createElement('div'), el = pzPiece(idx, g, sg, cur);
       wrap.className = 'pz-item'; wrap.dataset.idx = idx;
