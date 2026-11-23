@@ -1003,7 +1003,7 @@ function calendarTabHtml() {
         <button class="dbox" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-label="${escapeHtml(it.name)} done" aria-pressed="${done}">${done ? CHECK : ''}</button>
         <a class="dname" href="#/c/${id}">${it.time ? `<small class="dtime">${escapeHtml(it.time)}</small> ` : ''}${escapeHtml(it.name)}</a></div>`;
     }).join('');
-    const apps = (appsByDay[d] || []).map((e) => `<a class="chip-app k-${e.kind}" href="#/apps/${d}" title="${escapeHtml(`${e.a.company} ${APP_EVENT_LABEL[e.kind]}`)}">${escapeHtml(e.a.company)} ${e.kind === 'open' ? 'opens' : e.kind === 'close' ? 'closes' : 'due'}</a>`).join('');
+    const apps = (appsByDay[d] || []).map((e) => `<a class="chip-app k-${e.kind}" href="#/apps/${d}" title="${escapeHtml(`${e.a.company} ${APP_EVENT_LABEL[e.kind]}`)}">${escapeHtml(e.a.company)} ${APP_CHIP_LABEL[e.kind]}</a>`).join('');
     const notes = notesOn(d).map((n) => notePillHtml(n, d)).join('');
     const projs = projectItemsOn(d).map(projPillHtml).join('');
     const body = routine + ones + notes + projs + apps;
@@ -1172,10 +1172,12 @@ function appEvents() {
     if (a.close && ['open', 'upcoming', 'unknown', 'closed'].includes(phase)) out.push({ date: a.close, kind: 'close', a });
     // A follow-up task on that day already shows it, so skip the extra "next step" chip.
     if (a.next && phase === 'inprogress' && !followupsFor(a.id).some((c) => c.date === a.next)) out.push({ date: a.next, kind: 'next', a });
+    if (a.assess && a.assess >= todayISO()) out.push({ date: a.assess, kind: 'assess', a }); // online test / video interview deadline from your email
   }
   return out;
 }
-const APP_EVENT_LABEL = { open: 'opens', close: 'closes', next: 'next step due' };
+const APP_EVENT_LABEL = { open: 'opens', close: 'closes', next: 'next step due', assess: 'assessment due' };
+const APP_CHIP_LABEL = { open: 'opens', close: 'closes', next: 'due', assess: 'assessment' };
 
 async function refreshApps({ force = false } = {}) {
   if (!state || !state.sync.enabled || appsLoading) return;
@@ -1209,6 +1211,8 @@ function appRowHtml(a) {
     a.close ? `${a.close >= todayISO() ? 'Closes' : 'Closed'} ${fmtDayShort(a.close)}${a.close >= todayISO() ? ` (${relDay(a.close)})` : ''}` : '',
     a.next && phase === 'inprogress' ? `Next step ${fmtDayShort(a.next)} (${relDay(a.next)})` : '',
   ].filter(Boolean).join(' · ');
+  const assessOn = a.assess && a.assess >= todayISO();
+  const assessLine = a.assess ? `<div class="aassess ${assessOn && daysUntil(a.assess) <= 3 ? 'soon' : ''} ${assessOn ? '' : 'past'}">📝 Assessment ${assessOn ? 'due' : 'was due'} ${fmtDayShort(a.assess)}${a.assessTime ? ` ${escapeHtml(a.assessTime)}` : ''}${assessOn ? ` (${relDay(a.assess)})` : ''}${a.assessUrl && cleanUrl(a.assessUrl) ? ` · <a href="${escapeHtml(cleanUrl(a.assessUrl))}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>` : '';
   const urgent = a.close && phase === 'open' && daysUntil(a.close) <= 7 && daysUntil(a.close) >= 0;
   const notion = a.notionUrl ? notionAppUrl(a.notionUrl) : '';
   const mats = a.materials || [];
@@ -1231,6 +1235,7 @@ function appRowHtml(a) {
           ${a.sector ? `<span class="achip">${escapeHtml(a.sector)}</span>` : ''}
         </div>
         ${dates ? `<div class="adates">${dates}</div>` : ''}
+        ${assessLine}
         ${checklist}
       </div>
       <div class="abtns">
@@ -1259,7 +1264,7 @@ function appsMonthHtml(events) {
   for (let d = 1; d <= daysInMonth; d++) {
     const iso = `${y}-${pad(m)}-${pad(d)}`;
     const evs = byDay[iso] || [];
-    const dots = ['open', 'close', 'next'].filter((k) => evs.some((e) => e.kind === k)).map((k) => `<i class="dot-${k}"></i>`).join('');
+    const dots = ['open', 'close', 'next', 'assess'].filter((k) => evs.some((e) => e.kind === k)).map((k) => `<i class="dot-${k}"></i>`).join('');
     cells += `<button class="mday ${iso === today ? 'today' : ''} ${iso === appsDay ? 'sel' : ''} ${evs.length ? 'has' : ''}" data-act="apps-day" data-date="${iso}">
       <b>${d}</b><span class="mdots">${dots}</span></button>`;
   }
@@ -1273,7 +1278,7 @@ function appsMonthHtml(events) {
         <button class="icon-btn" data-act="apps-month" data-dir="1" aria-label="Next month">›</button>
       </div>
       <div class="mgrid">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => `<span class="mdow">${x}</span>`).join('')}${cells}</div>
-      <div class="mlegend"><span><i class="dot-open"></i>Opens</span><span><i class="dot-close"></i>Deadline</span><span><i class="dot-next"></i>Next step</span></div>
+      <div class="mlegend"><span><i class="dot-open"></i>Opens</span><span><i class="dot-close"></i>Deadline</span><span><i class="dot-next"></i>Next step</span><span><i class="dot-assess"></i>Assessment</span></div>
       ${dayList ? `<div class="mdaylist"><div class="sec">${fmtDay(parseISO(appsDay), { weekday: 'long', day: 'numeric', month: 'long' })}</div>
         ${dayList.length ? dayList.map((e) => appRowHtml(e.a)).join('') : '<p class="muted small pad">Nothing on this day.</p>'}</div>` : ''}
     </section>`;
@@ -4426,7 +4431,7 @@ function planForReminders() {
     days.push({ date: d, tasks: tasks.sort(byTime), schedule: schedule.sort(byTime), routines, meetings: meetings.sort(byTime), apps });
   }
   for (const e of appEvents()) {
-    if ((e.kind === 'close' || e.kind === 'next') && e.date > today && e.date <= addDaysISO(until, 1)) {
+    if ((e.kind === 'close' || e.kind === 'next' || e.kind === 'assess') && e.date > today && e.date <= addDaysISO(until, 1)) {
       deadlines.push({ key: `a:${safeKey(e.a.id)}:${e.kind}`, date: e.date, title: `${e.a.company} ${APP_EVENT_LABEL[e.kind]}` });
     }
   }
@@ -4457,7 +4462,7 @@ function calendarCopy() {
     sources.push('app');
     for (const e of appEvents()) {
       if (e.date < from) continue;
-      const url = cleanUrl(e.a.url);
+      const url = cleanUrl(e.kind === 'assess' && e.a.assessUrl ? e.a.assessUrl : e.a.url);
       events.push({ key: `a:${safeKey(e.a.id)}:${e.kind}`, src: 'app', date: e.date, title: `${e.a.company} ${APP_EVENT_LABEL[e.kind]}`, notes: e.a.programme || '', url: /^https:/.test(url) ? url : '' });
     }
   }
@@ -6340,7 +6345,7 @@ function planDayHtml(wk, w, i) {
   }
   const extra = [];
   if (planExtras.projects) for (const x of projectItemsOn(d)) extra.push(`<li class="wx"><span class="wdot" style="--c:${pcol(x.p)[2]}"></span><a href="#/gallery/${x.p.id}">${x.time ? `<small class="wtime">${x.time}</small> ` : ''}${escapeHtml(x.title)}<small> · ${escapeHtml(x.p.name)}</small></a></li>`);
-  if (planExtras.apps) for (const e of appEvents().filter((e) => e.date === d)) extra.push(`<li class="wx"><span class="wdot" style="--c:#e6b800"></span><a href="#/apps/${d}">${escapeHtml(e.a.company)} ${e.kind === 'open' ? 'opens' : e.kind === 'close' ? 'closes' : 'due'}</a></li>`);
+  if (planExtras.apps) for (const e of appEvents().filter((e) => e.date === d)) extra.push(`<li class="wx"><span class="wdot" style="--c:#e6b800"></span><a href="#/apps/${d}">${escapeHtml(e.a.company)} ${APP_CHIP_LABEL[e.kind]}</a></li>`);
   return `<section class="wday ${d === today ? 'today' : d < today ? 'past' : ''} ${wbPick ? 'placing' : ''}" data-wday="${d}">
     <button class="wday-h" data-act="wday-place" data-day="${d}" ${wbPick ? '' : 'tabindex="-1"'}>
       <b>${DAY_NAMES[i]}</b><span>${fmtDay(parseISO(d), { day: 'numeric', month: 'short' })}</span>${d === today ? '<em>today</em>' : ''}
@@ -7171,7 +7176,7 @@ function layoutPuzzle() {
   }
   if (tray) {
     tray.innerHTML = '';
-    const ts = Math.min(1, 92 / g.h);
+    const ts = Math.min(1, 92 / g.h, 76 / (g.w + 2 * g.k));
     for (const idx of puzTray()) {
       const wrap = document.createElement('div'), el = pzPiece(idx, g, sg, cur);
       wrap.className = 'pz-item'; wrap.dataset.idx = idx;
@@ -7266,8 +7271,8 @@ function puzzlePageHtml() {
   const sub = s && s.items ? `${escapeHtml(s.title)} · ${puz.archive.filter((a) => a.sid === s.id).length + 1} of ${s.items.length}` : 'Random landscape';
   let body;
   if (cur.image) {
-    body = `<div class="pz-board" data-pz="${cur.id}"></div>
-      <div class="pz-trayhead">${st.tray ? `Pieces to place (${st.tray}). Drag each to its spot.` : 'Pieces to place'}${st.waiting ? ` · ${st.waiting} more saved for the next jigsaw` : ''}</div><div class="pz-tray" data-pz-tray></div>
+    body = `<div class="pz-layout"><div class="pz-left"><div class="pz-board" data-pz="${cur.id}"></div></div>
+      <div class="pz-right"><div class="pz-trayhead">${st.tray ? `Pieces to place (${st.tray}). Drag each to its spot.` : 'Pieces to place'}${st.waiting ? ` · ${st.waiting} more saved for the next jigsaw` : ''}</div><div class="pz-tray" data-pz-tray></div></div></div>
       ${cur.placed.length ? '' : '<button class="btn" data-act="pz-skip">Pick a different picture</button>'}`;
   } else if (cur.fail) {
     body = `<p class="muted pad">I couldn’t find a good photo for this one.</p><div class="btn-row"><button class="btn primary" data-act="pz-retry">Try again</button><button class="btn" data-act="pz-skip">Skip it</button></div>`;

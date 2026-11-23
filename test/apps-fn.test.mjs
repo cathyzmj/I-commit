@@ -9,7 +9,7 @@ const syncStore = memoryStore();
 await syncStore.setJSON(await syncStorageName(KEY), { version: 1, records: {}, tombs: {} }, { onlyIfNew: true });
 
 // A Notion page as the API returns it.
-const page = (id, { company, programme, status, open, close, next, url, rolling = 'No', sector = 'Buy-Side' }) => ({
+const page = (id, { company, programme, status, open, close, next, url, assess, assessUrl, rolling = 'No', sector = 'Buy-Side' }) => ({
   object: 'page', id, url: `https://www.notion.so/${id}`, archived: false, in_trash: false,
   properties: {
     'Company Name': { type: 'title', title: [{ plain_text: company }] },
@@ -25,6 +25,8 @@ const page = (id, { company, programme, status, open, close, next, url, rolling 
     'Closing Date': { type: 'date', date: close ? { start: close, end: null } : null },
     'Next ddl': { type: 'date', date: next ? { start: next, end: null } : null },
     'Last Year Opening': { type: 'date', date: { start: '2025-09-20', end: null } },
+    'Assessment deadline': { type: 'date', date: assess ? { start: assess, end: null } : null },
+    'Assessment link': { type: 'url', url: assessUrl || null },
   },
 });
 const pages = [
@@ -42,6 +44,12 @@ const get = (opts, { key = KEY } = {}) => handle(new Request('https://x/api/apps
   .then(async (r) => ({ status: r.status, body: await r.json() }));
 
 // --- property mapping
+const withAssess = toApplication(page('a9', { company: 'Citadel', status: 'Online test', close: '2026-10-01', assess: '2026-11-28T14:00:00.000+00:00', assessUrl: 'https://tests.example/abc' }));
+assert.equal(withAssess.assess, '2026-11-28');
+assert.equal(withAssess.assessTime, '14:00');
+assert.equal(withAssess.assessUrl, 'https://tests.example/abc');
+assert.equal(withAssess.close, '2026-10-01', 'the assessment deadline is not mistaken for the closing date');
+assert.equal(toApplication(pages[0]).assess, null);
 const blackstone = toApplication(pages[0]);
 assert.equal(blackstone.company, 'Blackstone');
 assert.equal(blackstone.programme, '2027 Spring Insight Program');

@@ -48,8 +48,9 @@ export function toApplication(page) {
   const p = page.properties || {};
   const title = Object.values(p).find((x) => x.type === 'title');
   const open = value(find(p, 'date', ['Opening Date', 'Open Date', 'Opens'], /open/i));
-  const close = value(find(p, 'date', ['Closing Date', 'Deadline', 'Closes'], /clos|deadline/i));
+  const close = value(find(p, 'date', ['Closing Date', 'Deadline', 'Closes'], /^(?!.*assess).*(clos|deadline)/i));
   const next = value(find(p, 'date', ['Next ddl', 'Next deadline'], /next|ddl/i));
+  const assess = value(find(p, 'date', ['Assessment deadline'], /assess/i)); // filled in by the daily Gmail check
   return {
     id: page.id,
     company: value(title) || 'Untitled',
@@ -64,6 +65,8 @@ export function toApplication(page) {
     open: day(open), openTime: time(open),
     close: day(close), closeTime: time(close),
     next: day(next), nextTime: time(next),
+    assess: day(assess), assessTime: time(assess),
+    assessUrl: value(find(p, 'url', ['Assessment link'], /assess/i)) || '',
     notionUrl: page.url || '',
   };
 }

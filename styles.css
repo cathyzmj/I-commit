@@ -470,6 +470,7 @@ textarea.code { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; min-
 .dot-open { background: #2f9e63; }
 .dot-close { background: #e5484d; }
 .dot-next { background: #e2a031; }
+.dot-assess { background: #6c4ee0; }
 .mlegend { display: flex; gap: 14px; justify-content: center; font-size: 11.5px; color: var(--muted); padding: 8px 0 2px; }
 .mlegend span { display: inline-flex; align-items: center; gap: 5px; }
 .mdaylist { border-top: 1px solid var(--line); margin-top: 8px; }
@@ -477,6 +478,11 @@ textarea.code { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; min-
 .chip-app.k-open { background: #e3f3ea; color: #1f7a4a; }
 .chip-app.k-close { background: #fde8e8; color: #c0392b; }
 .chip-app.k-next { background: #fcf1dc; color: #9a6510; }
+.chip-app.k-assess { background: #e8e4fb; color: #5a3fc0; }
+.aassess { margin-top: 4px; font-size: 13px; font-weight: 600; color: #5a3fc0; }
+.aassess.soon { color: #c0392b; }
+.aassess.past { color: var(--muted); font-weight: 500; }
+.aassess a { color: inherit; }
 /* Applications: compact rows, tiles on wide screens */
 .apps-list .arow2 { flex-direction: column; gap: 6px; }
 .apps-list .abtns { flex-direction: row; flex-wrap: wrap; gap: 6px; }
@@ -1563,3 +1569,12 @@ button.pz-chip { border: 0; cursor: pointer; font: inherit; font-size: 12px; fon
 .pz-big { display: block; width: 100%; max-height: 50vh; object-fit: contain; border-radius: 10px; background: rgba(27, 31, 29, 0.05); }
 .pz-cell > span { text-shadow: none; }
 .warn-text { color: #b3261e; min-height: 1em; margin: 0; }
+
+/* the pieces sit to the right of the board on wider screens, below it on a phone */
+@media (min-width: 760px) {
+  .pz-layout { display: grid; grid-template-columns: minmax(0, 640px) minmax(230px, 300px); justify-content: center; gap: 20px; align-items: start; }
+  .pz-layout .pz-board { margin: 8px 0; max-width: none; }
+  .pz-layout .pz-right { position: sticky; top: 12px; }
+  .pz-layout .pz-trayhead, .pz-layout .pz-tray { max-width: none; margin-left: 0; margin-right: 0; }
+  .pz-layout .pz-tray { max-height: calc(100vh - 130px); overflow-y: auto; align-content: flex-start; }
+}
