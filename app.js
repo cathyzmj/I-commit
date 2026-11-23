@@ -5925,7 +5925,7 @@ function acadItemHtml(i, { inWeek = false } = {}) {
     <button class="acheck" data-act="acad-tick" data-id="${i.id}" data-course="${i.courseId}" aria-pressed="${done}" ${moodle ? 'disabled title="Done in Moodle"' : ''}
       aria-label="${escapeHtml(i.name)} ${done ? 'done' : 'not done'}">${done ? CHECK : ''}</button>
     <div class="aitem-main"><b>${escapeHtml(i.name)}</b>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</div>
-    <div class="aitem-go">${open}${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener" title="Your notes for this course">Notes</a>` : ''}${inWeek ? `<button class="mini-btn ghost" data-act="acad-move" data-id="${i.id}" data-course="${i.courseId}" aria-label="Move to another category" title="Move to another category">⋯</button>` : ''}</div>
+    <div class="aitem-go">${open}${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener" title="Your notes for this course">Notes</a>` : ''}<button class="mini-btn ghost" data-act="acad-plan" data-id="${i.id}" data-course="${i.courseId}" aria-label="Add ${escapeHtml(i.name)} to my plan" title="Add to my plan as a task or routine">＋ Plan</button>${inWeek ? `<button class="mini-btn ghost" data-act="acad-move" data-id="${i.id}" data-course="${i.courseId}" aria-label="Move to another category" title="Move to another category">⋯</button>` : ''}</div>
   </div>`;
 }
 
@@ -6079,6 +6079,7 @@ function courseHtml() {
     }).join('')}</ol>` : ''}
     <div class="acs-links"><a href="${escapeHtml(`${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${cid}`)}" target="_blank" rel="noopener">Moodle page ↗</a>
       ${notes ? `<a href="${escapeHtml(notes)}" target="_blank" rel="noopener">Notes ↗</a>` : '<button data-act="acad-course-settings">+ Notes link</button>'}
+      <button data-act="acad-plan" data-course="${cid}">＋ Add to my plan</button>
       <button data-act="acad-course-settings">Settings</button></div>
     ${how ? `<details class="ainfo"><summary>ⓘ How the weeks are worked out</summary><p>${escapeHtml(how)}</p></details>` : ''}
   </aside>`;
@@ -6222,6 +6223,38 @@ function openLaneSheet(cid, itemId) {
   openSheet(`<div class="sheet-head"><h3>Move “${escapeHtml(clip(item.name, 40))}”</h3></div>
     <div class="menu">${LANES.map(([k, n]) => `<button class="btn ${cur === k ? 'primary' : ''}" data-act="acad-lane" data-lane="${k}">${n}${cur === k ? ' ✓' : ''}</button>`).join('')}
       ${set ? '<button class="btn" data-act="acad-lane" data-lane="">Back to automatic</button>' : ''}</div>`, { lane: { cid, itemId } });
+}
+// "＋ Plan": turn a Moodle item (or just the course) into a one-off task or a repeating routine, with its link attached.
+function openAcadPlan(cid, itemId) {
+  const meta = (acad.courses || []).find((c) => c.id === cid), data = acad.contents.get(cid);
+  if (!meta) return;
+  const item = itemId != null && data ? data.sections.flatMap((s) => s.items).find((i) => i.id === itemId) : null;
+  const code = meta.shortname || meta.fullname, name = item ? (item.name.toLowerCase().startsWith(code.toLowerCase()) ? item.name : `${code} ${item.name}`) : `${code} `;
+  const link = (item && item.link) || `${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${cid}`;
+  openSheet(`<div class="sheet-head"><h3>Add to my plan</h3><p class="muted small">${escapeHtml(meta.fullname)}</p></div>
+    <form class="form flat" data-form="acad-plan" data-course="${cid}" data-item="${item ? item.id : ''}">
+      <label class="f">What<input name="name" value="${escapeHtml(name)}" maxlength="80" required></label>
+      <label class="f">How often
+        <select name="repeat"><option value="once">One-off</option><option value="weekly">Routine: every week</option><option value="biweekly">Routine: every 2 weeks</option><option value="daily">Routine: every day</option></select></label>
+      <label class="f">Date<input type="date" name="date" value="${todayISO()}" required>
+        <span class="help">One-off: the day to do it. Weekly routine: the first day, and it comes back on the same weekday (pick a Sunday for “every Sunday”).</span></label>
+      <label class="f">Link<input name="url" type="url" value="${escapeHtml(link)}" placeholder="https://…"><span class="help">Opens from the task. It is the item’s Moodle page; change it if you like.</span></label>
+      <button class="btn primary" type="submit">Add</button>
+      <button type="button" class="btn" data-act="close">Cancel</button>
+    </form>`);
+}
+function saveAcadPlan(form) {
+  const f = new FormData(form), meta = (acad.courses || []).find((c) => c.id === +form.dataset.course);
+  const name = String(f.get('name') || '').trim().slice(0, 80), date = String(f.get('date') || todayISO()), repeat = String(f.get('repeat'));
+  if (!name) { toast('Give it a name'); return; }
+  const url = cleanUrl(String(f.get('url') || '').trim());
+  const freq = repeat === 'daily' ? 'daily' : repeat === 'once' ? 'once' : 'periodic';
+  state.commitments.push(newCommitment({
+    name, section: 'Academics', freq, kind: 'task', hours: 1, date: freq === 'daily' ? null : date, everyDays: repeat === 'biweekly' ? 14 : 7,
+    notes: meta ? meta.fullname : '', links: url ? [{ label: 'Moodle', url }] : [], order: nextOrder(),
+  }));
+  save(); closeSheet(); render();
+  toast(freq === 'once' ? `Added “${name}” for ${fmtDayShort(date)}` : `Added the routine “${name}”`);
 }
 async function acadSetLane(lane) {
   const { cid, itemId } = (sheetCtx && sheetCtx.lane) || {};
@@ -7589,6 +7622,7 @@ document.addEventListener('click', (e) => {
     case 'acad-move': openLaneSheet(+btn.dataset.course, +btn.dataset.id); break;
     case 'acad-lane': acadSetLane(btn.dataset.lane); break;
     case 'acad-copy-list': acadCopyList(); break;
+    case 'acad-plan': openAcadPlan(+btn.dataset.course, btn.dataset.id ? +btn.dataset.id : null); break;
     case 'acad-tree-new': treeNewCourse = +btn.dataset.course; location.hash = '#/knowledge/new'; break;
     case 'acad-untrack': { const id = route.courseId; closeSheet(); acadSetTracked(id, false).then(() => { location.hash = '#/academics'; }); break; }
     case 'buddy-ev': openBuddyEvent(btn.dataset); break;
@@ -7878,6 +7912,7 @@ document.addEventListener('submit', (e) => {
   else if (form === 'focus-custom') { const m = num(new FormData(e.target).get('min'), 0); if (m >= 1) startFocus('down', m); else toast('Enter the minutes'); }
   else if (form === 'focus-stop') saveFocus(e.target);
   else if (form === 'series-new') createSeries(e.target);
+  else if (form === 'acad-plan') saveAcadPlan(e.target);
   else if (form === 'wb-add') wbAdd(e.target);
   else if (form === 'acad-connect') acadConnect(e.target);
   else if (form === 'acad-course') acadSaveCourse(e.target);
