@@ -22,6 +22,7 @@ await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.ur
 await db.exec(fs.readFileSync(new URL('../supabase/projects.sql', import.meta.url), 'utf8')); // safe to run again
 await db.exec(fs.readFileSync(new URL('../supabase/academics.sql', import.meta.url), 'utf8'));
 await db.exec(fs.readFileSync(new URL('../supabase/focus-puzzle.sql', import.meta.url), 'utf8'));
+await db.exec(fs.readFileSync(new URL('../supabase/tree.sql', import.meta.url), 'utf8'));
 
 const ids = { cathy: '00000000-0000-0000-0000-00000000000c', han: '00000000-0000-0000-0000-00000000000a', eve: '00000000-0000-0000-0000-00000000000e' };
 const emails = { cathy: 'Cathy@Gmail.com', han: 'han@gmail.com', eve: 'eve@gmail.com' };
@@ -203,4 +204,23 @@ assert.deepEqual((await as('cathy', 'select state from puzzle_state'))[0].state.
 await fails('cathy', `update puzzle_state set state = jsonb_build_object('x', repeat('a', 450000))`, [], /check/);
 await as('cathy', `update projects set done_on = '2026-11-23' where name = 'Castore consulting project'`); // completing a project
 await db.exec(fs.readFileSync(new URL('../supabase/focus-puzzle.sql', import.meta.url), 'utf8')); // safe to run again
+// --- build a tree together: shared tasks, each ticks their own
+const [{ create_pact: grove }] = await as('cathy', "select create_pact('Our tree')");
+await as('cathy', "insert into pact_invites (pact_id, email) values ($1, 'han@gmail.com')", [grove]);
+await as('han', 'select accept_invite($1)', [grove]);
+const [{ id: task }] = await as('cathy', "insert into pact_tasks (pact_id, title) values ($1, 'Career prep practice') returning id", [grove]);
+await as('han', "insert into pact_tasks (pact_id, title) values ($1, 'Five things')", [grove]);
+await fails('han', "insert into pact_tasks (pact_id, title) values ($1, 'Five things')", [grove], /duplicate key/);
+assert.equal((await as('han', 'select * from pact_tasks where pact_id = $1', [grove])).length, 2, 'both see the tasks');
+assert.equal((await as('eve', 'select * from pact_tasks')).length, 0, 'outsiders see no tasks');
+await fails('eve', "insert into pact_tasks (pact_id, title) values ($1, 'x')", [grove], /row-level security/);
+await as('han', "insert into pact_task_ticks (task_id, pact_id, day) values ($1, $2, '2026-11-25')", [task, grove]);
+await fails('han', "insert into pact_task_ticks (task_id, pact_id, user_id, day) values ($1, $2, $3, '2026-11-25')", [task, grove, ids.cathy], /row-level security/);
+await fails('eve', "insert into pact_task_ticks (task_id, pact_id, day) values ($1, $2, '2026-11-25')", [task, grove], /row-level security/);
+assert.equal((await as('cathy', 'select * from pact_task_ticks')).length, 1, 'your buddy sees your tick');
+await as('cathy', 'delete from pact_task_ticks');
+assert.equal((await as('han', 'select * from pact_task_ticks')).length, 1, 'only you can untick yours');
+await as('cathy', 'delete from pact_tasks where id = $1', [task]);
+assert.equal((await as('han', 'select * from pact_task_ticks')).length, 0, 'removing a task removes its ticks');
+await db.exec(fs.readFileSync(new URL('../supabase/tree.sql', import.meta.url), 'utf8')); // safe to run again
 console.log('ALL DATABASE RULE TESTS PASSED');

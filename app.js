@@ -290,7 +290,7 @@ function migrate(s) {
   s.tests = (Array.isArray(s.tests) ? s.tests : []).map(normaliseTest);
   s.notes = (Array.isArray(s.notes) ? s.notes : []).map(normaliseNote);
   s.account = s.account && s.account.email && s.sync.enabled ? { email: String(s.account.email), name: String(s.account.name || '') } : null;
-  s.buddy = s.buddy ? { commitmentId: s.buddy.commitmentId || null } : null; // Work Buddy itself lives in Supabase
+  s.buddy = s.buddy ? { commitmentId: s.buddy.commitmentId || null, links: s.buddy.links || {} } : null; // Work Buddy itself lives in Supabase
   s.calendars = {
     feeds: feeds.filter((f) => f && f.url).map((f) => ({
       id: f.id || uid(), name: String(f.name || 'Calendar'), url: String(f.url), section: String(f.section || 'Calendar'),
@@ -626,6 +626,8 @@ function render() {
   fillSideSections();
   if (route.page === 'knowledge' || route.page === 'course') initMaps();
   if (route.page === 'puzzle') layoutPuzzle();
+  document.body.classList.toggle('gardening', route.tab === 'buddy');
+  layoutGarden();
   if (['plan', 'today', 'home'].includes(route.tab)) puzzleNotify();
   if (route.page === 'board') layoutBoard();
   if (route.page === 'project') scrollTimeline();
@@ -636,7 +638,7 @@ function render() {
 // Phones keep the bottom tab bar instead (CSS switches at 900px).
 // [route, full name, short name for the phone tab bar]
 const NAV_PAGES = [['today', 'Today', 'Today'], ['cal', 'Calendar', 'Calendar'], ['routine', 'Routine', 'Routine'],
-  ['academics', 'Academics', 'Study'], ['apps', 'Applications', 'Apps'], ['buddy', 'Work Buddy', 'Buddy'],
+  ['academics', 'Academics', 'Study'], ['apps', 'Applications', 'Apps'], ['buddy', 'Our Tree', 'Tree'],
   ['gallery', 'Gallery', 'Gallery'], ['commitments', 'All commitments', 'All']];
 function sideNavHtml() {
   const extra = [['#/calendar', 'Calendars'], ['#/reminders', 'Reminders'], ['#/account', state.account ? 'Account' : 'Sign in'], ['#/widget', 'Phone widget']];
@@ -2353,7 +2355,7 @@ async function refreshBuddy() {
       const [pact, members, days, invites] = await Promise.all([
         db.from('pacts').select('*').eq('id', pactId).single(),
         db.from('pact_members').select('user_id, joined_at, profiles(name, email, share_calendar)').eq('pact_id', pactId).order('joined_at'),
-        db.from('pact_days').select('user_id, day, note, done_at').eq('pact_id', pactId).gte('day', addDaysISO(todayISO(), -120)),
+        db.from('pact_days').select('user_id, day, note, done_at').eq('pact_id', pactId).gte('day', [TREE_EPOCH, addDaysISO(todayISO(), -120)].sort()[0]).order('day', { ascending: false }),
         db.from('pact_invites').select('email').eq('pact_id', pactId).order('created_at'),
       ]);
       const err = pact.error || members.error || days.error || invites.error;
@@ -2361,18 +2363,20 @@ async function refreshBuddy() {
       buddyView = {
         id: pactId, name: pact.data.name, invited: invites.data.map((i) => i.email),
         members: members.data.map((m) => ({
-          id: m.user_id, me: m.user_id === sbUser.id, name: (m.profiles && m.profiles.name) || 'Buddy', email: m.profiles && m.profiles.email,
+          id: m.user_id, me: m.user_id === sbUser.id, joined: m.joined_at ? isoDate(new Date(m.joined_at)) : '', name: (m.profiles && m.profiles.name) || 'Buddy', email: m.profiles && m.profiles.email,
           share: (m.profiles && m.profiles.share_calendar) || 'off',
           days: Object.fromEntries(days.data.filter((d) => d.user_id === m.user_id).map((d) => [d.day, { d: 1, n: d.note, at: d.done_at }])),
         })),
       };
-      subscribeBuddy(pactId);
+      await loadPactTasks(buddyView);
+      subscribeBuddy(pactId, !!buddyView.tasks);
     }
     buddyError = null;
     if (projects === null) loadProjects();
     puzLoadCloud();
     acadEnsure();
     buddyAutoTick();
+    treeSyncDay();
     scheduleShare(500);
   } catch (e) { buddyError = sbErr(e); }
   rerenderBuddy();
@@ -2380,18 +2384,20 @@ async function refreshBuddy() {
 // Live updates: a buddy's tick, someone joining or a new invite shows up straight away.
 let rtChannel = null, rtKey = null, refreshTimer = null;
 const refreshSoon = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshBuddy, 400); };
-function subscribeBuddy(pactId) {
-  if (rtKey === pactId || !sb) return;
+function subscribeBuddy(pactId, withTasks) {
+  const key = `${pactId}${withTasks ? ':tasks' : ''}`;
+  if (rtKey === key || !sb) return;
   unsubscribeBuddy();
-  rtKey = pactId;
+  rtKey = key;
   const f = `pact_id=eq.${pactId}`;
   rtChannel = sb.channel(`pact-${pactId}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pact_days', filter: f }, refreshSoon)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pact_members', filter: f }, refreshSoon)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pact_invites' }, refreshSoon)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, () => { sharedCache.clear(); refreshSoon(); })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_links' }, () => { sharedCache.clear(); refreshSoon(); })
-    .subscribe();
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_links' }, () => { sharedCache.clear(); refreshSoon(); });
+  if (withTasks) for (const table of ['pact_tasks', 'pact_task_ticks']) rtChannel.on('postgres_changes', { event: '*', schema: 'public', table, filter: f }, refreshSoon);
+  rtChannel.subscribe();
 }
 function subscribeInvites() {
   if (rtKey === 'invites' || !sb) return;
@@ -2472,23 +2478,137 @@ async function setShareCalendar(level) {
   toast(level === 'off' ? 'Stopped sharing your calendar' : 'Your calendar is shared with your buddy');
   refreshBuddy();
 }
-// Done today on the linked routine?
-function linkedDoneToday() {
-  const id = state.buddy && state.buddy.commitmentId;
+// ---- Build a tree together
+// You and your buddy share a short list of daily tasks. A day is good when everyone in the pact has ticked
+// every task. Each good day grows the tree one step: seed, sprout … flower, and on the 7th a mature tree whose
+// fruit was a mystery until then. A missed day makes it wilt; 3 missed days in a row and it stops growing.
+// Grown (and stopped) trees are kept in the yard. The tree is worked out from the days, so nothing extra is stored.
+const TREE_EPOCH = '2026-11-25', TREE_DAYS = 7, TREE_MISS = 3;
+const TREE_STAGES = ['Seed', 'Sprout', 'Seedling', 'Sapling', 'Young tree', 'In flower', 'Setting fruit', 'Mature tree'];
+const TREE_FRUITS = [['apple', '#d9483b'], ['orange', '#f29a2e'], ['lemon', '#f2d13a'], ['cherry', '#b3203a'], ['peach', '#f6a481'], ['plum', '#7c4a8c'], ['pear', '#b9cc4a'], ['pomegranate', '#c8334b'], ['blueberry', '#4a63b8'], ['fig', '#7d4a6e'], ['mango', '#f5b23d']];
+const TREE_DEFAULT_TASKS = ['Career prep practice', 'Five things'];
+function treeFruit(seed) { // what's in the mystery box: the same for both of you, with a rare golden one
+  const r = rngFrom(`fruit${seed}`)();
+  const [name, color] = r < 0.06 ? ['golden apple', '#e9b824'] : TREE_FRUITS[Math.min(TREE_FRUITS.length - 1, Math.floor(((r - 0.06) / 0.94) * TREE_FRUITS.length))];
+  return { name, color };
+}
+function treeHistory(p, today = todayISO()) {
+  const good = (d) => { const ms = p.members.filter((m) => !m.joined || m.joined <= d); return ms.length > 0 && ms.every((m) => m.days[d]); };
+  const yard = [];
+  const fresh = () => ({ planted: null, good: 0, missed: 0, ended: null, state: 'seed' });
+  let t = fresh();
+  const finish = (d, state) => {
+    t.ended = d; t.state = state; t.seed = `${p.id}${t.planted}`; t.fruit = treeFruit(t.seed);
+    yard.push(t); t = fresh();
+  };
+  for (let d = TREE_EPOCH; d <= today; d = addDaysISO(d, 1)) {
+    if (good(d)) {
+      if (!t.planted) t.planted = d;
+      t.good++; t.missed = 0;
+      if (t.good >= TREE_DAYS) finish(d, 'fruit');
+    } else if (t.planted && d < today) {
+      if (++t.missed >= TREE_MISS) finish(d, 'withered');
+    }
+  }
+  const last = yard[yard.length - 1];
+  let cur;
+  if (last && last.state === 'fruit' && last.ended === today) cur = last; // grown today: enjoy it until tomorrow
+  else {
+    cur = t;
+    cur.state = !t.planted ? 'seed' : t.missed ? 'wilted' : 'growing';
+    cur.seed = `${p.id}${t.planted || 'next'}`;
+    cur.fruit = treeFruit(cur.seed);
+  }
+  return { cur, yard, goodToday: good(today) };
+}
+async function loadPactTasks(p) { // p.tasks stays null until supabase/tree.sql has been run
+  const day = todayISO();
+  const list = () => sb.from('pact_tasks').select('id, title, created_at').eq('pact_id', p.id).order('created_at').order('title');
+  p.tasks = null; p.ticks = {}; p.day = day;
+  try {
+    let t = await list();
+    if (t.error) return;
+    if (!t.data.length) {
+      await sb.from('pact_tasks').upsert(TREE_DEFAULT_TASKS.map((title) => ({ pact_id: p.id, title })), { onConflict: 'pact_id,title', ignoreDuplicates: true });
+      t = await list();
+    }
+    const k = await sb.from('pact_task_ticks').select('task_id, user_id').eq('pact_id', p.id).eq('day', day);
+    if (t.error || k.error) return;
+    p.tasks = t.data;
+    for (const r of k.data) (p.ticks[r.user_id] || (p.ticks[r.user_id] = new Set())).add(r.task_id);
+  } catch { /* offline */ }
+}
+const myTicks = (p) => (p.day === todayISO() && sbUser && p.ticks && p.ticks[sbUser.id]) || new Set();
+// Your day counts for the tree once every task is ticked. Only unticking takes it back: a task added
+// after you've finished doesn't undo your day (it counts from tomorrow).
+async function treeSyncDay(unticked = false) {
+  const p = buddyView;
+  if (!p || !p.tasks || !p.tasks.length || p.day !== todayISO() || buddyBusy) return;
+  const me = p.members.find((m) => m.me);
+  if (!me) return;
+  const all = p.tasks.every((t) => myTicks(p).has(t.id));
+  const has = !!me.days[p.day];
+  if (all && !has) await buddyTick(true, '');
+  else if (unticked && !all && has) await buddyTick(false);
+}
+async function treeTick(taskId, on) {
+  const p = buddyView;
+  if (!p || !p.tasks || !sbUser) return;
+  const day = todayISO();
+  if (p.day !== day) { await refreshBuddy(); return; }
+  const mine = p.ticks[sbUser.id] || (p.ticks[sbUser.id] = new Set());
+  if (on) mine.add(taskId); else mine.delete(taskId);
+  rerenderBuddy();
+  const { error } = on
+    ? await sb.from('pact_task_ticks').upsert({ task_id: taskId, pact_id: p.id, user_id: sbUser.id, day }, { onConflict: 'task_id,user_id,day', ignoreDuplicates: true })
+    : await sb.from('pact_task_ticks').delete().eq('task_id', taskId).eq('user_id', sbUser.id).eq('day', day);
+  if (error) { toast(sbErr(error)); refreshBuddy(); return; }
+  await treeSyncDay(!on);
+}
+async function treeAddTask(form) {
+  const title = String(new FormData(form).get('title') || '').trim().slice(0, 80);
+  if (!title || !buddyView) return;
+  const { error } = await sb.from('pact_tasks').insert({ pact_id: buddyView.id, title });
+  if (error) { toast(error.code === '23505' ? 'That task is already on the list' : sbErr(error)); return; }
+  form.reset(); document.activeElement.blur();
+  await refreshBuddy();
+}
+async function treeRemoveTask(id) {
+  const t = buddyView && buddyView.tasks && buddyView.tasks.find((x) => x.id === id);
+  if (!t) return;
+  if (buddyView.tasks.length === 1) { toast('Keep at least one task, or the tree can’t grow'); return; }
+  if (!confirm(`Remove “${t.title}” for both of you?`)) return;
+  const { error } = await sb.from('pact_tasks').delete().eq('id', id);
+  if (error) { toast(sbErr(error)); return; }
+  await refreshBuddy();
+}
+// Done today on a routine of yours?
+function routineDoneToday(id) {
   const w = id && state.weeks[currentWeekKey()];
   const it = w && w.items[id];
   if (!it) return null;
   return it.freq === 'weekly' || it.freq === 'once' ? periodDone(it) : dayDone(it, todayIndex(currentWeekKey()));
 }
-// Ticks you in the pact when the linked routine is finished (and unticks only what it ticked itself).
+// Ticks a shared task for you when the routine you linked to it is finished (and unticks only what it ticked).
+const autoTicked = new Set();
 function buddyAutoTick() {
   if (!buddyView || buddyBusy || !sbUser) return;
-  const done = linkedDoneToday();
-  if (done == null) return;
-  const mine = buddyView.members.find((m) => m.me);
-  const has = !!(mine && mine.days[todayISO()]);
-  if (done && !has) { buddyAutoDate = todayISO(); buddyTick(true, ''); }
-  else if (!done && has && buddyAutoDate === todayISO()) { buddyAutoDate = null; buddyTick(false); }
+  const prefs = state.buddy || {};
+  if (!buddyView.tasks) { // before tree.sql: one routine ticks the whole day
+    const done = routineDoneToday(prefs.commitmentId);
+    if (done == null) return;
+    const mine = buddyView.members.find((m) => m.me), has = !!(mine && mine.days[todayISO()]);
+    if (done && !has) { buddyAutoDate = todayISO(); buddyTick(true, ''); }
+    else if (!done && has && buddyAutoDate === todayISO()) { buddyAutoDate = null; buddyTick(false); }
+    return;
+  }
+  for (const t of buddyView.tasks) {
+    const done = routineDoneToday((prefs.links || {})[t.id]);
+    if (done == null) continue;
+    const key = `${todayISO()}:${t.id}`, has = myTicks(buddyView).has(t.id);
+    if (done && !has) { autoTicked.add(key); setTimeout(treeTick, 0, t.id, true); }
+    else if (!done && has && autoTicked.has(key)) { autoTicked.delete(key); setTimeout(treeTick, 0, t.id, false); }
+  }
 }
 
 // ---- calendars
@@ -2664,7 +2784,7 @@ async function shareText(text, url) {
 }
 const inviteMail = (email) => `mailto:${encodeURIComponent(email)}?${new URLSearchParams({
   subject: 'Join me on I Commit!',
-  body: `Hi! I've invited you (${email}) to our "${buddyView ? buddyView.name : 'Work Buddy'}" pact on I Commit!, so we can keep each other on track.\n\n1. Open ${location.origin}\n2. Sign in with Google using this Gmail\n3. Go to Buddy and tap Accept\n`,
+  body: `Hi! I've invited you (${email}) to our "${buddyView ? buddyView.name : 'Work Buddy'}" tree on I Commit!, so we can grow it by keeping each other on track.\n\n1. Open ${location.origin}\n2. Sign in with Google using this Gmail\n3. Go to Our Tree and tap Accept\n`,
 }).toString().replace(/\+/g, '%20')}`;
 function invitesHtml(inPact) {
   if (!myInvites.length) return '';
@@ -2676,82 +2796,126 @@ function invitesHtml(inPact) {
 function buddyTodayLine() {
   const calInv = calPeople.find((p) => p.incoming && !p.accepted);
   if (calInv) return `<div class="pace"><a href="#/cal">📅 ${escapeHtml(calInv.name || calInv.email)} wants to share calendars · open ›</a></div>`;
-  if (myInvites.length) return `<div class="pace"><a href="#/buddy">✉️ ${escapeHtml(myInvites[0].from.join(' & ') || 'Someone')} invited you to Work Buddy · open ›</a></div>`;
+  if (myInvites.length) return `<div class="pace"><a href="#/buddy">✉️ ${escapeHtml(myInvites[0].from.join(' & ') || 'Someone')} invited you to build a tree · open ›</a></div>`;
   if (!buddyView) return '';
-  const others = buddyView.members.filter((m) => !m.me);
-  const s = pactStreak(buddyView);
-  return `<div class="pace"><a href="#/buddy">Work Buddy${s ? ` · 🔥 ${s}` : ''} · ${others.length ? others.map((m) => `${escapeHtml(m.name)} ${m.days[todayISO()] ? '✅' : '⬜'}`).join(' · ') : 'waiting for your buddy'} ›</a></div>`;
+  const others = buddyView.members.filter((m) => !m.me), { cur } = treeHistory(buddyView);
+  return `<div class="pace"><a href="#/buddy">🌳 Our tree · day ${cur.good}/${TREE_DAYS}${cur.state === 'wilted' ? ' · wilting' : ''} · ${others.length ? others.map((m) => `${escapeHtml(m.name)} ${m.days[todayISO()] ? '✅' : '⬜'}`).join(' · ') : 'waiting for your buddy'} ›</a></div>`;
+}
+const gardenScene = (kind, labels, hint) => `<section class="gd-scene ${kind}"><canvas data-garden="${kind}" role="img" aria-label="${kind === 'yard' ? 'Your yard of grown trees' : 'Your tree on a floating island'}"></canvas>${labels}<span class="gd-hint">${hint || 'Drag to spin'}</span></section>`;
+function gardenSay(h) {
+  const { cur, yard, goodToday } = h;
+  if (cur.state === 'fruit') return `<b>Fully grown!</b> The mystery box held a <b>${cur.fruit.name}</b>. The tree is in your yard, and a new seed is planted tomorrow.`;
+  if (cur.state === 'wilted') return `<b>Your tree is wilting.</b> ${cur.missed} day${cur.missed === 1 ? '' : 's'} missed. Finish today together to revive it; after ${TREE_MISS - cur.missed} more missed day${TREE_MISS - cur.missed === 1 ? '' : 's'} it stops growing.`;
+  if (cur.state === 'seed') {
+    const last = yard[yard.length - 1];
+    return `${last && last.state === 'withered' ? 'Your last tree stopped growing after 3 missed days. ' : ''}<b>A new seed.</b> Finish every task today, both of you, to plant it.`;
+  }
+  return goodToday ? '<b>Everyone is done today ✓</b> Your tree grew one step.' : '<b>Today’s still open.</b> When you both finish every task, the tree grows.';
+}
+function gardenTasksHtml(p, me, others) {
+  const today = todayISO(), mineToday = me.days[today];
+  const timeOf = (d) => (d && d.at ? new Date(d.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+  const waiting = others.filter((m) => !m.days[today]);
+  const mine = myTicks(p);
+  const theirs = (m, id) => p.day === today && p.ticks[m.id] && p.ticks[m.id].has(id);
+  const rows = p.tasks
+    ? p.tasks.map((t) => `<div class="gd-task ${mine.has(t.id) ? 'done' : ''}">
+        <button class="chk ${mine.has(t.id) ? 'on' : ''}" data-act="tree-tick" data-id="${t.id}" aria-pressed="${mine.has(t.id)}" aria-label="${escapeHtml(t.title)}">${mine.has(t.id) ? CHECK : ''}</button>
+        <div class="bm-body"><b>${escapeHtml(t.title)}</b><span>${others.length ? others.map((m) => `<i class="gd-who ${theirs(m, t.id) ? 'on' : ''}">${escapeHtml(m.name)} ${theirs(m, t.id) ? '✓' : '…'}</i>`).join('') : 'Your buddy’s tick shows here'}</span></div>
+        <button class="gd-x" data-act="tree-task-del" data-id="${t.id}" aria-label="Remove ${escapeHtml(t.title)}">×</button></div>`).join('')
+      + `<form class="inline gd-add" data-form="tree-task"><input name="title" maxlength="80" placeholder="Add a daily task for you both" aria-label="New daily task"><button class="mini-btn" type="submit">Add</button></form>`
+    : `<div class="gd-task ${mineToday ? 'done' : ''}"><button class="chk ${mineToday ? 'on' : ''}" data-act="buddy-tick" aria-pressed="${!!mineToday}" aria-label="I did today’s tasks">${mineToday ? CHECK : ''}</button>
+        <div class="bm-body"><b>I did today’s tasks</b><span>${TREE_DEFAULT_TASKS.join(' · ')}</span></div></div>
+      <p class="help">To share a task list you can tick one by one, run <b>supabase/tree.sql</b> once in Supabase.</p>`;
+  return `<section class="gd-card" data-section="Today"><div class="card-head"><h2>Today’s tasks</h2><span class="hint">${p.tasks ? `${p.tasks.filter((t) => mine.has(t.id)).length}/${p.tasks.length} yours` : ''}</span></div>
+    ${rows}
+    <div class="gd-people">${[me, ...others].map((m) => { const d = m.days[today]; return `<div class="gd-person ${d ? 'done' : ''}"><b>${m.me ? 'You' : escapeHtml(m.name)}</b><span>${d ? `All done ${timeOf(d)}${d.n ? ` · “${escapeHtml(d.n)}”` : ''}` : 'Not finished yet'}</span></div>`; }).join('')}</div>
+    ${mineToday ? `<form class="inline bnote" data-form="buddy-note"><input name="note" maxlength="140" placeholder="Leave a note, e.g. SHL numerical 14/18" value="${escapeHtml(mineToday.n || '')}"><button class="mini-btn" type="submit">Save note</button></form>` : ''}
+    ${waiting.length ? `<button class="btn full" data-act="buddy-nudge">Nudge ${escapeHtml(waiting.map((m) => m.name).join(' & '))} 👀</button>` : ''}
+  </section>`;
+}
+function gardenYardHtml(yard) {
+  const grown = yard.filter((t) => t.state === 'fruit').length;
+  const list = yard.slice().reverse().map((t) => `<li><i style="background:${t.state === 'fruit' ? t.fruit.color : '#a8926a'}"></i>
+    <b>${t.state === 'fruit' ? `${t.fruit.name[0].toUpperCase()}${t.fruit.name.slice(1)} tree` : `Stopped at day ${t.good}`}</b><span>${fmtShort(t.planted)} to ${fmtShort(t.ended)}</span></li>`).join('');
+  return `<section class="gd-card" data-section="Yard"><div class="card-head"><h2>Our yard</h2><span class="hint">${yard.length ? `${grown} grown${yard.length - grown ? ` · ${yard.length - grown} stopped` : ''}` : ''}</span></div>
+    ${yard.length ? `${gardenScene('yard', '')}<ul class="gd-list">${list}</ul>` : '<p class="small muted">Every tree you grow is planted here, with its fruit.</p>'}</section>`;
 }
 function buddyTabHtml() {
-  const head = (label, title) => `<header class="top">${topBar({ label, title, right: menuBtn })}</header>`;
+  const head = (title, right = menuBtn) => `<header class="gd-head"><div><small>Build a tree together</small><h1>${title}</h1></div>${right}</header>`;
+  const hero = () => gardenScene('tree', '');
+  const wrap = (inner) => `<div class="garden">${inner}</div>`;
   if (!state.account) {
-    return head('Work Buddy', 'Partner up') + `<section class="card banner-card"><b>Sign in with Google to pair up</b>
-      <p class="small">Invite your buddy by their Gmail, or accept their invite. Your pact belongs to your accounts, so it's there on every device.</p>
-      <div class="btn-row"><a class="btn primary" href="#/account">Sign in with Google</a></div></section>`;
+    return wrap(head('Our tree') + hero() + `<section class="gd-card"><b>Sign in with Google to plant a tree</b>
+      <p class="small">Invite your buddy by their Gmail, or accept their invite. The tree belongs to your accounts, so it’s there on every device.</p>
+      <div class="btn-row"><a class="btn primary" href="#/account">Sign in with Google</a></div></section>`);
   }
   if (!sbUser) {
-    return head('Work Buddy', 'Partner up') + `<section class="card banner-card"><b>One more Google sign-in</b>
-      <p class="small">Work Buddy has moved to the new database. Sign in with Google once more on this device to turn it on.</p>
+    return wrap(head('Our tree') + hero() + `<section class="gd-card"><b>One more Google sign-in</b>
+      <p class="small">Sign in with Google once more on this device to see your tree.</p>
       <div class="btn-row"><button class="btn primary" data-act="google-signin">Continue with Google</button></div>
       ${loginWait ? '<p class="small muted">Finish signing in in the Google window…</p>' : ''}
-      ${sbLastError && !loginWait ? `<p class="small err">Last try didn’t work: ${escapeHtml(sbLastError)}</p>` : ''}</section>`;
+      ${sbLastError && !loginWait ? `<p class="small err">Last try didn’t work: ${escapeHtml(sbLastError)}</p>` : ''}</section>`);
   }
   if (!buddyView) {
-    return head('Work Buddy', 'Partner up') + invitesHtml(false) + `
-      ${buddyError ? `<section class="card"><p class="err pad">${escapeHtml(buddyError)}</p><button class="btn" data-act="buddy-refresh">Try again</button></section>` : ''}
-      <form class="card form" data-form="buddy-create" data-section="Start a pact">
-        <div class="card-head"><h2>Start a pact</h2></div>
-        <p class="small muted">Do a routine together with a real person, e.g. an online test every day. Each of you ticks your own day; the streak grows only on days you both finish.</p>
+    return wrap(head('Our tree') + invitesHtml(false) + hero() + `
+      ${buddyError ? `<section class="gd-card"><p class="err">${escapeHtml(buddyError)}</p><button class="btn" data-act="buddy-refresh">Try again</button></section>` : ''}
+      <form class="gd-card form" data-form="buddy-create" data-section="Plant a seed">
+        <div class="card-head"><h2>Plant a seed together</h2></div>
+        <p class="small muted">Pick a buddy. Each day you both finish your shared tasks, your tree grows: 7 good days take it from seed to fruit.</p>
         <label class="f">Your buddy’s Gmail<input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="e.g. han@gmail.com"><span class="help">They see your invite when they open I Commit! signed in with that Gmail.</span></label>
-        <label class="f">What you’re doing together<input name="name" maxlength="60" value="Daily online test"></label>
-        <label class="f">Tick me automatically when I finish<span class="help">Optional. Or tick by hand on this page.</span>${routineSelect('routine', (routineChoices().find((c) => /test/i.test(c.name)) || {}).id, 'Nothing, I’ll tick here')}</label>
-        <button class="btn primary" type="submit">Start and invite</button>
-      </form>`;
+        <label class="f">Name your tree<input name="name" maxlength="60" value="Our tree"></label>
+        <button class="btn primary" type="submit">Plant and invite</button>
+      </form>`);
   }
   const p = buddyView, today = todayISO();
   const me = p.members.find((m) => m.me) || { days: {} };
   const others = p.members.filter((m) => !m.me);
-  const streak = pactStreak(p);
-  const mineToday = me.days[today];
+  const h = treeHistory(p), { cur } = h, streak = pactStreak(p);
   const prefs = state.buddy || { commitmentId: null };
-  const linked = prefs.commitmentId && state.commitments.find((c) => c.id === prefs.commitmentId);
-  const waiting = others.filter((m) => !m.days[today]);
   const share = (myProfile && myProfile.share_calendar) || 'off';
-  const timeOf = (d) => (d && d.at ? new Date(d.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
   const days = Array.from({ length: 14 }, (_, i) => addDaysISO(today, i - 13));
   const row = (m) => `<div class="bgrid-row"><span class="bname">${m.me ? 'You' : escapeHtml(m.name)}</span>${days.map((d) =>
     `<i class="${m.days[d] ? 'on' : ''} ${d === today ? 'today' : ''}" title="${fmtShort(d)}"></i>`).join('')}</div>`;
-  return head('Work Buddy', escapeHtml(p.name)) + invitesHtml(true) + `
-    <section class="card" data-section="Today">
-      <div class="bstreak"><b>${streak ? `🔥 ${streak}` : '🌱 0'}</b><span>${others.length ? 'day streak · grows on days you all finish' : p.invited.length ? `Waiting for ${escapeHtml(p.invited.join(' & '))} to accept` : 'Invite your buddy below'}</span></div>
-      <div class="bmember me ${mineToday ? 'done' : ''}">
-        <button class="chk ${mineToday ? 'on' : ''}" data-act="buddy-tick" aria-pressed="${!!mineToday}" aria-label="I did it today">${mineToday ? CHECK : ''}</button>
-        <div class="bm-body"><b>You</b><span>${mineToday ? `Done ${timeOf(mineToday)}${mineToday.n ? ` · “${escapeHtml(mineToday.n)}”` : ''}` : 'Not yet today'}</span></div>
-      </div>
-      <form class="inline bnote" data-form="buddy-note"><input name="note" maxlength="140" placeholder="Add a note, e.g. SHL numerical 14/18" value="${escapeHtml(mineToday && mineToday.n || '')}"><button class="mini-btn" type="submit">${mineToday ? 'Save' : 'Done + note'}</button></form>
-      ${others.map((m) => { const d = m.days[today]; return `<div class="bmember ${d ? 'done' : ''}"><span class="chk ring ${d ? 'on' : ''}">${d ? CHECK : ''}</span>
-        <div class="bm-body"><b>${escapeHtml(m.name)}</b><span>${d ? `Done ${timeOf(d)}${d.n ? ` · “${escapeHtml(d.n)}”` : ''}` : 'Not yet today'}</span></div></div>`; }).join('')}
-      ${waiting.length ? `<button class="btn full" data-act="buddy-nudge">Nudge ${escapeHtml(waiting.map((m) => m.name).join(' & '))} 👀</button>` : ''}
-      <p class="help">${linked ? `Ticks you automatically when you finish <b>${escapeHtml(linked.name)}</b>.` : 'Tick by hand, or link a routine below to tick automatically.'}</p>
-    </section>
-    <section class="card" data-section="Last 14 days">
-      <div class="card-head"><h2>Last 14 days</h2></div>
-      <div class="bgrid">${row(me)}${others.map(row).join('')}</div>
-    </section>
-    <section class="card" data-section="Settings">
-      <div class="card-head"><h2>Invite & settings</h2></div>
+  const grown = cur.state === 'fruit';
+  const labels = `<div class="gd-label" data-anchor="tree"><b>${cur.state === 'wilted' ? 'Wilting' : TREE_STAGES[cur.good]}</b><small>Day ${cur.good} of ${TREE_DAYS}</small></div>
+    <div class="gd-label small" data-anchor="box"><b>${grown ? cur.fruit.name : 'Mystery fruit'}</b><small>${grown ? 'revealed' : '? ? ?'}</small></div>`;
+  const links = p.tasks ? p.tasks.map((t) => `<label class="f">Tick “${escapeHtml(t.title)}” when I finish${routineSelect(`link:${t.id}`, (prefs.links || {})[t.id], 'Nothing, I’ll tick here')}</label>`).join('')
+    : `<label class="f">Tick me automatically when I finish${routineSelect('routine', prefs.commitmentId, 'Nothing, I’ll tick here')}</label>`;
+  return wrap(head(escapeHtml(p.name), `<span class="gd-pill">${streak ? `🔥 ${streak}` : '🌱'}</span>${menuBtn}`) + invitesHtml(true) + `
+    ${gardenScene('tree', labels)}
+    <ol class="gd-steps" aria-label="Day ${cur.good} of ${TREE_DAYS}">${Array.from({ length: TREE_DAYS }, (_, i) => `<li class="${i < cur.good ? (cur.state === 'wilted' ? 'dry' : 'on') : ''}"><i></i><span>${['🌰', '🌱', '🌿', '🪴', '🌳', '🌸', '🍎'][i]}</span></li>`).join('')}</ol>
+    <p class="gd-say ${cur.state}">${gardenSay(h)}${!others.length ? ` ${p.invited.length ? `Waiting for ${escapeHtml(p.invited.join(' & '))} to accept; until then your own days grow it.` : 'Invite your buddy below.'}` : ''}</p>
+    ${gardenTasksHtml(p, me, others)}
+    ${gardenYardHtml(h.yard)}
+    <section class="gd-card" data-section="Last 14 days"><div class="card-head"><h2>Last 14 days</h2></div><div class="bgrid">${row(me)}${others.map(row).join('')}</div></section>
+    <details class="gd-card" data-section="Settings" ${others.length || p.invited.length ? '' : 'open'}>
+      <summary><h2>Invite & settings</h2></summary>
       <form class="inline binvite" data-form="buddy-email"><input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="Invite by Gmail, e.g. han@gmail.com"><button class="btn primary" type="submit">Invite</button></form>
       ${p.invited.map((e) => `<div class="binv"><span>✉️ ${escapeHtml(e)} · invited</span><a class="mini-btn" href="${escapeHtml(inviteMail(e))}">Email them</a><button class="mini-btn" data-act="invite-takeback" data-email="${escapeHtml(e)}">Take back</button></div>`).join('')}
       <p class="help">They see the invite when they open I Commit! signed in with that Gmail. “Email them” opens a ready-made email in your Mail app.</p>
-      <form class="form flat" data-form="buddy-routine"><label class="f">Tick me automatically when I finish${routineSelect('routine', prefs.commitmentId, 'Nothing, I’ll tick here')}</label>
+      <form class="form flat" data-form="buddy-routine">${links}
         <label class="f">Share my calendar with my buddy<select name="share">
           <option value="off" ${share === 'off' ? 'selected' : ''}>Off</option>
           <option value="busy" ${share === 'busy' ? 'selected' : ''}>Busy times only</option>
           <option value="names" ${share === 'names' ? 'selected' : ''}>With event names</option></select>
           <span class="help">Your timetable and one-off events. You see theirs only if they share too.</span></label></form>
-      <div class="danger"><button class="btn warn" data-act="buddy-leave">Leave pact</button></div>
-    </section>`;
+      <div class="danger"><button class="btn warn" data-act="buddy-leave">Leave this tree</button></div>
+    </details>`);
 }
+// The 3D pictures are painted after the page is on screen.
+function layoutGarden() {
+  if (route.tab !== 'buddy' || !window.Garden) return;
+  const h = buddyView && sbUser ? treeHistory(buddyView) : null;
+  $app.querySelectorAll('canvas[data-garden]').forEach((cv) => {
+    const kind = cv.dataset.garden;
+    const scene = kind === 'yard'
+      ? Garden.yardScene((h ? h.yard : []).map((t) => ({ state: t.state, good: t.good, fruit: t.fruit.color, seed: t.seed })))
+      : Garden.treeScene(h ? { stage: h.cur.good, wilt: h.cur.state === 'wilted', fruit: h.cur.fruit.color, seed: h.cur.seed } : { stage: 4, wilt: false, fruit: '#d9483b', seed: 'preview' });
+    Garden.mount(cv, scene, kind);
+  });
+}
+window.addEventListener('resize', () => layoutGarden());
 
 // ---------- Whiteboard ----------
 // Sticky notes for things that pop into your head ("order pizza for Aurum"). Two views:
@@ -6534,7 +6698,7 @@ const HOME_AREAS = [
   { key: 'academics', name: 'Academics', href: '#/academics', tabs: ['academics'], color: 'blue' },
   { key: 'apps', name: 'Career', href: '#/apps', tabs: ['apps'], color: 'amber' },
   { key: 'gallery', name: 'Projects', href: '#/gallery', tabs: ['gallery'], color: 'purple' },
-  { key: 'buddy', name: 'Work Buddy', href: '#/buddy', tabs: ['buddy'], color: 'coral' },
+  { key: 'buddy', name: 'Our Tree', href: '#/buddy', tabs: ['buddy'], color: 'coral' },
   { key: 'commitments', name: 'All', href: '#/commitments', tabs: ['commitments'], color: 'gray' },
 ];
 const CENTRE_TABS = ['plan', 'today', 'cal'];
@@ -6566,11 +6730,9 @@ function areaStatus(key) {
       return { pct: steps.length ? done / steps.length : null, text: next ? `Next: ${next.m.title} · ${fmtShort(next.d)}` : `${live.length} active project${live.length === 1 ? '' : 's'}` };
     }
     if (key === 'buddy') {
-      if (!buddyView) return { pct: null, text: 'No pact yet' };
-      const me = buddyView.members.find((m) => m.me), others = buddyView.members.filter((m) => !m.me);
-      const days = me ? Array.from({ length: 7 }, (_, i) => addDaysISO(wk, i)).filter((d) => d <= today && me.days[d]).length : 0;
-      const shown = Math.min(7, Math.round((parseISO(today) - parseISO(wk)) / 864e5) + 1);
-      return { pct: shown ? days / shown : null, text: others.length ? `${others.map((m) => m.name).join(', ')} ${others.every((m) => m.days[today]) ? 'ticked today ✓' : 'not yet today'}` : buddyView.name };
+      if (!buddyView) return { pct: null, text: 'Plant a seed' };
+      const others = buddyView.members.filter((m) => !m.me), { cur } = treeHistory(buddyView);
+      return { pct: cur.good / TREE_DAYS, text: `Day ${cur.good} of ${TREE_DAYS}${cur.state === 'wilted' ? ' · wilting' : others.length ? ` · ${others.map((m) => m.name).join(', ')} ${others.every((m) => m.days[today]) ? 'done ✓' : 'not yet'}` : ''}` };
     }
     if (key === 'commitments') {
       const n = state.commitments.filter((c) => !c.archived).length;
@@ -7603,9 +7765,11 @@ document.addEventListener('click', (e) => {
     case 'buddy-tick': { const me = buddyView && buddyView.members.find((m) => m.me); buddyAutoDate = null; buddyTick(!(me && me.days[todayISO()])); break; }
     case 'buddy-nudge': {
       const names = buddyView.members.filter((m) => !m.me && !m.days[todayISO()]).map((m) => m.name).join(' & ');
-      shareText(`${names}, haven't seen your ${buddyView.name.toLowerCase()} today 👀 Let's keep the streak going!`, `${location.origin}${location.pathname}#/buddy`); break;
+      shareText(`${names}, our tree needs you today 🌱 Finish today’s tasks so it grows!`, `${location.origin}${location.pathname}#/buddy`); break;
     }
     case 'buddy-leave': leavePact(); break;
+    case 'tree-tick': if (buddyView) treeTick(btn.dataset.id, !myTicks(buddyView).has(btn.dataset.id)); break;
+    case 'tree-task-del': treeRemoveTask(btn.dataset.id); break;
     case 'project-delete': deleteProject(); break;
     case 'ref-delete': deleteRef(btn.dataset.id); break;
     case 'projects-retry': projects = null; render(); break;
@@ -7891,7 +8055,9 @@ document.addEventListener('change', (e) => {
   }
   if (e.target.closest('form[data-form="buddy-routine"]')) {
     if (e.target.name === 'share') { setShareCalendar(e.target.value); return; }
-    state.buddy = { commitmentId: e.target.value || null }; buddyAutoDate = null; save(); render(); return;
+    const prefs = { commitmentId: (state.buddy && state.buddy.commitmentId) || null, links: { ...((state.buddy && state.buddy.links) || {}) } };
+    if (e.target.name.startsWith('link:')) { const id = e.target.name.slice(5); if (e.target.value) prefs.links[id] = e.target.value; else delete prefs.links[id]; } else prefs.commitmentId = e.target.value || null;
+    state.buddy = prefs; buddyAutoDate = null; save(); render(); return;
   }
   if (e.target.id === 'bgFile') {
     const file = e.target.files[0];
@@ -7927,6 +8093,7 @@ document.addEventListener('submit', (e) => {
   else if (form === 'note-date') { const f = new FormData(e.target); pinNote(e.target.dataset.id, f.get('date') || todayISO(), f.get('time'), f.get('endDate') || null); }
   else if (form === 'test') saveTestForm(e.target);
   else if (form === 'buddy-create') createPact(e.target);
+  else if (form === 'tree-task') treeAddTask(e.target);
   else if (form === 'project') saveProjectForm(e.target);
   else if (form === 'step') saveStep(e.target);
   else if (form === 'step-quick') quickStep(e.target);
