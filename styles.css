@@ -1625,6 +1625,19 @@ body.gardening { background: linear-gradient(#c9d3c1, #dfe4d5 480px, #f6f3e8 900
 .gd-who.on { background: #dcebcb; color: #43602f; }
 .gd-x { border: 0; background: none; font-size: 18px; color: #9aa291; cursor: pointer; padding: 4px 8px; }
 .gd-add { margin: 8px 0 4px; }
+.gd-group { margin: 10px 0 0; font-size: 11.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: #6c7a69; }
+.gd-group + .gd-task, .gd-group + .g3-row { border-top: 0; }
+.gd-mark { flex: none; box-sizing: border-box; width: 32px; height: 32px; margin-left: 4px; border-radius: 10px; border: 2px dashed #c9c5b2; display: grid; place-items: center; }
+.gd-mark.on { border: 0; background: #dcebcb; color: #43602f; }
+.gd-mark svg { width: 14px; height: 14px; }
+.gd-task.theirs .bm-body b { font-weight: 600; }
+.gd-warn { margin: 8px 0; padding: 8px 10px; border-radius: 12px; background: #fbf0d0; color: #6f5712; font-size: 13px; }
+.gd-for { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; color: #6c7a69; }
+.gd-for label { position: relative; margin: 0; cursor: pointer; }
+.gd-for input { position: absolute; opacity: 0; pointer-events: none; }
+.gd-for i { display: inline-block; font-style: normal; font-weight: 700; padding: 5px 13px; border-radius: 99px; background: #f0ecdd; color: #4a5747; }
+.gd-for input:checked + i { background: #6f8f55; color: #fff; }
+.gd-for input:focus-visible + i { outline: 2px solid #43602f; outline-offset: 2px; }
 .gd-people { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 10px 0 6px; }
 .gd-person { border-radius: 14px; padding: 8px 10px; background: #f3efe1; display: flex; flex-direction: column; }
 .gd-person.done { background: #e2eed3; }

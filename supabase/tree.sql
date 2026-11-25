@@ -1,9 +1,10 @@
 -- I Commit! database, part 6: "Build a tree together" (the daily tasks you share with your buddy).
 -- Run once in Supabase → SQL Editor after the earlier parts (safe to run again).
 --
--- pact_tasks: the tasks you both do every day; either of you can add or remove them.
+-- pact_tasks: the daily tasks; either of you can add or remove them. Each is for one of you (owner_id) or,
+--   with owner_id empty, for you together.
 -- pact_task_ticks: who ticked which task on which day (you can only tick for yourself).
--- When you have ticked every task, the app records your day in pact_days (part 1); the tree grows on days
+-- When you have ticked all your tasks (your own and the shared ones), the app records your day in pact_days (part 1); the tree grows on days
 -- everyone in the pact has done that, so adding a task later never rewrites past days. The tree itself is
 -- worked out from those days, so it isn't stored.
 
@@ -14,6 +15,8 @@ create table if not exists public.pact_tasks (
   created_at timestamptz not null default now(),
   unique (pact_id, title)
 );
+
+alter table public.pact_tasks add column if not exists owner_id uuid references public.profiles on delete cascade;
 
 create table if not exists public.pact_task_ticks (
   task_id uuid not null references public.pact_tasks on delete cascade,
@@ -30,14 +33,17 @@ alter table public.pact_task_ticks enable row level security;
 
 drop policy if exists "your pact's tasks" on public.pact_tasks;
 create policy "your pact's tasks" on public.pact_tasks for all to authenticated
-  using (public.in_pact(pact_id)) with check (public.in_pact(pact_id));
+  using (public.in_pact(pact_id))
+  with check (public.in_pact(pact_id) and (owner_id is null
+    or exists (select 1 from public.pact_members m where m.pact_id = pact_tasks.pact_id and m.user_id = owner_id)));
 
 drop policy if exists "see task ticks in your pacts" on public.pact_task_ticks;
 create policy "see task ticks in your pacts" on public.pact_task_ticks for select to authenticated using (public.in_pact(pact_id));
 drop policy if exists "tick tasks for yourself" on public.pact_task_ticks;
 create policy "tick tasks for yourself" on public.pact_task_ticks for insert to authenticated
   with check (user_id = auth.uid() and public.in_pact(pact_id)
-    and exists (select 1 from public.pact_tasks t where t.id = task_id and t.pact_id = pact_task_ticks.pact_id));
+    and exists (select 1 from public.pact_tasks t where t.id = task_id and t.pact_id = pact_task_ticks.pact_id
+      and (t.owner_id is null or t.owner_id = auth.uid())));
 drop policy if exists "untick your own tasks" on public.pact_task_ticks;
 create policy "untick your own tasks" on public.pact_task_ticks for delete to authenticated using (user_id = auth.uid());
 

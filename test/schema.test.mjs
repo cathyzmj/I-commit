@@ -222,5 +222,12 @@ await as('cathy', 'delete from pact_task_ticks');
 assert.equal((await as('han', 'select * from pact_task_ticks')).length, 1, 'only you can untick yours');
 await as('cathy', 'delete from pact_tasks where id = $1', [task]);
 assert.equal((await as('han', 'select * from pact_task_ticks')).length, 0, 'removing a task removes its ticks');
+// a task for one of you: either can add or hand it over, only its owner ticks it
+const [{ id: hans }] = await as('cathy', "insert into pact_tasks (pact_id, title, owner_id) values ($1, 'Gym', $2) returning id", [grove, ids.han]);
+await fails('cathy', "insert into pact_task_ticks (task_id, pact_id, day) values ($1, $2, '2026-11-25')", [hans, grove], /row-level security/);
+await as('han', "insert into pact_task_ticks (task_id, pact_id, day) values ($1, $2, '2026-11-25')", [hans, grove]);
+await fails('cathy', "insert into pact_tasks (pact_id, title, owner_id) values ($1, 'Read', $2)", [grove, ids.eve], /row-level security/);
+await as('han', 'update pact_tasks set owner_id = null where id = $1', [hans]);
+await as('cathy', "insert into pact_task_ticks (task_id, pact_id, day) values ($1, $2, '2026-11-25')", [hans, grove]);
 await db.exec(fs.readFileSync(new URL('../supabase/tree.sql', import.meta.url), 'utf8')); // safe to run again
 console.log('ALL DATABASE RULE TESTS PASSED');

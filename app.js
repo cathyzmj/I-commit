@@ -2479,8 +2479,9 @@ async function setShareCalendar(level) {
   refreshBuddy();
 }
 // ---- Build a tree together
-// You and your buddy share a short list of daily tasks. A day is good when everyone in the pact has ticked
-// every task. Each good day grows the tree one step: seed, sprout … flower, and on the 7th a mature tree whose
+// You and your buddy keep a short list of daily tasks. Each task is for one of you or for you together
+// (owner_id empty: you both tick it). A day is good when everyone in the pact has ticked their own tasks
+// and the shared ones. Each good day grows the tree one step: seed, sprout … flower, and on the 7th a mature tree whose
 // fruit was a mystery until then. A missed day makes it wilt; 3 missed days in a row and it stops growing.
 // Grown (and stopped) trees are kept in the yard. The tree is worked out from the days, so nothing extra is stored.
 const TREE_EPOCH = '2026-11-25', TREE_DAYS = 7, TREE_MISS = 3;
@@ -2523,10 +2524,12 @@ function treeHistory(p, today = todayISO()) {
 }
 async function loadPactTasks(p) { // p.tasks stays null until supabase/tree.sql has been run
   const day = todayISO();
-  const list = () => sb.from('pact_tasks').select('id, title, created_at').eq('pact_id', p.id).order('created_at').order('title');
-  p.tasks = null; p.ticks = {}; p.day = day;
+  let cols = 'id, title, created_at, owner_id';
+  const list = () => sb.from('pact_tasks').select(cols).eq('pact_id', p.id).order('created_at').order('title');
+  p.tasks = null; p.allTasks = []; p.ticks = {}; p.day = day; p.owners = false;
   try {
     let t = await list();
+    if (t.error) { cols = 'id, title, created_at'; t = await list(); } // a tree.sql from before tasks had owners
     if (t.error) return;
     if (!t.data.length) {
       await sb.from('pact_tasks').upsert(TREE_DEFAULT_TASKS.map((title) => ({ pact_id: p.id, title })), { onConflict: 'pact_id,title', ignoreDuplicates: true });
@@ -2534,26 +2537,38 @@ async function loadPactTasks(p) { // p.tasks stays null until supabase/tree.sql 
     }
     const k = await sb.from('pact_task_ticks').select('task_id, user_id').eq('pact_id', p.id).eq('day', day);
     if (t.error || k.error) return;
-    p.tasks = t.data;
+    const here = new Set(p.members.map((m) => m.id));
+    p.owners = cols.includes('owner_id');
+    p.allTasks = t.data;
+    p.tasks = t.data.filter((x) => !x.owner_id || here.has(x.owner_id)); // someone who left takes their own tasks with them
     for (const r of k.data) (p.ticks[r.user_id] || (p.ticks[r.user_id] = new Set())).add(r.task_id);
   } catch { /* offline */ }
 }
+const taskFor = (t, uid) => !t.owner_id || t.owner_id === uid;
+const tasksOf = (p, uid) => (p.tasks || []).filter((t) => taskFor(t, uid));
+const myTasks = (p) => (sbUser ? tasksOf(p, sbUser.id) : []);
+// The list as shown: yours, the shared ones, then your buddy's.
+function taskGroups(p, others) {
+  if (!p.owners || !others.length) return [['', p.tasks]];
+  const of = (id) => p.tasks.filter((t) => (t.owner_id || null) === id);
+  return [['Yours', of(sbUser.id)], ['Together', of(null)], ...others.map((m) => [`${m.name}’s`, of(m.id)])].filter((g) => g[1].length);
+}
 const myTicks = (p) => (p.day === todayISO() && sbUser && p.ticks && p.ticks[sbUser.id]) || new Set();
-// Your day counts for the tree once every task is ticked. Only unticking takes it back: a task added
-// after you've finished doesn't undo your day (it counts from tomorrow).
+// Your day counts for the tree once all your tasks (your own and the shared ones) are ticked. Only unticking
+// takes it back: a task added after you've finished doesn't undo your day (it counts from tomorrow).
 async function treeSyncDay(unticked = false) {
   const p = buddyView;
-  if (!p || !p.tasks || !p.tasks.length || p.day !== todayISO() || buddyBusy) return;
+  if (!p || !p.tasks || !myTasks(p).length || p.day !== todayISO() || buddyBusy) return;
   const me = p.members.find((m) => m.me);
   if (!me) return;
-  const all = p.tasks.every((t) => myTicks(p).has(t.id));
+  const all = myTasks(p).every((t) => myTicks(p).has(t.id));
   const has = !!me.days[p.day];
   if (all && !has) await buddyTick(true, '');
   else if (unticked && !all && has) await buddyTick(false);
 }
 async function treeTick(taskId, on) {
   const p = buddyView;
-  if (!p || !p.tasks || !sbUser) return;
+  if (!p || !p.tasks || !sbUser || !myTasks(p).some((t) => t.id === taskId)) return;
   const day = todayISO();
   if (p.day !== day) { await refreshBuddy(); return; }
   const mine = p.ticks[sbUser.id] || (p.ticks[sbUser.id] = new Set());
@@ -2565,19 +2580,35 @@ async function treeTick(taskId, on) {
   if (error) { toast(sbErr(error)); refreshBuddy(); return; }
   await treeSyncDay(!on);
 }
+let treeNewOwner = ''; // who the next task is for ('' = together), kept while the page redraws
 async function treeAddTask(form) {
   const title = String(new FormData(form).get('title') || '').trim().slice(0, 80);
-  if (!title || !buddyView) return;
-  const { error } = await sb.from('pact_tasks').insert({ pact_id: buddyView.id, title });
+  const p = buddyView;
+  if (!title || !p || !p.tasks) return;
+  const owner = p.owners && p.members.some((m) => m.id === treeNewOwner) && p.members.length > 1 ? treeNewOwner : null;
+  const old = p.allTasks.find((x) => x.title.toLowerCase() === title.toLowerCase());
+  const listed = old && p.tasks.some((x) => x.id === old.id);
+  let error, said = '';
+  if (listed) { // one of you had it and now the other does too: it becomes a shared task
+    if (!old.owner_id || old.owner_id === owner) { toast('That task is already on the list'); return; }
+    ({ error } = await sb.from('pact_tasks').update({ owner_id: null }).eq('id', old.id));
+    said = `“${old.title}” is now for you together`;
+  } else if (old) ({ error } = await sb.from('pact_tasks').update({ owner_id: owner }).eq('id', old.id));
+  else ({ error } = await sb.from('pact_tasks').insert({ pact_id: p.id, title, ...(p.owners ? { owner_id: owner } : {}) }));
   if (error) { toast(error.code === '23505' ? 'That task is already on the list' : sbErr(error)); return; }
+  if (said) toast(said);
   form.reset(); document.activeElement.blur();
   await refreshBuddy();
 }
 async function treeRemoveTask(id) {
-  const t = buddyView && buddyView.tasks && buddyView.tasks.find((x) => x.id === id);
+  const p = buddyView;
+  const t = p && p.tasks && p.tasks.find((x) => x.id === id);
   if (!t) return;
-  if (buddyView.tasks.length === 1) { toast('Keep at least one task, or the tree can’t grow'); return; }
-  if (!confirm(`Remove “${t.title}” for both of you?`)) return;
+  const rest = p.tasks.filter((x) => x.id !== id);
+  const bare = p.members.find((m) => taskFor(t, m.id) && !rest.some((x) => taskFor(x, m.id)));
+  if (bare) { toast(`${bare.me ? 'You' : bare.name} would have no task left, so the tree couldn’t grow. Add another first.`); return; }
+  const owner = p.members.find((m) => m.id === t.owner_id);
+  if (!confirm(!owner ? `Remove “${t.title}” for both of you?` : owner.me ? `Remove your task “${t.title}”?` : `Remove ${owner.name}’s task “${t.title}”?`)) return;
   const { error } = await sb.from('pact_tasks').delete().eq('id', id);
   if (error) { toast(sbErr(error)); return; }
   await refreshBuddy();
@@ -2589,7 +2620,7 @@ function routineDoneToday(id) {
   if (!it) return null;
   return it.freq === 'weekly' || it.freq === 'once' ? periodDone(it) : dayDone(it, todayIndex(currentWeekKey()));
 }
-// Ticks a shared task for you when the routine you linked to it is finished (and unticks only what it ticked).
+// Ticks a task of yours when the routine you linked to it is finished (and unticks only what it ticked).
 const autoTicked = new Set();
 function buddyAutoTick() {
   if (!buddyView || buddyBusy || !sbUser) return;
@@ -2602,7 +2633,7 @@ function buddyAutoTick() {
     else if (!done && has && buddyAutoDate === todayISO()) { buddyAutoDate = null; buddyTick(false); }
     return;
   }
-  for (const t of buddyView.tasks) {
+  for (const t of myTasks(buddyView)) {
     const done = routineDoneToday((prefs.links || {})[t.id]);
     if (done == null) continue;
     const key = `${todayISO()}:${t.id}`, has = myTicks(buddyView).has(t.id);
@@ -2813,9 +2844,17 @@ function gardenData() {
   const mine = myTicks(p);
   const status = cur.state === 'wilted' ? 'wilting' : me.days[today] && others.every((m) => m.days[today]) && others.length ? 'both done today' : me.days[today] ? 'you’re done today' : others.some((m) => m.days[today]) ? `${others.find((m) => m.days[today]).name} is done today` : 'today’s still open';
   const dot = (done) => `<span class="g3-state ${done ? 'on' : ''}">${done ? 'done ✓' : 'not yet'}</span>`;
+  const ticked = (m, id) => !!(p.day === today && p.ticks[m.id] && p.ticks[m.id].has(id));
+  const g3Task = (t) => {
+    if (sbUser && !taskFor(t, sbUser.id)) { // your buddy's own task: shown, not tickable
+      const m = others.find((x) => x.id === t.owner_id);
+      return m ? `<div class="g3-row theirs"><span class="gd-mark ${ticked(m, t.id) ? 'on' : ''}">${ticked(m, t.id) ? CHECK : ''}</span><span>${escapeHtml(t.title)}</span>${dot(ticked(m, t.id))}</div>` : '';
+    }
+    return `<div class="g3-row"><button class="chk ${mine.has(t.id) ? 'on' : ''}" data-act="tree-tick" data-id="${t.id}" aria-pressed="${mine.has(t.id)}" aria-label="${escapeHtml(t.title)}">${mine.has(t.id) ? CHECK : ''}</button><span>${escapeHtml(t.title)}</span>
+        ${buddy && !t.owner_id ? `<span class="g3-state ${ticked(buddy, t.id) ? 'on' : ''}">${escapeHtml(name)} ${ticked(buddy, t.id) ? '✓' : '…'}</span>` : ''}</div>`;
+  };
   const rows = p.tasks
-    ? p.tasks.map((t) => `<div class="g3-row"><button class="chk ${mine.has(t.id) ? 'on' : ''}" data-act="tree-tick" data-id="${t.id}" aria-pressed="${mine.has(t.id)}" aria-label="${escapeHtml(t.title)}">${mine.has(t.id) ? CHECK : ''}</button><span>${escapeHtml(t.title)}</span>
-        ${buddy ? dot(!!(p.day === today && p.ticks[buddy.id] && p.ticks[buddy.id].has(t.id))) : ''}</div>`).join('')
+    ? taskGroups(p, others).map(([label, list]) => `${label ? `<h3 class="gd-group">${escapeHtml(label)}</h3>` : ''}${list.map(g3Task).join('')}`).join('')
     : `<div class="g3-row"><button class="chk ${me.days[today] ? 'on' : ''}" data-act="buddy-tick" aria-pressed="${!!me.days[today]}" aria-label="I did today’s tasks">${me.days[today] ? CHECK : ''}</button><span>I did today’s tasks</span></div>`;
   const trees = yard.slice().reverse().slice(0, 6).map((t) => `<div class="g3-row"><i class="g3-dot" style="background:${t.state === 'fruit' ? t.fruit.color : '#a8926a'}"></i><span>${t.state === 'fruit' ? `${t.fruit.name[0].toUpperCase()}${t.fruit.name.slice(1)} tree` : `Stopped at day ${t.good}`}</span><span class="g3-state">${fmtShort(t.ended)}</span></div>`).join('');
   const places = [
@@ -2827,7 +2866,7 @@ function gardenData() {
   ];
   const panels = {
     tree: `<h2>${cur.state === 'wilted' ? 'Wilting' : TREE_STAGES[cur.good]}</h2><p>${gardenSay(h)}</p><div class="g3-row"><span>Good days</span><span class="g3-state">${cur.good} of ${TREE_DAYS}</span></div>${others.map((m) => `<div class="g3-row"><span>${escapeHtml(m.name)}</span>${dot(!!m.days[today])}</div>`).join('')}`,
-    tasks: `<h2>Today’s tasks</h2><p>The tree grows when you${buddy ? ' both' : ''} finish them all.</p>${rows}`,
+    tasks: `<h2>Today’s tasks</h2><p>The tree grows when you${buddy ? ' both finish yours' : ' finish them all'}.</p>${rows}`,
     yard: `<h2>Orchard yard</h2><p>${yard.length ? 'Every tree you grow together is planted here.' : 'Your first grown tree will be planted here.'}</p>${trees}`,
     box: grown ? `<h2>It’s a ${cur.fruit.name}!</h2><p>The box opened because your tree is fully grown.</p>` : `<h2>Mystery box</h2><p>It opens on day ${TREE_DAYS} and shows which fruit your tree makes.</p><div class="g3-row"><span>Good days to go</span><span class="g3-state">${TREE_DAYS - cur.good}</span></div>`,
     mail: !buddy ? '<h2>Mailbox</h2><p>Invite your buddy by Gmail under “Invite &amp; settings” below.</p>'
@@ -2850,9 +2889,9 @@ function gardenSay(h) {
   if (cur.state === 'wilted') return `<b>Your tree is wilting.</b> ${cur.missed} day${cur.missed === 1 ? '' : 's'} missed. Finish today together to revive it; after ${TREE_MISS - cur.missed} more missed day${TREE_MISS - cur.missed === 1 ? '' : 's'} it stops growing.`;
   if (cur.state === 'seed') {
     const last = yard[yard.length - 1];
-    return `${last && last.state === 'withered' ? 'Your last tree stopped growing after 3 missed days. ' : ''}<b>A new seed.</b> Finish every task today, both of you, to plant it.`;
+    return `${last && last.state === 'withered' ? 'Your last tree stopped growing after 3 missed days. ' : ''}<b>A new seed.</b> Finish your tasks today, both of you, to plant it.`;
   }
-  return goodToday ? '<b>Everyone is done today ✓</b> Your tree grew one step.' : '<b>Today’s still open.</b> When you both finish every task, the tree grows.';
+  return goodToday ? '<b>Everyone is done today ✓</b> Your tree grew one step.' : '<b>Today’s still open.</b> When you both finish your tasks, the tree grows.';
 }
 function gardenTasksHtml(p, me, others) {
   const today = todayISO(), mineToday = me.days[today];
@@ -2860,16 +2899,33 @@ function gardenTasksHtml(p, me, others) {
   const waiting = others.filter((m) => !m.days[today]);
   const mine = myTicks(p);
   const theirs = (m, id) => p.day === today && p.ticks[m.id] && p.ticks[m.id].has(id);
-  const rows = p.tasks
-    ? p.tasks.map((t) => `<div class="gd-task ${mine.has(t.id) ? 'done' : ''}">
+  const del = (t) => `<button class="gd-x" data-act="tree-task-del" data-id="${t.id}" aria-label="Remove ${escapeHtml(t.title)}">×</button>`;
+  const row = (t) => {
+    if (sbUser && !taskFor(t, sbUser.id)) {
+      const m = others.find((x) => x.id === t.owner_id), done = m && theirs(m, t.id);
+      return `<div class="gd-task theirs ${done ? 'done' : ''}"><span class="gd-mark ${done ? 'on' : ''}">${done ? CHECK : ''}</span>
+        <div class="bm-body"><b>${escapeHtml(t.title)}</b><span>${done ? 'Done today' : 'Not yet'}</span></div>${del(t)}</div>`;
+    }
+    const both = !t.owner_id;
+    return `<div class="gd-task ${mine.has(t.id) ? 'done' : ''}">
         <button class="chk ${mine.has(t.id) ? 'on' : ''}" data-act="tree-tick" data-id="${t.id}" aria-pressed="${mine.has(t.id)}" aria-label="${escapeHtml(t.title)}">${mine.has(t.id) ? CHECK : ''}</button>
-        <div class="bm-body"><b>${escapeHtml(t.title)}</b><span>${others.length ? others.map((m) => `<i class="gd-who ${theirs(m, t.id) ? 'on' : ''}">${escapeHtml(m.name)} ${theirs(m, t.id) ? '✓' : '…'}</i>`).join('') : 'Your buddy’s tick shows here'}</span></div>
-        <button class="gd-x" data-act="tree-task-del" data-id="${t.id}" aria-label="Remove ${escapeHtml(t.title)}">×</button></div>`).join('')
-      + `<form class="inline gd-add" data-form="tree-task"><input name="title" maxlength="80" placeholder="Add a daily task for you both" aria-label="New daily task"><button class="mini-btn" type="submit">Add</button></form>`
+        <div class="bm-body"><b>${escapeHtml(t.title)}</b>${both ? `<span>${others.length ? others.map((m) => `<i class="gd-who ${theirs(m, t.id) ? 'on' : ''}">${escapeHtml(m.name)} ${theirs(m, t.id) ? '✓' : '…'}</i>`).join('') : 'Your buddy’s tick shows here'}</span>` : ''}</div>
+        ${del(t)}</div>`;
+  };
+  const choose = p.tasks && p.owners && others.length;
+  const forWhom = choose ? `<div class="gd-for" role="radiogroup" aria-label="Who is the task for?"><span>For</span>${[[sbUser.id, 'Me'], ...others.map((m) => [m.id, m.name]), ['', 'Together']]
+    .map(([v, label]) => `<label><input type="radio" name="owner" value="${v}" ${v === (others.some((m) => m.id === treeNewOwner) || treeNewOwner === sbUser.id ? treeNewOwner : '') ? 'checked' : ''}><i>${escapeHtml(label)}</i></label>`).join('')}</div>` : '';
+  const idle = choose ? [me, ...others].filter((m) => m.id && !tasksOf(p, m.id).length) : [];
+  const rows = p.tasks
+    ? taskGroups(p, others).map(([label, list]) => `${label ? `<h3 class="gd-group">${escapeHtml(label)}</h3>` : ''}${list.map(row).join('')}`).join('')
+      + idle.map((m) => `<p class="gd-warn">${m.me ? 'You have' : `${escapeHtml(m.name)} has`} no task yet. Add one for ${m.me ? 'yourself' : escapeHtml(m.name)} or for you together, or the tree can’t grow.</p>`).join('')
+      + `<form class="gd-add" data-form="tree-task"><div class="inline"><input name="title" maxlength="80" placeholder="Add a daily task" aria-label="New daily task"><button class="mini-btn" type="submit">Add</button></div>${forWhom}</form>`
+      + (!p.owners ? '<p class="help">To give a task to just one of you, run <b>supabase/tree.sql</b> again in Supabase.</p>'
+        : !others.length ? '<p class="help">When your buddy joins, you can give a task to just one of you.</p>' : '')
     : `<div class="gd-task ${mineToday ? 'done' : ''}"><button class="chk ${mineToday ? 'on' : ''}" data-act="buddy-tick" aria-pressed="${!!mineToday}" aria-label="I did today’s tasks">${mineToday ? CHECK : ''}</button>
         <div class="bm-body"><b>I did today’s tasks</b><span>${TREE_DEFAULT_TASKS.join(' · ')}</span></div></div>
       <p class="help">To share a task list you can tick one by one, run <b>supabase/tree.sql</b> once in Supabase.</p>`;
-  return `<section class="gd-card" data-section="Today"><div class="card-head"><h2>Today’s tasks</h2><span class="hint">${p.tasks ? `${p.tasks.filter((t) => mine.has(t.id)).length}/${p.tasks.length} yours` : ''}</span></div>
+  return `<section class="gd-card" data-section="Today"><div class="card-head"><h2>Today’s tasks</h2><span class="hint">${p.tasks ? `${myTasks(p).filter((t) => mine.has(t.id)).length}/${myTasks(p).length} yours` : ''}</span></div>
     ${rows}
     <div class="gd-people">${[me, ...others].map((m) => { const d = m.days[today]; return `<div class="gd-person ${d ? 'done' : ''}"><b>${m.me ? 'You' : escapeHtml(m.name)}</b><span>${d ? `All done ${timeOf(d)}${d.n ? ` · “${escapeHtml(d.n)}”` : ''}` : 'Not finished yet'}</span></div>`; }).join('')}</div>
     ${mineToday ? `<form class="inline bnote" data-form="buddy-note"><input name="note" maxlength="140" placeholder="Leave a note, e.g. SHL numerical 14/18" value="${escapeHtml(mineToday.n || '')}"><button class="mini-btn" type="submit">Save note</button></form>` : ''}
@@ -2906,7 +2962,7 @@ function buddyTabHtml() {
       ${buddyError ? `<section class="gd-card"><p class="err">${escapeHtml(buddyError)}</p><button class="btn" data-act="buddy-refresh">Try again</button></section>` : ''}
       <form class="gd-card form" data-form="buddy-create" data-section="Plant a seed">
         <div class="card-head"><h2>Plant a seed together</h2></div>
-        <p class="small muted">Pick a buddy. Each day you both finish your shared tasks, your tree grows: 7 good days take it from seed to fruit.</p>
+        <p class="small muted">Pick a buddy. Each day you both finish your tasks, your tree grows: 7 good days take it from seed to fruit.</p>
         <label class="f">Your buddy’s Gmail<input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="e.g. han@gmail.com"><span class="help">They see your invite when they open I Commit! signed in with that Gmail.</span></label>
         <label class="f">Name your tree<input name="name" maxlength="60" value="Our tree"></label>
         <button class="btn primary" type="submit">Plant and invite</button>
@@ -2924,7 +2980,7 @@ function buddyTabHtml() {
   const grown = cur.state === 'fruit';
   const labels = `<div class="gd-label" data-anchor="tree"><b>${cur.state === 'wilted' ? 'Wilting' : TREE_STAGES[cur.good]}</b><small>Day ${cur.good} of ${TREE_DAYS}</small></div>
     <div class="gd-label small" data-anchor="box"><b>${grown ? cur.fruit.name : 'Mystery fruit'}</b><small>${grown ? 'revealed' : '? ? ?'}</small></div>`;
-  const links = p.tasks ? p.tasks.map((t) => `<label class="f">Tick “${escapeHtml(t.title)}” when I finish${routineSelect(`link:${t.id}`, (prefs.links || {})[t.id], 'Nothing, I’ll tick here')}</label>`).join('')
+  const links = p.tasks ? myTasks(p).map((t) => `<label class="f">Tick “${escapeHtml(t.title)}” when I finish${routineSelect(`link:${t.id}`, (prefs.links || {})[t.id], 'Nothing, I’ll tick here')}</label>`).join('')
     : `<label class="f">Tick me automatically when I finish${routineSelect('routine', prefs.commitmentId, 'Nothing, I’ll tick here')}</label>`;
   return wrap(head(escapeHtml(p.name), `<span class="gd-pill">${streak ? `🔥 ${streak}` : '🌱'}</span>${menuBtn}`) + invitesHtml(true) + `
     ${three ? '' : gardenScene('tree', labels)}
@@ -8105,6 +8161,7 @@ document.addEventListener('change', (e) => {
     if (e.target.value) scheduleCard(e.target.dataset.cardDate, e.target.value); else unscheduleCard(e.target.dataset.cardDate);
     return;
   }
+  if (e.target.name === 'owner' && e.target.closest('form[data-form="tree-task"]')) { treeNewOwner = e.target.value; return; }
   if (e.target.closest('form[data-form="buddy-routine"]')) {
     if (e.target.name === 'share') { setShareCalendar(e.target.value); return; }
     const prefs = { commitmentId: (state.buddy && state.buddy.commitmentId) || null, links: { ...((state.buddy && state.buddy.links) || {}) } };
