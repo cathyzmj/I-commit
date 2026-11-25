@@ -2801,6 +2801,48 @@ function buddyTodayLine() {
   const others = buddyView.members.filter((m) => !m.me), { cur } = treeHistory(buddyView);
   return `<div class="pace"><a href="#/buddy">🌳 Our tree · day ${cur.good}/${TREE_DAYS}${cur.state === 'wilted' ? ' · wilting' : ''} · ${others.length ? others.map((m) => `${escapeHtml(m.name)} ${m.days[todayISO()] ? '✅' : '⬜'}`).join(' · ') : 'waiting for your buddy'} ›</a></div>`;
 }
+const has3d = () => !!(window.Garden3D && Garden3D.supported());
+// What the 3D garden shows: the tree's state, who's done, the grown trees and the words on its labels and cards.
+function gardenData() {
+  const p = buddyView && sbUser ? buddyView : null;
+  if (!p) return { stage: 4, wilt: false, fruit: '#d9483b', people: { me: false, buddy: null }, yard: [], who: '<b>Our Tree</b><small>Plant a seed together</small>', side: '', places: [], panels: {} };
+  const today = todayISO(), h = treeHistory(p), { cur, yard } = h, streak = pactStreak(p);
+  const me = p.members.find((m) => m.me) || { days: {} }, buddy = p.members.find((m) => !m.me);
+  const others = p.members.filter((m) => !m.me), name = buddy ? buddy.name : '';
+  const grown = cur.state === 'fruit', fruit = cur.fruit.name[0].toUpperCase() + cur.fruit.name.slice(1);
+  const mine = myTicks(p);
+  const status = cur.state === 'wilted' ? 'wilting' : me.days[today] && others.every((m) => m.days[today]) && others.length ? 'both done today' : me.days[today] ? 'you’re done today' : others.some((m) => m.days[today]) ? `${others.find((m) => m.days[today]).name} is done today` : 'today’s still open';
+  const dot = (done) => `<span class="g3-state ${done ? 'on' : ''}">${done ? 'done ✓' : 'not yet'}</span>`;
+  const rows = p.tasks
+    ? p.tasks.map((t) => `<div class="g3-row"><button class="chk ${mine.has(t.id) ? 'on' : ''}" data-act="tree-tick" data-id="${t.id}" aria-pressed="${mine.has(t.id)}" aria-label="${escapeHtml(t.title)}">${mine.has(t.id) ? CHECK : ''}</button><span>${escapeHtml(t.title)}</span>
+        ${buddy ? dot(!!(p.day === today && p.ticks[buddy.id] && p.ticks[buddy.id].has(t.id))) : ''}</div>`).join('')
+    : `<div class="g3-row"><button class="chk ${me.days[today] ? 'on' : ''}" data-act="buddy-tick" aria-pressed="${!!me.days[today]}" aria-label="I did today’s tasks">${me.days[today] ? CHECK : ''}</button><span>I did today’s tasks</span></div>`;
+  const trees = yard.slice().reverse().slice(0, 6).map((t) => `<div class="g3-row"><i class="g3-dot" style="background:${t.state === 'fruit' ? t.fruit.color : '#a8926a'}"></i><span>${t.state === 'fruit' ? `${t.fruit.name[0].toUpperCase()}${t.fruit.name.slice(1)} tree` : `Stopped at day ${t.good}`}</span><span class="g3-state">${fmtShort(t.ended)}</span></div>`).join('');
+  const places = [
+    { key: 'tree', title: 'Our tree', sub: `Day ${cur.good} of ${TREE_DAYS}`, nav: 'Tree' },
+    { key: 'tasks', title: 'Cottage', sub: 'Today’s tasks', nav: 'Tasks' },
+    { key: 'yard', title: 'Orchard yard', sub: yard.length ? `${yard.length} tree${yard.length === 1 ? '' : 's'}` : 'Grown trees', nav: 'Yard' },
+    { key: 'box', title: grown ? fruit : 'Mystery box', sub: grown ? 'Revealed!' : 'What fruit?', nav: 'Box' },
+    { key: 'mail', title: 'Mailbox', sub: buddy ? `Nudge ${name}` : 'Invite a buddy', nav: 'Mail' },
+  ];
+  const panels = {
+    tree: `<h2>${cur.state === 'wilted' ? 'Wilting' : TREE_STAGES[cur.good]}</h2><p>${gardenSay(h)}</p><div class="g3-row"><span>Good days</span><span class="g3-state">${cur.good} of ${TREE_DAYS}</span></div>${others.map((m) => `<div class="g3-row"><span>${escapeHtml(m.name)}</span>${dot(!!m.days[today])}</div>`).join('')}`,
+    tasks: `<h2>Today’s tasks</h2><p>The tree grows when you${buddy ? ' both' : ''} finish them all.</p>${rows}`,
+    yard: `<h2>Orchard yard</h2><p>${yard.length ? 'Every tree you grow together is planted here.' : 'Your first grown tree will be planted here.'}</p>${trees}`,
+    box: grown ? `<h2>It’s a ${cur.fruit.name}!</h2><p>The box opened because your tree is fully grown.</p>` : `<h2>Mystery box</h2><p>It opens on day ${TREE_DAYS} and shows which fruit your tree makes.</p><div class="g3-row"><span>Good days to go</span><span class="g3-state">${TREE_DAYS - cur.good}</span></div>`,
+    mail: !buddy ? '<h2>Mailbox</h2><p>Invite your buddy by Gmail under “Invite &amp; settings” below.</p>'
+      : buddy.days[today] ? `<h2>Mailbox</h2><p>${escapeHtml(name)} has finished today. Nothing to nudge.</p>`
+        : `<h2>Mailbox</h2><p>${escapeHtml(name)} hasn’t finished today yet.</p><button class="g3-go" data-act="buddy-nudge">Nudge ${escapeHtml(name)} 👀</button>`,
+  };
+  return {
+    stage: cur.good, wilt: cur.state === 'wilted', fruit: cur.fruit.color,
+    people: { me: !!me.days[today], buddy: buddy ? !!buddy.days[today] : null },
+    yard: yard.map((t) => ({ state: t.state, good: t.good, fruit: t.fruit.color, seed: t.seed })),
+    who: `<b>${escapeHtml(p.name)}</b><small><i class="${cur.state === 'wilted' ? 'dry' : ''}"></i>Day ${cur.good} of ${TREE_DAYS} · ${escapeHtml(status)}</small>`,
+    side: `<span class="g3-card g3-pill">${streak ? `🔥 ${streak}` : '🌱'}</span><span class="g3-card g3-pill">${menuBtn}</span>`,
+    places, panels,
+  };
+}
 const gardenScene = (kind, labels, hint) => `<section class="gd-scene ${kind}"><canvas data-garden="${kind}" role="img" aria-label="${kind === 'yard' ? 'Your yard of grown trees' : 'Your tree on a floating island'}"></canvas>${labels}<span class="gd-hint">${hint || 'Drag to spin'}</span></section>`;
 function gardenSay(h) {
   const { cur, yard, goodToday } = h;
@@ -2834,17 +2876,19 @@ function gardenTasksHtml(p, me, others) {
     ${waiting.length ? `<button class="btn full" data-act="buddy-nudge">Nudge ${escapeHtml(waiting.map((m) => m.name).join(' & '))} 👀</button>` : ''}
   </section>`;
 }
-function gardenYardHtml(yard) {
+function gardenYardHtml(yard, three) {
   const grown = yard.filter((t) => t.state === 'fruit').length;
   const list = yard.slice().reverse().map((t) => `<li><i style="background:${t.state === 'fruit' ? t.fruit.color : '#a8926a'}"></i>
     <b>${t.state === 'fruit' ? `${t.fruit.name[0].toUpperCase()}${t.fruit.name.slice(1)} tree` : `Stopped at day ${t.good}`}</b><span>${fmtShort(t.planted)} to ${fmtShort(t.ended)}</span></li>`).join('');
   return `<section class="gd-card" data-section="Yard"><div class="card-head"><h2>Our yard</h2><span class="hint">${yard.length ? `${grown} grown${yard.length - grown ? ` · ${yard.length - grown} stopped` : ''}` : ''}</span></div>
-    ${yard.length ? `${gardenScene('yard', '')}<ul class="gd-list">${list}</ul>` : '<p class="small muted">Every tree you grow is planted here, with its fruit.</p>'}</section>`;
+    ${yard.length ? `${three ? '' : gardenScene('yard', '')}<ul class="gd-list">${list}</ul>` : '<p class="small muted">Every tree you grow is planted here, with its fruit.</p>'}</section>`;
 }
 function buddyTabHtml() {
-  const head = (title, right = menuBtn) => `<header class="gd-head"><div><small>Build a tree together</small><h1>${title}</h1></div>${right}</header>`;
-  const hero = () => gardenScene('tree', '');
-  const wrap = (inner) => `<div class="garden">${inner}</div>`;
+  const three = has3d(); // the 3D garden carries its own title card; the fallback has a header
+  const head = (title, right = menuBtn) => (three ? '' : `<header class="gd-head"><div><small>Build a tree together</small><h1>${title}</h1></div>${right}</header>`);
+  const slot = '<div class="g3-slot" data-garden-hero></div>';
+  const hero = () => (three ? '' : gardenScene('tree', ''));
+  const wrap = (inner) => `${three ? slot : ''}<div class="garden">${inner}</div>`;
   if (!state.account) {
     return wrap(head('Our tree') + hero() + `<section class="gd-card"><b>Sign in with Google to plant a tree</b>
       <p class="small">Invite your buddy by their Gmail, or accept their invite. The tree belongs to your accounts, so it’s there on every device.</p>
@@ -2883,11 +2927,11 @@ function buddyTabHtml() {
   const links = p.tasks ? p.tasks.map((t) => `<label class="f">Tick “${escapeHtml(t.title)}” when I finish${routineSelect(`link:${t.id}`, (prefs.links || {})[t.id], 'Nothing, I’ll tick here')}</label>`).join('')
     : `<label class="f">Tick me automatically when I finish${routineSelect('routine', prefs.commitmentId, 'Nothing, I’ll tick here')}</label>`;
   return wrap(head(escapeHtml(p.name), `<span class="gd-pill">${streak ? `🔥 ${streak}` : '🌱'}</span>${menuBtn}`) + invitesHtml(true) + `
-    ${gardenScene('tree', labels)}
+    ${three ? '' : gardenScene('tree', labels)}
     <ol class="gd-steps" aria-label="Day ${cur.good} of ${TREE_DAYS}">${Array.from({ length: TREE_DAYS }, (_, i) => `<li class="${i < cur.good ? (cur.state === 'wilted' ? 'dry' : 'on') : ''}"><i></i><span>${['🌰', '🌱', '🌿', '🪴', '🌳', '🌸', '🍎'][i]}</span></li>`).join('')}</ol>
     <p class="gd-say ${cur.state}">${gardenSay(h)}${!others.length ? ` ${p.invited.length ? `Waiting for ${escapeHtml(p.invited.join(' & '))} to accept; until then your own days grow it.` : 'Invite your buddy below.'}` : ''}</p>
     ${gardenTasksHtml(p, me, others)}
-    ${gardenYardHtml(h.yard)}
+    ${gardenYardHtml(h.yard, three)}
     <section class="gd-card" data-section="Last 14 days"><div class="card-head"><h2>Last 14 days</h2></div><div class="bgrid">${row(me)}${others.map(row).join('')}</div></section>
     <details class="gd-card" data-section="Settings" ${others.length || p.invited.length ? '' : 'open'}>
       <summary><h2>Invite & settings</h2></summary>
@@ -2905,7 +2949,15 @@ function buddyTabHtml() {
 }
 // The 3D pictures are painted after the page is on screen.
 function layoutGarden() {
-  if (route.tab !== 'buddy' || !window.Garden) return;
+  if (route.tab !== 'buddy') return;
+  const slot = $app.querySelector('[data-garden-hero]');
+  if (slot) {
+    let ok = false;
+    try { ok = Garden3D.attach(slot, gardenData()); } catch (e) { console.error(e); }
+    if (!ok) { window.Garden3D = null; render(); } // couldn't start: use the simpler picture
+    return;
+  }
+  if (!window.Garden) return;
   const h = buddyView && sbUser ? treeHistory(buddyView) : null;
   $app.querySelectorAll('canvas[data-garden]').forEach((cv) => {
     const kind = cv.dataset.garden;

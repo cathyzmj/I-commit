@@ -1633,3 +1633,60 @@ body.gardening { background: linear-gradient(#c9d3c1, #dfe4d5 480px, #f6f3e8 900
 .gd-list li { display: flex; align-items: center; gap: 8px; padding: 7px 2px; border-top: 1px solid #eee8d6; font-size: 13.5px; }
 .gd-list i { width: 12px; height: 12px; border-radius: 50%; flex: none; }
 .gd-list span { margin-left: auto; font-size: 12px; color: #6c7a69; }
+
+/* ---------- the 3D garden ---------- */
+body.gardening { background: radial-gradient(130vmax 70vmax at 50% 32vh, #dce2d6 0%, #cbd4c6 55%, rgba(180, 192, 176, 0) 100%), linear-gradient(#bfcab9, #e4e7da 90vh, #f6f3e8 150vh) fixed; }
+.g3-slot { height: min(82vh, 760px); min-height: 460px; margin: 0 calc(-1 * max(12px, env(safe-area-inset-right))) 8px calc(-1 * max(12px, env(safe-area-inset-left))); }
+.g3 { position: relative; height: 100%; overflow: hidden; color: #2e3d2f; font-family: ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif; isolation: isolate; }
+.g3 canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: pan-y; cursor: grab; }
+.g3 canvas:active { cursor: grabbing; }
+.g3 button { font: inherit; color: inherit; cursor: pointer; }
+.g3-card { background: #fffdf7; border: 0; border-radius: 20px; box-shadow: 0 4px 0 #e6dec9, 0 14px 24px -16px rgba(46, 61, 47, .55); }
+.g3-who { position: absolute; z-index: 300; left: 12px; top: 12px; display: flex; gap: 10px; align-items: center; padding: 8px 16px 8px 8px; max-width: calc(100% - 140px); }
+.g3-face { width: 42px; height: 42px; border-radius: 13px; background: #e8efdf; display: grid; place-items: center; flex: none; }
+.g3-who b { display: block; font-size: 17px; font-weight: 800; }
+.g3-who small { display: flex; align-items: center; gap: 6px; font-weight: 700; color: #6f8f55; font-size: 12.5px; }
+.g3-who small i { width: 9px; height: 9px; border-radius: 50%; background: #7cc25a; flex: none; }
+.g3-who small i.dry { background: #bba75e; }
+.g3-side { position: absolute; z-index: 300; right: 12px; top: 12px; display: flex; gap: 8px; }
+.g3-pill { display: flex; align-items: center; justify-content: center; min-width: 44px; height: 42px; padding: 0 8px; font-weight: 800; border-radius: 15px; }
+.g3-pill .icon-btn { min-width: 0; padding: 0 4px; }
+.g3-tags { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
+.g3-tag { pointer-events: auto; position: absolute; left: -999px; top: 0; display: flex; gap: 10px; align-items: center; padding: 8px 14px 8px 8px; white-space: nowrap; text-align: left; transform: translate(-50%, -100%); }
+.g3-tag::after { content: ''; position: absolute; left: 50%; bottom: -7px; width: 14px; height: 14px; background: #fffdf7; transform: translateX(-50%) rotate(45deg); box-shadow: 3px 3px 0 #e6dec9; border-radius: 0 0 3px 0; }
+.g3-tag i, .g3-face i { width: 34px; height: 34px; border-radius: 11px; background: #e8efdf; display: grid; place-items: center; flex: none; }
+.g3-tag svg { width: 19px; height: 19px; }
+.g3-tag svg, .g3-nav svg { fill: none; stroke: #6f8f55; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.g3-tag b { display: block; font-size: 15px; font-weight: 800; line-height: 1.1; text-transform: none; }
+.g3-tag small { display: block; font-size: 12px; font-weight: 700; color: #6f8f55; }
+.g3-nav { position: absolute; z-index: 300; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 4px; padding: 8px; }
+.g3-nav[hidden] { display: none; }
+.g3-nav button { background: none; border: 0; border-radius: 14px; padding: 6px 18px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.g3-nav button:hover, .g3-nav button.on { background: #e8efdf; }
+.g3-nav svg { width: 20px; height: 20px; }
+.g3-nav b { font-size: 13px; font-weight: 800; }
+.g3-panel { position: absolute; z-index: 310; right: 12px; top: 72px; width: min(320px, calc(100% - 24px)); max-height: calc(100% - 180px); overflow: auto; padding: 16px; display: none; }
+.g3-panel.open { display: block; animation: g3rise .25s ease-out; }
+@keyframes g3rise { from { opacity: 0; transform: translateY(10px); } }
+.g3-panel h2 { margin: 0 34px 2px 0; font-size: 19px; font-weight: 800; }
+.g3-panel p { margin: 4px 0 10px; font-size: 13.5px; color: #5f6d5c; }
+.g3-panel .g3-x { position: absolute; right: 10px; top: 10px; border: 0; background: #e8efdf; width: 30px; height: 30px; border-radius: 10px; font-weight: 800; }
+.g3-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid #eee8d6; font-weight: 700; font-size: 14px; }
+.g3-row .chk.on { background: #6f8f55; border-color: #6f8f55; color: #fff; }
+.g3-state { margin-left: auto; font-size: 12px; color: #8b9585; white-space: nowrap; }
+.g3-state.on { color: #4d7a33; }
+.g3-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.g3-go { width: 100%; border: 0; border-radius: 14px; padding: 11px; background: #6f8f55; color: #fff !important; font-weight: 800; }
+/* phone: no bottom bar, small round labels (only the tree keeps its words), card along the bottom of the garden */
+@media (max-width: 699px) {
+  .g3-slot { height: 74vh; min-height: 420px; }
+  .g3-nav { display: none; }
+  .g3-tag { padding: 5px 9px 5px 5px; gap: 6px; border-radius: 15px; }
+  .g3-tag i { width: 24px; height: 24px; border-radius: 8px; }
+  .g3-tag svg { width: 14px; height: 14px; }
+  .g3-tag b { font-size: 12px; }
+  .g3-tag small { display: none; }
+  .g3-tag:not([data-k="tree"]) { gap: 0; padding: 5px; }
+  .g3-tag:not([data-k="tree"]) span { display: none; }
+  .g3-panel { left: 8px; right: 8px; width: auto; top: auto; bottom: 8px; max-height: 52%; }
+}
