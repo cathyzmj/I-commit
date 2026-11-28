@@ -6,7 +6,7 @@ import path from 'node:path';
 const root = path.resolve(path.dirname(decodeURIComponent(new URL(import.meta.url).pathname)), '..');
 const dist = path.join(root, 'dist');
 const PUBLIC = [
-  'index.html', 'styles.css', 'app.js', 'garden.js', 'garden3d.js', 'xlsx.js', 'ics.js', 'sw.js', 'manifest.webmanifest',
+  'index.html', 'styles.css', 'app.js', 'garden.js', 'garden3d.js', 'ics.js', 'sw.js', 'manifest.webmanifest',
   'icons', 'widget/commitments-widget.js', 'vendor', 'privacy.html', 'terms.html', 'legal.css',
 ];
 

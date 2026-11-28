@@ -15,12 +15,14 @@ struct CommitmentsApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("Go") {
-                Button("Today") { web.go("today") }.keyboardShortcut("1")
+                Button("Overview") { web.go("home") }.keyboardShortcut("0")
+                Button("This week") { web.go("plan") }.keyboardShortcut("1")
                 Button("Calendar") { web.go("cal") }.keyboardShortcut("2")
                 Button("Routine") { web.go("routine") }.keyboardShortcut("3")
-                Button("Applications") { web.go("apps") }.keyboardShortcut("4")
-                Button("Work Buddy") { web.go("buddy") }.keyboardShortcut("5")
-                Button("All commitments") { web.go("commitments") }.keyboardShortcut("6")
+                Button("Academics") { web.go("academics") }.keyboardShortcut("4")
+                Button("Applications") { web.go("apps") }.keyboardShortcut("5")
+                Button("Projects") { web.go("gallery") }.keyboardShortcut("6")
+                Button("Our Tree") { web.go("buddy") }.keyboardShortcut("7")
                 Divider()
                 Button("Reload") { web.reload() }.keyboardShortcut("r")
             }

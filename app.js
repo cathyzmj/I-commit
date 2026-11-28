@@ -59,17 +59,6 @@ const validTime = (t) => (/^\d{2}:\d{2}$/.test(String(t || '')) ? t : null);
 const timeRange = (x) => (x.time ? `${x.time}${x.endTime ? '–' + x.endTime : ''}` : '');
 const isHourUnit = (u) => /^(h|hr|hrs|hour|hours)$/i.test(String(u || '').trim());
 const CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const ICONS = {
-  get routine() { return this.week; },
-  today: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 12.3l2.7 2.7L16.2 9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  buddy: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8.5" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16.5" cy="9.5" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2.8 19.5c.6-3.3 2.9-5.2 5.7-5.2s5.1 1.9 5.7 5.2M14.6 14.6c.6-.2 1.2-.3 1.9-.3 2.4 0 4.3 1.6 4.8 4.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-  week: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 12h17M9.2 4.5v15M14.8 4.5v15" stroke="currentColor" stroke-width="1.8"/></svg>',
-  apps: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="7" width="17" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M3.5 12.5h17" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-  cal: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="7" y="13" width="4" height="3" rx="1" fill="currentColor"/></svg>',
-  academics: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5L2.8 9 12 13.5 21.2 9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M6.5 11.3v4.4c0 1.3 2.5 2.8 5.5 2.8s5.5-1.5 5.5-2.8v-4.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21.2 9v5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-  gallery: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2" fill="currentColor"/></svg>',
-  commitments: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6.5h11M9 12h11M9 17.5h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="4.5" cy="6.5" r="1.4" fill="currentColor"/><circle cx="4.5" cy="12" r="1.4" fill="currentColor"/><circle cx="4.5" cy="17.5" r="1.4" fill="currentColor"/></svg>',
-};
 
 // Only allow web and Notion links (also guards against javascript: URLs in imported data).
 function cleanUrl(u) {
@@ -119,59 +108,6 @@ let writeState = async function () {
   });
 };
 
-// ---------- Background picture (this device only; too big to sync) ----------
-const BG_KEY = 'bgpic';
-let bg = { blob: null, strength: 0.5 }, bgUrl = null;
-async function bgRead() {
-  const db = await openDb();
-  return new Promise((resolve) => {
-    const req = db.transaction(STORE).objectStore(STORE).get(BG_KEY);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => resolve(null);
-  });
-}
-async function bgWrite() {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put(bg, BG_KEY);
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
-}
-function applyBg() {
-  const el = document.getElementById('bgpic');
-  if (bgUrl) URL.revokeObjectURL(bgUrl);
-  bgUrl = bg.blob ? URL.createObjectURL(bg.blob) : null;
-  el.hidden = !bgUrl;
-  el.style.backgroundImage = bgUrl ? `url("${bgUrl}")` : '';
-  el.style.opacity = bg.strength;
-  document.body.classList.toggle('has-bg', !!bgUrl);
-}
-// Shrinks big photos so they load quickly and fit in storage.
-async function shrinkImage(file, max = 2400) {
-  const img = await createImageBitmap(file);
-  const k = Math.min(1, max / Math.max(img.width, img.height));
-  const c = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * k), height: Math.round(img.height * k) });
-  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-  return new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.85));
-}
-function openBgSheet() {
-  const pct = Math.round(bg.strength * 100);
-  openSheet(`
-    <div class="sheet-head"><h3>Background picture</h3></div>
-    <div class="menu">
-      ${bgUrl ? `<div class="bg-preview" style="background-image:url('${bgUrl}')"></div>
-      <label class="f"><span>How visible: <b id="bgPct">${pct}%</b></span>
-        <input class="bg-range" id="bgStrength" type="range" min="5" max="100" step="5" value="${pct}"></label>
-      <div class="bg-range-row"><span>Faint</span><span>Full picture</span></div>` : '<p class="muted small">Pick a photo to show behind the app. You can then make it more or less see-through.</p>'}
-      <button class="btn${bgUrl ? '' : ' primary'}" data-act="bg-pick">${bgUrl ? 'Change picture…' : 'Choose picture…'}</button>
-      ${bgUrl ? '<button class="btn warn" data-act="bg-remove">Remove picture</button>' : ''}
-      <p class="muted small">Saved on this device only — set it separately on your phone and Mac.</p>
-      <button class="btn" data-act="close">Close</button>
-    </div>`);
-}
-
 let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
@@ -213,7 +149,6 @@ function defaultState() {
     sync: freshSync(),
     apps: { items: [], fetchedAt: null, error: null, setup: false },
     trees: [], tests: [], notes: [], buddy: null, testRoutine: null, account: null,
-    lastBackup: null,
   };
 }
 const fit7 = (a, fill) => (Array.isArray(a) ? a.slice(0, 7) : []).concat(Array(7).fill(fill)).slice(0, 7);
@@ -286,8 +221,9 @@ function migrate(s) {
     lastSync: sy.lastSync || null, lastError: sy.lastError || null,
   };
   if (!s.sync.enabled) s.sync = freshSync();
-  s.trees = (Array.isArray(s.trees) ? s.trees : []).map(normaliseTree);
-  s.tests = (Array.isArray(s.tests) ? s.tests : []).map(normaliseTest);
+  // knowledge trees and test results are no longer shown; keep what was saved, as it was
+  s.trees = Array.isArray(s.trees) ? s.trees : [];
+  s.tests = Array.isArray(s.tests) ? s.tests : [];
   s.notes = (Array.isArray(s.notes) ? s.notes : []).map(normaliseNote);
   s.account = s.account && s.account.email && s.sync.enabled ? { email: String(s.account.email), name: String(s.account.name || '') } : null;
   s.buddy = s.buddy ? { commitmentId: s.buddy.commitmentId || null, links: s.buddy.links || {} } : null; // Work Buddy itself lives in Supabase
@@ -490,7 +426,6 @@ function itemsOf(w, freq) {
 // Schedule items are repeating calendar events (e.g. lectures): shown on the calendar and in the
 // day's schedule, but not to-dos, so they don't count towards % ticked or planned/actual hours.
 const isTask = ([, it]) => !it.schedule;
-const isSched = ([, it]) => !!it.schedule;
 const locationOf = (x) => ((x.notes || '').startsWith('📍') ? x.notes.split('\n')[0].replace('📍', '').trim() : '');
 // Week items don't carry notes, so look the location up on the commitment itself.
 const stageUrlById = (id) => { const c = state.commitments.find((x) => x.id === id); return (c && c.stageUrl) || ''; };
@@ -540,15 +475,13 @@ function parseHash() {
   if (a === 'reminders') return { tab: 'commitments', page: 'notify' };
   if (a === 'calendar') return { tab: 'commitments', page: b === 'review' ? 'review' : 'calendar' };
   if (a === 'new') return { tab: 'commitments', id: 'new', edit: true, freq: FREQS.includes(b) ? b : 'daily' };
-  if (a === 'week') return { tab: 'routine' };
-  if (a === 'knowledge') return b === 'new' || c === 'edit' ? { tab: 'routine', page: 'tree-edit', treeId: b } : { tab: 'routine', page: 'knowledge', focus: b || null };
-  if (a === 'tests') return { tab: 'routine', page: 'tests', testId: b || null };
-  if (a === 'board') return { tab: 'cal', page: 'board' };
+  if (a === 'week' || a === 'knowledge' || a === 'tests') return { tab: 'routine' };
+  if (a === 'today' || a === 'board') return { tab: 'plan' };
   if (a === 'academics') return /^\d+$/.test(b || '') ? { tab: 'academics', page: 'course', courseId: +b } : { tab: 'academics' };
   if (a === 'puzzle') return { tab: 'plan', page: 'puzzle' };
   if (a === 'gallery' && b) return { tab: 'gallery', page: b === 'new' || c === 'edit' ? 'project-edit' : 'project', projId: b };
   if (a === 'join') return { tab: 'buddy', invite: /^[a-z0-9]{10}$/i.test(b || '') ? b.toLowerCase() : '' };
-  return { tab: ['home', 'plan', 'today', 'routine', 'cal', 'buddy', 'gallery', 'academics', 'commitments'].includes(a) ? a : 'plan' };
+  return { tab: ['home', 'plan', 'routine', 'cal', 'buddy', 'gallery', 'academics', 'commitments'].includes(a) ? a : 'plan' };
 }
 // The app always opens on This week, at today (an invite link, or a deadline notification, still opens its page). A refresh stays where you were.
 const isReload = (() => { try { return performance.getEntriesByType('navigation')[0].type === 'reload'; } catch { return false; } })();
@@ -556,17 +489,13 @@ if (!isReload && !/^#\/(join|apps)\//.test(location.hash) && location.hash && lo
 let route = parseHash();
 window.addEventListener('hashchange', () => {
   route = parseHash();
-  treeDraft = null;
-  editingCard = null;
   wbPick = null;
   planJump = route.tab === 'plan';
-  if (route.page !== 'tree-edit') treeNewCourse = null;
   if (route.tab === 'buddy') refreshBuddy();
   if (route.tab === 'gallery' && projects !== null && !route.page) loadProjects();
   if (route.tab === 'academics') acadLoad();
   if (route.page === 'account') loadLoginConfig();
   if (route.page === 'notify') loadOutboundStatus();
-  if (route.page === 'knowledge' && route.focus) focusTree(route.focus);
   if (route.tab === 'apps') {
     if (route.day) { appsDay = route.day; appsMonth = route.day.slice(0, 7); }
     refreshApps();
@@ -577,7 +506,7 @@ window.addEventListener('hashchange', () => {
 });
 // Pages that are mostly a form being filled in: background refreshes leave them alone, so
 // switching to another window and back never wipes what you've typed.
-const formOpen = () => !!(route.edit || /-edit$/.test(route.page || '') || route.page === 'tests' || (route.tab === 'academics' && !route.page && acad.conn === false));
+const formOpen = () => !!(route.edit || /-edit$/.test(route.page || '') || (route.tab === 'academics' && !route.page && acad.conn === false));
 function goBack(fallback = '#/plan') {
   if (history.length > 1) history.back(); else location.hash = fallback;
 }
@@ -596,10 +525,6 @@ function render() {
   else if (route.page === 'widget') html = widgetPageHtml();
   else if (route.page === 'calendar') html = calendarPageHtml();
   else if (route.page === 'review') html = reviewPageHtml();
-  else if (route.page === 'knowledge') html = knowledgePageHtml();
-  else if (route.page === 'tree-edit') html = treeEditHtml();
-  else if (route.page === 'tests') html = testsPageHtml();
-  else if (route.page === 'board') html = boardPageHtml();
   else if (route.page === 'project') html = projectPageHtml();
   else if (route.page === 'course') html = courseHtml();
   else if (route.page === 'puzzle') html = puzzlePageHtml();
@@ -615,7 +540,7 @@ function render() {
   else if (route.tab === 'home') html = homeHtml();
   else if (route.tab === 'plan') html = planHtml();
   else if (route.tab === 'commitments') html = commitmentsTabHtml();
-  else html = todayTabHtml();
+  else html = planHtml();
   $app.dataset.tab = route.id || route.page ? 'page' : route.tab;
   $app.dataset.page = route.page || '';
   $app.innerHTML = html + floatDonutHtml() + focusBarHtml(); // the floating donut replaces the sidebar
@@ -624,35 +549,14 @@ function render() {
     setTimeout(() => { const t = $app.querySelector('.wday.today'); if (t) t.scrollIntoView({ block: 'center' }); }, 30); // after the page's own jump to the top
   }
   fillSideSections();
-  if (route.page === 'knowledge' || route.page === 'course') initMaps();
   if (route.page === 'puzzle') layoutPuzzle();
   document.body.classList.toggle('gardening', route.tab === 'buddy');
   layoutGarden();
   if (['plan', 'today', 'home'].includes(route.tab)) puzzleNotify();
-  if (route.page === 'board') layoutBoard();
   if (route.page === 'project') scrollTimeline();
 }
 
 // ---------- Side navigation (wide screens, e.g. the Mac app) ----------
-// The main pages, plus the current page's sections as jump links (highlighted while scrolling).
-// Phones keep the bottom tab bar instead (CSS switches at 900px).
-// [route, full name, short name for the phone tab bar]
-const NAV_PAGES = [['today', 'Today', 'Today'], ['cal', 'Calendar', 'Calendar'], ['routine', 'Routine', 'Routine'],
-  ['academics', 'Academics', 'Study'], ['apps', 'Applications', 'Apps'], ['buddy', 'Our Tree', 'Tree'],
-  ['gallery', 'Gallery', 'Gallery'], ['commitments', 'All commitments', 'All']];
-function sideNavHtml() {
-  const extra = [['#/calendar', 'Calendars'], ['#/reminders', 'Reminders'], ['#/account', state.account ? 'Account' : 'Sign in'], ['#/widget', 'Phone widget']];
-  return `<aside class="sidenav" aria-label="Navigation">
-    <div class="sn-brand"><img src="icons/icon-192.png" alt=""><b>I Commit!</b></div>
-    <nav class="sn-main">${NAV_PAGES.map(([t, label]) => `
-      <a href="#/${t}" class="sn-page ${route.tab === t ? 'on' : ''}" ${route.tab === t && !route.id && !route.page ? 'aria-current="page"' : ''}>${ICONS[t]}<span>${label}</span></a>
-      ${route.tab === t ? '<div class="sn-sections"></div>' : ''}`).join('')}</nav>
-    <div class="sn-extra">
-      ${extra.map(([href, label]) => `<a href="${href}" class="${location.hash === href ? 'on' : ''}">${label}</a>`).join('')}
-      <button data-act="export-xlsx">Export to Excel</button>
-    </div>
-  </aside>`;
-}
 function pageSections() {
   return [...$app.querySelectorAll(':scope > section.card, :scope > details.card, :scope > form.card')].map((el, i) => {
     const title = el.dataset.section || el.querySelector('.card-head h2')?.textContent || el.querySelector(':scope > summary')?.textContent || '';
@@ -682,11 +586,6 @@ function highlightSection() {
 }
 document.addEventListener('toggle', (e) => {
   const d = e.target;
-  if (d.dataset && d.dataset.tnode) {
-    const id = d.dataset.tnode, top = d.dataset.depth === '0';
-    if (top) { if (d.open) treeOpen.delete(`-${id}`); else treeOpen.add(`-${id}`); } else if (d.open) treeOpen.add(id); else treeOpen.delete(id);
-    return;
-  }
   if (d.dataset && d.dataset.fold) { if (d.open) appsExpanded.add(`open:${d.dataset.fold}`); else appsExpanded.delete(`open:${d.dataset.fold}`); }
 }, true);
 let scrollTick = false;
@@ -779,101 +678,6 @@ function signInHintHtml() {
     <p class="small">Keep your data in your Google account, the same on your iPhone, Mac and any browser.</p>
     <div class="btn-row"><a class="btn primary" href="#/account">Sign in</a><button class="btn" data-act="signin-hide">Not now</button></div></section>`;
 }
-// ---------- Today tab ----------
-// Routine (daily, weekly, periodically), then Today only (one-off tasks).
-function todayDailyRow(wk, ti, id, it, sub) {
-  const key = `${wk}:${id}:${ti}`;
-  const control = it.kind === 'task'
-    ? `<button class="big cell ${cellClass(it, ti)}" data-cell="${key}" aria-label="${escapeHtml(cellLabel(it, ti))}"><span class="box">${cellInner(it, ti)}</span></button>`
-    : `<div class="ctr">
-         <button class="ctr-minus" data-act="cdec" data-key="${key}" aria-label="Minus ${it.step}" ${it.counts[ti] <= 0 ? 'disabled' : ''}>−</button>
-         <button class="big cell ${cellClass(it, ti)}" data-cell="${key}" aria-label="${escapeHtml(cellLabel(it, ti))}">
-           <span class="box wide">${round2(it.counts[ti])}<small>/${round2(it.target)}</small></span></button>
-       </div>`;
-  return `
-    <div class="trow ${it.archived ? 'archived' : ''}">
-      <a class="name" href="#/c/${id}"><div class="n">${escapeHtml(it.name)}</div><div class="sub">${sub}${focusMinOf(it, ti) ? ` · ${fmtMin(focusMinOf(it, ti))} focused` : ''}</div></a>
-      ${focusBtn(id, wk, ti, it)}${control}
-    </div>`;
-}
-function todayTabHtml() {
-  const wk = currentWeekKey();
-  const w = getWeek(wk);
-  const ti = todayIndex(wk);
-  const ds = dayStats(w, ti);
-  const ws = weekStats(w);
-  const iso = todayISO();
-
-  let daily = '';
-  for (const [section, entries] of groupBySection(itemsOf(w, 'daily'))) {
-    daily += `<div class="sec">${escapeHtml(section)}</div>`;
-    for (const [id, it] of entries) {
-      const daysDone = it.ticks.filter((_, i) => dayDone(it, i)).length;
-      daily += todayDailyRow(wk, ti, id, it, `${targetLabel(it)} · ${daysDone}/7 this week`) + routineTreeLines(id);
-      if (id === state.testRoutine) {
-        const n = state.tests.filter((x) => x.date === iso).length;
-        daily += `<a class="trow-extra" href="#/tests">${n ? `${n} result${n === 1 ? '' : 's'} logged today · ` : ''}+ Log a result</a>`;
-      }
-    }
-  }
-  const weekly = itemsOf(w, 'weekly');
-  const periodic = itemsOf(w, 'periodic');
-  const dueNow = periodic.filter(([id, it]) => periodicOn(id, it, iso));
-  const notDue = periodic.filter(([id, it]) => !periodicOn(id, it, iso));
-  const onceToday = itemsOf(w, 'once').filter(isTask).filter(([, it]) => it.date === iso);
-  const onceLater = itemsOf(w, 'once').filter(isTask).filter(([, it]) => it.date > iso);
-
-  const sub = (title, body, extra = '') => `<div class="subhead"><h3>${title}</h3>${extra}</div>${body}`;
-  const routine = [
-    sub('Daily', daily || '<p class="muted pad small">No daily routines yet. <a href="#/new/daily">Add one</a></p>', '<span class="hint">Tap to log · hold for minutes</span>'),
-    sub('Weekly', weekly.length ? weekly.map(([id, it]) => periodRowHtml(wk, id, it)).join('') : '<p class="muted pad small">No weekly routines yet. <a href="#/new/weekly">Add one</a></p>'),
-    sub('Periodic',
-      (dueNow.map(([id, it]) => todayDailyRow(wk, ti, id, it, `${fmtPlan(it)} · every ${everyLabel(it.everyDays || 7)} · ${periodicSub(id, it)}`)).join('') ||
-        (periodic.length ? '<p class="muted pad small">Nothing due today.</p>' : '<p class="muted pad small">Things you do every few days or weeks, e.g. laundry. <a href="#/new/periodic">Add one</a></p>')) +
-      (notDue.length ? `<div class="later">${notDue.map(([id, it]) => `<a href="#/c/${id}">${escapeHtml(it.name)} <small>${periodicSub(id, it)}</small></a>`).join('')}</div>` : '')),
-  ].join('');
-
-  return `
-    <header class="top">
-      ${topBar({ label: 'Today', title: fmtDay(startOfToday(), { weekday: 'long', day: 'numeric', month: 'short' }), right: menuBtn })}
-      <div class="stats">
-        <div class="stat"><b>${ds.done}<small>/${ds.total}</small></b><span>done today</span></div>
-        <div class="stat right"><b>${fmtH(ds.actual)} <small>/ ${fmtH(ds.planned)}</small></b><span>today actual / planned</span></div>
-      </div>
-      <div class="hbar"><i style="width:${ds.planned ? Math.min(100, (ds.actual / ds.planned) * 100) : 0}%"></i></div>
-      <div class="pace"><a href="#/routine">This week: ${fmtH(ws.actual)} of ${fmtH(ws.planned)} · ${Math.round(ws.pct * 100)}% ticked ›</a></div>
-      ${buddyTodayLine()}
-      ${projectTodayLine()}
-    </header>
-    ${reviewBannerHtml()}
-    ${signInHintHtml()}
-    <section class="card" data-section="Routine">
-      <div class="card-head"><h2>Routine</h2><a class="txt-btn" href="#/routine">Record ›</a></div>
-      ${routine}
-    </section>
-    ${studyTodayHtml()}
-    <section class="card" data-section="Today only">
-      <div class="card-head"><h2>Today only</h2><a class="txt-btn" href="#/new/once">+ Add</a></div>
-      ${onceToday.length ? onceToday.map(([id, it]) => periodRowHtml(wk, id, it)).join('') : notesOn(iso).length || projectItemsOn(iso).length ? '' : '<p class="muted pad small">No one-off tasks today.</p>'}
-      ${projectItemsOn(iso).length ? `<div class="dpills today-notes">${projectItemsOn(iso).map(projPillHtml).join('')}</div>` : ''}
-      ${notesOn(iso).length ? `<div class="dpills today-notes">${notesOn(iso).map((n) => notePillHtml(n, iso)).join('')}</div>` : ''}
-    </section>
-    ${appsTodayCardHtml()}
-    ${tbcTodayHtml()}
-    ${onceLater.length ? `<section class="card"><div class="card-head"><h2>Coming up this week</h2></div>
-      ${onceLater.map(([id, it]) => periodRowHtml(wk, id, it, { showDate: true })).join('')}</section>` : ''}
-    ${LEGAL_LINKS}`;
-}
-
-// One-offs whose date is still to be confirmed (shown folded on Today).
-function tbcTodayHtml() {
-  const list = state.commitments.filter((c) => c.freq === 'once' && !c.date && !c.archived);
-  if (!list.length) return '';
-  return `<details class="card fold"><summary>Date to be confirmed (${list.length})</summary>
-    ${list.map((c) => `<a class="crow" href="#/c/${c.id}"><div class="ctext"><div class="n">${escapeHtml(c.name)}</div>
-      <div class="sub">${escapeHtml(c.section)} · tap to set a date</div></div><span class="chev">›</span></a>`).join('')}</details>`;
-}
-
 // ---------- Week tab ----------
 function weekLabel(key) {
   const n = weeksBetween(currentWeekKey(), key);
@@ -895,7 +699,7 @@ function weekTabHtml() {
         titleAct: `data-act="thisweek" ${isCurrent ? 'disabled' : ''}`,
         right: '<button class="icon-btn" data-act="next" aria-label="Next week">›</button>' + menuBtn,
       })}
-      ${routineNav('record')}
+      <div class="plan-links"><a href="#/commitments">Edit routines and tasks</a></div>
       ${w ? statsHtml(weekStats(w, { routine: true }), { showPace: isCurrent }) : ''}
     </header>`;
   const hasRecurring = w && Object.values(w.items).some((it) => it.freq !== 'once');
@@ -981,45 +785,10 @@ function calendarTabHtml() {
   const w = getWeek(wk);
   const today = todayISO();
   const days = DAY_NAMES.map((_, i) => isoDate(dayDate(wk, i)));
-  const synced = new Set(state.commitments.filter((c) => c.source).map((c) => c.id));
   const once = w ? itemsOf(w, 'once') : [];
-  const mine = once.filter(([id, it]) => !synced.has(id) && !it.schedule);   // your own one-offs
-  const fromCal = once.filter(([id, it]) => synced.has(id) || it.schedule);  // synced calendars
 
-  // --- 1. My plan: routines, your own one-offs and application dates, day by day.
-  const appsByDay = {};
-  for (const e of appEvents()) (appsByDay[e.date] = appsByDay[e.date] || []).push(e);
-  const routineOf = (d) => !w ? [] : [...itemsOf(w, 'daily'),
-    ...itemsOf(w, 'periodic').filter(([id, it]) => periodicOn(id, it, d))];
-  const pillState = (done, d) => (done ? 'done' : d < today ? 'missed' : 'pending');
-  const planCol = (d, i) => {
-    const routine = routineOf(d).map(([id, it]) => {
-      const done = dayDone(it, i);
-      const prog = it.kind === 'counter' ? `<small>${round2(it.counts[i])}/${round2(it.target)}</small>` : it.freq === 'periodic' ? '<small>↻</small>' : '';
-      return `<button class="dpill ${pillState(done, d)}" data-cell="${wk}:${id}:${i}" aria-label="${escapeHtml(cellLabel(it, i))}">
-        <span class="dbox">${done ? CHECK : ''}</span><span class="dname">${escapeHtml(it.name)}</span>${prog}</button>`;
-    }).join('');
-    const ones = mine.filter(([, it]) => it.date === d).map(([id, it]) => {
-      const done = periodDone(it);
-      return `<div class="dpill once ${pillState(done, d)}">
-        <button class="dbox" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-label="${escapeHtml(it.name)} done" aria-pressed="${done}">${done ? CHECK : ''}</button>
-        <a class="dname" href="#/c/${id}">${it.time ? `<small class="dtime">${escapeHtml(it.time)}</small> ` : ''}${escapeHtml(it.name)}</a></div>`;
-    }).join('');
-    const apps = (appsByDay[d] || []).map((e) => `<a class="chip-app k-${e.kind}" href="#/apps/${d}" title="${escapeHtml(`${e.a.company} ${APP_EVENT_LABEL[e.kind]}`)}">${escapeHtml(e.a.company)} ${APP_CHIP_LABEL[e.kind]}</a>`).join('');
-    const notes = notesOn(d).map((n) => notePillHtml(n, d)).join('');
-    const projs = projectItemsOn(d).map(projPillHtml).join('');
-    const body = routine + ones + notes + projs + apps;
-    return `<div class="pcol ${d === calViewDay ? 'sel' : ''} ${d === today ? 'today' : ''}">
-      ${routine ? `<div class="dpills">${routine}</div>` : ''}
-      ${ones ? `<div class="dpills">${ones}</div>` : ''}
-      ${notes ? `<div class="dpills">${notes}</div>` : ''}
-      ${projs ? `<div class="dpills">${projs}</div>` : ''}
-      ${apps ? `<div class="papps">${apps}</div>` : ''}
-      ${body ? '' : '<p class="muted small">Nothing planned.</p>'}</div>`;
-  };
-
-  // --- 2. Synced calendars: a time grid of events imported from your calendars, and (when they
-  // share theirs) your buddy's, shown on their own or together with yours.
+  // A time grid of your one-off tasks and imported events, project meetings, application dates and
+  // pinned notes, and (when they share theirs) your buddy's calendar, on its own or together with yours.
   const timed = {}, untimed = {};
   for (const d of days) { timed[d] = []; untimed[d] = []; }
   const people = sharedPeople(wk);
@@ -1035,7 +804,21 @@ function calendarTabHtml() {
       } else untimed[x.d].push({ buddy: b, label });
     }
   }
-  for (const [id, it] of person ? [] : fromCal) {
+  // things that open elsewhere: project meetings and deadlines, application dates, pinned notes
+  for (const d of person ? [] : days) {
+    for (const x of projectItemsOn(d)) {
+      const ext = { href: `#/gallery/${x.p.id}`, label: x.title, color: pcol(x.p)[2] };
+      if (x.time) timed[d].push({ ext, start: toMinutes(x.time), end: toMinutes(x.time) + 60 });
+      else untimed[d].push({ ext });
+    }
+    for (const e of appEvents().filter((e) => e.date === d)) untimed[d].push({ ext: { href: `#/apps/${d}`, label: `${e.a.company} ${APP_CHIP_LABEL[e.kind]}`, color: '#b58900' } });
+    for (const n of notesOn(d)) {
+      const ext = { href: '#/plan', label: n.text.split('\n')[0] || 'Note', color: '#8a8f87' };
+      if (n.time && d === n.date) timed[d].push({ ext, start: toMinutes(n.time), end: toMinutes(n.time) + 60 });
+      else untimed[d].push({ ext });
+    }
+  }
+  for (const [id, it] of person ? [] : once) {
     if (!timed[it.date]) continue;
     if (it.time) {
       const start = toMinutes(it.time);
@@ -1055,7 +838,7 @@ function calendarTabHtml() {
   const nowMin = now.getHours() * 60 + now.getMinutes();
 
   const strip = days.map((d, i) => {
-    const n = timed[d].length + untimed[d].length + mine.filter(([, it]) => it.date === d).length;
+    const n = timed[d].length + untimed[d].length;
     return `<button class="cday ${d === calViewDay ? 'sel' : ''} ${d === today ? 'today' : ''}" data-act="cal-day" data-date="${d}">
       <span>${DAY_NAMES[i][0]}</span><b>${parseISO(d).getDate()}</b><i class="${n ? 'dot' : ''}"></i></button>`;
   }).join('');
@@ -1067,6 +850,11 @@ function calendarTabHtml() {
         return `<div class="cev buddy ${height < 40 ? 'short' : ''}" role="button" tabindex="0" data-act="buddy-ev" data-who="${escapeHtml(e.buddy.name)}" data-what="${escapeHtml(e.label)}" data-day="${d}" data-s="${e.start}" data-e="${e.end}" title="${escapeHtml(`${e.buddy.name}: ${e.label} · ${fmtTime(e.start)}–${fmtTime(e.end)}`)}"
           style="top:${top}px;height:${height}px;left:calc(${(e.lane / e.lanes) * 100}% + 2px);width:calc(${100 / e.lanes}% - 4px)">
           <div class="cev-body"><b><span class="who">${escapeHtml(e.buddy.name.slice(0, 1).toUpperCase())}</span>${escapeHtml(e.label)}</b></div></div>`;
+      }
+      if (e.ext) {
+        const top = ((e.start - startHour * 60) / 60) * HOUR_PX, height = Math.max(22, ((e.end - e.start) / 60) * HOUR_PX - 2);
+        return `<a class="cev ext ${height < 40 ? 'short' : ''}" href="${e.ext.href}" title="${escapeHtml(`${e.ext.label} · ${fmtTime(e.start)}`)}"
+          style="--ev:${e.ext.color};top:${top}px;height:${height}px;left:calc(${(e.lane / e.lanes) * 100}% + 2px);width:calc(${100 / e.lanes}% - 4px)"><div class="cev-body"><b>${escapeHtml(e.ext.label)}</b></div></a>`;
       }
       const sched = !!e.it.schedule;
       const done = !sched && periodDone(e.it);
@@ -1088,6 +876,7 @@ function calendarTabHtml() {
   const hasAllDay = days.some((d) => untimed[d].length);
   const allDay = days.map((d) => `<div class="call ${d === calViewDay ? 'sel' : ''}">
       ${untimed[d].map((x) => { if (x.buddy) return `<div class="cuntimed buddy" role="button" tabindex="0" data-act="buddy-ev" data-who="${escapeHtml(x.buddy.name)}" data-what="${escapeHtml(x.label)}" data-day="${d}" title="${escapeHtml(`${x.buddy.name}: ${x.label}`)}"><span><span class="who">${escapeHtml(x.buddy.name.slice(0, 1).toUpperCase())}</span>${escapeHtml(x.label)}</span></div>`;
+        if (x.ext) return `<a class="cuntimed ext" href="${x.ext.href}" style="--ev:${x.ext.color}"><span>${escapeHtml(x.ext.label)}</span></a>`;
         const [id, it] = x; const sched = !!it.schedule; const done = !sched && periodDone(it); return `<div class="cuntimed ${sched ? 'sched' : ''} ${done ? 'done' : ''}" data-open="#/c/${id}" style="--ev:${eventColor(id)}">
         ${sched ? '' : `<button class="cev-chk" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-label="${escapeHtml(it.name)} done">${done ? CHECK : ''}</button>`}
         <span>${escapeHtml(it.name)}</span></div>`; }).join('')}
@@ -1095,7 +884,6 @@ function calendarTabHtml() {
 
   const heads = (cls) => days.map((d, i) => `<button class="chead ${cls} ${d === today ? 'today' : ''} ${d === calViewDay ? 'sel' : ''}" data-act="cal-day" data-date="${d}"><span>${DAY_NAMES[i]}</span><b>${parseISO(d).getDate()}</b></button>`).join('');
   const isThisWeek = wk === currentWeekKey();
-  const dayName = calViewDay === today ? 'Today' : fmtShort(calViewDay);
 
   return `
     <header class="top">
@@ -1106,18 +894,12 @@ function calendarTabHtml() {
         titleAct: `data-act="cal-today" ${isThisWeek && calViewDay === today ? 'disabled' : ''}`,
         right: '<button class="icon-btn" data-act="cal-next" aria-label="Next week">›</button>' + menuBtn,
       })}
-      ${calNav('cal')}
       ${calBarHtml(people, who)}
       <div class="cstrip">${strip}</div>
     </header>
     ${calInvitesHtml()}
-    ${person ? '' : `<section class="card cal" data-section="My plan">
-      <div class="card-head"><h2>My plan</h2><span class="hint"><span class="phone-only">${dayName} · </span>routines, your tasks, pinned notes, applications</span></div>
-      <div class="pgrid-head">${heads('')}</div>
-      <div class="pcols">${days.map(planCol).join('')}</div>
-    </section>`}
-    <section class="card cal" data-section="${person ? 'Their calendar' : 'Synced calendars'}">
-      <div class="card-head"><h2>${person ? `${escapeHtml(person.name)}'s calendar` : who === 'ours' ? 'Our calendars' : 'Synced calendars'}</h2>
+    <section class="card cal" data-section="${person ? 'Their calendar' : 'Events'}">
+      <div class="card-head"><h2>${person ? `${escapeHtml(person.name)}'s calendar` : who === 'ours' ? 'Our calendars' : 'Events'}</h2>
         <a class="txt-btn" href="#/calendar">Calendars ›</a></div>
       <div class="cgrid-head"><div class="ctimes-gap"></div>${heads('')}</div>
       ${hasAllDay ? `<div class="call-row"><div class="ctimes-gap small muted">all day</div>${allDay}</div>` : ''}
@@ -1125,8 +907,8 @@ function calendarTabHtml() {
         <div class="ctimes">${hours.map((h) => `<div style="height:${HOUR_PX}px">${pad(h)}:00</div>`).join('')}</div>
         <div class="ccols" style="height:${gridH}px;background-size:100% ${HOUR_PX}px">${cols}</div>
       </div>
-      ${state.calendars.feeds.length ? (all.length || hasAllDay ? '' : '<p class="muted small pad center">No calendar events this week.</p>')
-        : `<p class="muted small pad center">No calendar connected yet. Add one in <a href="#/calendar">All commitments → Calendars</a>.</p>`}
+      ${all.length || hasAllDay ? '' : '<p class="muted small pad center">Nothing on the calendar this week.</p>'}
+      ${state.calendars.feeds.length ? '' : '<p class="muted small pad center"><a href="#/calendar">Connect your timetable or another calendar</a></p>'}
     </section>`;
 }
 
@@ -1206,6 +988,21 @@ async function refreshApps({ force = false } = {}) {
   }
 }
 
+const appTodayBtn = (a) => (todayTaskFor(a.id)
+  ? `<button class="mini-btn done-on" data-act="app-today" data-id="${a.id}" aria-pressed="true" title="Tap again to remove from today">✓ On today</button>`
+  : `<button class="mini-btn" data-act="app-today" data-id="${a.id}" aria-pressed="false">+ Today</button>`);
+// Everything else you can do with an application.
+function openAppMore(id) {
+  const a = state.apps.items.find((x) => x.id === id);
+  if (!a) return;
+  const notion = a.notionUrl ? notionAppUrl(a.notionUrl) : '';
+  openSheet(`<div class="sheet-head"><h3>${escapeHtml(a.company)}</h3><p class="muted">${escapeHtml(a.programme || '')}</p></div>
+    <div class="menu">
+      ${a.done ? '' : appPhase(a) === 'inprogress' ? appTodayBtn(a) : `<button class="btn" data-act="app-followup" data-id="${a.id}">Add a follow-up</button>`}
+      <button class="btn" data-act="app-done" data-id="${a.id}">${a.done ? 'Not done after all' : 'Mark as done'}</button>
+      ${notion ? `<a class="btn" href="${escapeHtml(notion)}" target="_blank" rel="noopener">Open in Notion</a>` : ''}
+      <button class="btn" data-act="close">Close</button></div>`);
+}
 function appRowHtml(a) {
   const phase = appPhase(a);
   const dates = [
@@ -1216,7 +1013,6 @@ function appRowHtml(a) {
   const assessOn = a.assess && a.assess >= todayISO();
   const assessLine = a.assess ? `<div class="aassess ${assessOn && daysUntil(a.assess) <= 3 ? 'soon' : ''} ${assessOn ? '' : 'past'}">📝 Assessment ${assessOn ? 'due' : 'was due'} ${fmtDayShort(a.assess)}${a.assessTime ? ` ${escapeHtml(a.assessTime)}` : ''}${assessOn ? ` (${relDay(a.assess)})` : ''}${a.assessUrl && cleanUrl(a.assessUrl) ? ` · <a href="${escapeHtml(cleanUrl(a.assessUrl))}" target="_blank" rel="noopener">Open ↗</a>` : ''}</div>` : '';
   const urgent = a.close && phase === 'open' && daysUntil(a.close) <= 7 && daysUntil(a.close) >= 0;
-  const notion = a.notionUrl ? notionAppUrl(a.notionUrl) : '';
   const mats = a.materials || [];
   const ticked = new Set(a.materialsDone || []);
   const followChips = followupsFor(a.id).map((c) => `<span class="fchip-wrap"><a class="fchip ${onceDone(c) ? 'on' : ''}" href="#/c/${c.id}">
@@ -1242,13 +1038,10 @@ function appRowHtml(a) {
       </div>
       <div class="abtns">
         ${a.url ? `<a class="mini-btn primary-mini" href="${escapeHtml(cleanUrl(a.url))}" target="_blank" rel="noopener">Apply ↗</a>` : ''}
-        ${a.done ? '' : `<button class="mini-btn" data-act="app-followup" data-id="${a.id}">+ Follow-up</button>`}
-        ${todayTaskFor(a.id)
-          ? `<button class="mini-btn done-on" data-act="app-today" data-id="${a.id}" aria-pressed="true" title="Tap again to remove from today">✓ On today</button>`
-          : (a.done ? '' : `<button class="mini-btn" data-act="app-today" data-id="${a.id}" aria-pressed="false">+ Today</button>`)}
-        <button class="mini-btn ${a.done ? 'done-on' : ''}" data-act="app-done" data-id="${a.id}" aria-pressed="${!!a.done}">${a.done ? '✓ Done' : 'Done'}</button>
-
-        ${notion ? `<a class="mini-btn notion-mini" title="Open in Notion" aria-label="Open in Notion" href="${escapeHtml(notion)}" ${notion === a.notionUrl ? 'target="_blank" rel="noopener"' : ''}>N</a>` : ''}
+        ${a.done ? `<button class="mini-btn done-on" data-act="app-done" data-id="${a.id}" aria-pressed="true">✓ Done</button>`
+          : phase === 'inprogress' ? `<button class="mini-btn" data-act="app-followup" data-id="${a.id}">+ Follow-up</button>`
+            : appTodayBtn(a)}
+        <button class="mini-btn" data-act="app-more" data-id="${a.id}" aria-label="More for ${escapeHtml(a.company)}">⋯</button>
       </div>
     </div>`;
 }
@@ -1479,16 +1272,6 @@ function updateApp(id, change) {
   appQueues[id] = (appQueues[id] || Promise.resolve()).then(send);
 }
 
-// Small "closing this week" card for Today.
-function appsTodayCardHtml() {
-  if (!state.apps.items.length) return '';
-  const soon = appEvents().filter((e) => e.kind !== 'open' && daysUntil(e.date) >= 0 && daysUntil(e.date) <= 7)
-    .sort((x, y) => x.date.localeCompare(y.date)).slice(0, 4);
-  if (!soon.length) return '';
-  return `<section class="card"><div class="card-head"><h2>Applications</h2><a class="txt-btn" href="#/apps">All ›</a></div>
-    ${soon.map((e) => `<div class="srow" data-open="#/apps/${e.date}"><span class="stime ${daysUntil(e.date) <= 2 ? 'err' : ''}">${relDay(e.date)}</span>
-      <span class="sname">${escapeHtml(e.a.company)} ${APP_EVENT_LABEL[e.kind]}<small>${escapeHtml(e.a.programme || '')}</small></span></div>`).join('')}</section>`;
-}
 
 // ---------- Commitments tab ----------
 function sortedCommitments(freq, archived = false) {
@@ -1540,7 +1323,7 @@ function commitmentsTabHtml() {
   const archived = state.commitments.filter((c) => c.archived);
   return `
     <header class="top">
-      ${topBar({ left: `<button class="txt-btn" data-act="reorder">${reorderMode ? 'Done' : 'Reorder'}</button>`, label: `${state.commitments.filter((c) => !c.archived).length} active`, title: 'All commitments', right: menuBtn })}
+      ${topBar({ left: '<a class="icon-btn" href="#/routine" aria-label="Back to Routine">‹</a>', label: `${state.commitments.filter((c) => !c.archived).length} active`, title: 'Edit', right: `<button class="txt-btn" data-act="reorder">${reorderMode ? 'Done' : 'Reorder'}</button>` })}
     </header>
     ${reviewBannerHtml()}
     ${block('daily', 'Daily', sortedCommitments('daily'))}
@@ -1565,725 +1348,14 @@ function moveCommitment(id, dir) {
   renumber();
 }
 
-// ---------- Routine sub-pages: Record · Knowledge · Tests ----------
-function routineNav(on) {
-  const a = (href, key, label) => `<a href="${href}" class="${on === key ? 'on' : ''}" ${on === key ? 'aria-current="page"' : ''}>${label}</a>`;
-  return `<nav class="subnav">${a('#/routine', 'record', 'Record')}${a('#/knowledge', 'knowledge', 'Knowledge')}${a('#/tests', 'tests', 'Tests')}</nav>`;
-}
+// ---------- Shared helpers ----------
+const clip = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
 const routineChoices = () => state.commitments.filter((c) => !c.archived && c.freq !== 'once').sort((a, b) => a.order - b.order);
 const routineSelect = (name, cur, empty = 'None') => `<select name="${name}"><option value="">${empty}</option>${routineChoices()
   .map((c) => `<option value="${c.id}" ${c.id === cur ? 'selected' : ''}>${escapeHtml(c.name)} · ${FREQ_LABEL[c.freq]}</option>`).join('')}</select>`;
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); toast('Copied'); }
   catch { window.prompt('Copy this:', text); }
-}
-
-// ---------- Knowledge trees ----------
-// A course or self-study plan as a tree of topics; light up each topic as you learn it.
-// The outline is drafted outside the app (e.g. Claude reads the course page), checked, then pasted in.
-// Node: { id, t: title, k: children, lit, at: date lit }.
-function parseOutline(text) {
-  const root = [];
-  const stack = [{ indent: -1, kids: root }];
-  for (const raw of String(text || '').split(/\r?\n/)) {
-    const line = raw.replace(/\t/g, '  ');
-    const t = line.trim().replace(/^([-*•+]|\d+[.)]|#+)\s+/, '').replace(/\*\*/g, '').trim();
-    if (!t) continue;
-    const indent = line.match(/^ */)[0].length;
-    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
-    const node = { id: uid(), t: t.slice(0, 140), k: [] };
-    stack[stack.length - 1].kids.push(node);
-    stack.push({ indent, kids: node.k });
-  }
-  return root;
-}
-const outlineOf = (nodes, depth = 0) => nodes.map((n) =>
-  `${'  '.repeat(depth)}${n.t}${n.refs && n.refs.length ? ` | ${n.refs.join(', ')}` : ''}\n${outlineOf(n.k, depth + 1)}`).join('');
-const treeLeaves = (nodes) => nodes.flatMap((n) => (n.k.length ? treeLeaves(n.k) : [n]));
-// A map skill that covers course topics counts as its topics (e.g. 2 of 3 lit); anything else counts as one.
-const leafStat = (n) => (n.cov ? n.cov : { lit: n.lit ? 1 : 0, total: 1 });
-function treeProgress(nodes) {
-  const leaves = treeLeaves(nodes);
-  let lit = 0, total = 0;
-  for (const n of leaves) { const st = leafStat(n); lit += st.lit; total += st.total; }
-  const weekAgo = addDaysISO(todayISO(), -6);
-  return { lit, total, pct: total ? lit / total : 0, week: leaves.filter((n) => n.lit && n.at >= weekAgo).length };
-}
-
-// ---------- Simplified map ----------
-// Separate from the course list: a compact outline of the core skills (e.g. 8–25 nodes). A skill line
-// can end with " | topic, topic" naming the course topics it covers; it then lights up as those are ticked.
-function parseMapOutline(text) {
-  const nodes = parseOutline(text);
-  const split = (ns) => ns.forEach((n) => {
-    const i = n.t.indexOf('|');
-    if (i >= 0) { n.refs = n.t.slice(i + 1).split(/[,;]/).map((r) => r.trim()).filter(Boolean).slice(0, 30); n.t = n.t.slice(0, i).trim() || 'Skill'; }
-    split(n.k);
-  });
-  split(nodes);
-  return nodes;
-}
-// Course topics a reference points at: the leaves under the matching course node (exact title first, then prefix).
-function resolveRefs(course, refs) {
-  const all = [];
-  const walk = (ns) => ns.forEach((n) => { all.push(n); walk(n.k); });
-  walk(course);
-  const leaves = new Map(), missing = [];
-  for (const r of refs || []) {
-    const q = r.toLowerCase();
-    const hit = all.find((n) => n.t.toLowerCase() === q) || all.find((n) => n.t.toLowerCase().startsWith(q)) || all.find((n) => n.t.toLowerCase().includes(q));
-    if (!hit) { missing.push(r); continue; }
-    for (const l of hit.k.length ? treeLeaves(hit.k) : [hit]) leaves.set(l.id, l);
-  }
-  return { leaves: [...leaves.values()], missing };
-}
-// The map as displayed: a copy where covering skills carry their course progress.
-function deriveMap(course, map) {
-  const missing = [];
-  const copy = (ns) => ns.map((n) => {
-    const d = { ...n, k: copy(n.k) };
-    if (!n.k.length && n.refs && n.refs.length) {
-      const r = resolveRefs(course, n.refs);
-      missing.push(...r.missing);
-      if (r.leaves.length) {
-        const lit = r.leaves.filter((l) => l.lit).length;
-        d.cov = { lit, total: r.leaves.length };
-        d.cover = r.leaves.map((l) => l.id);
-        d.lit = lit === r.leaves.length;
-      }
-    }
-    return d;
-  });
-  return { nodes: copy(map || []), missing };
-}
-function findNode(nodes, id) {
-  for (const n of nodes) { if (n.id === id) return n; const f = findNode(n.k, id); if (f) return f; }
-  return null;
-}
-// Keeps what was already lit when an outline is edited (matched by the path of titles).
-function carryLit(fresh, old) {
-  const lit = new Map();
-  const walk = (ns, path) => ns.forEach((n) => { const p = `${path}/${n.t.toLowerCase()}`; if (n.lit) lit.set(p, n.at); walk(n.k, p); });
-  walk(old, '');
-  const apply = (ns, path) => ns.forEach((n) => { const p = `${path}/${n.t.toLowerCase()}`; if (lit.has(p) && !n.k.length) { n.lit = true; n.at = lit.get(p); } apply(n.k, p); });
-  apply(fresh, '');
-  return fresh;
-}
-function normaliseNodes(ns, depth = 0) {
-  if (!Array.isArray(ns) || depth > 8) return [];
-  return ns.filter((n) => n && n.t).map((n) => ({ id: String(n.id || uid()), t: String(n.t).slice(0, 140), k: normaliseNodes(n.k, depth + 1),
-    ...(Array.isArray(n.refs) && n.refs.length ? { refs: n.refs.map(String).slice(0, 30) } : {}),
-    ...(n.lit ? { lit: true, at: /^\d{4}-\d{2}-\d{2}$/.test(n.at || '') ? n.at : todayISO() } : {}) }));
-}
-const normaliseTree = (t) => ({ id: String(t.id || uid()), name: String(t.name || 'Knowledge tree'), source: String(t.source || ''),
-  commitmentId: t.commitmentId || null, courseId: t.courseId ? +t.courseId : null, created: t.created || todayISO(), nodes: normaliseNodes(t.nodes), map: normaliseNodes(t.map) });
-
-// Knowledge map: the tree drawn left to right as dots joined by curves. Tap a topic to light it;
-// tap a branch dot to fold or unfold it. Lit topics glow and light the links leading to them.
-// Folding: at first only the big branches show, with the top one open in full. Tapping a branch
-// dot opens or closes it, and that choice is kept for this session.
-const foldState = new Map(); // branch id -> true (closed) / false (open)
-const isFolded = (n, depth, i) => n.k.length > 0 && (foldState.has(n.id) ? foldState.get(n.id) : depth === 1 && i > 0);
-let pendingFocusNode = null; // branch just opened: scroll it into view
-let treeView = 'map';       // 'map' or 'list'
-const K_ROW = 30, K_COL = 132, K_PAD = 18;
-const clip = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
-const narrowMap = () => window.innerWidth < 640;
-function leafDot(n) {
-  const glow = n.lit ? '<circle class="kglow" r="11"/>' : '';
-  if (!n.cov) return `${glow}<circle class="kdotc" r="6"/>`;
-  const c = 2 * Math.PI * 7;
-  return `${glow}<circle class="kdotc" r="5"/><circle class="kr-track thin" r="7"/><circle class="kr-fill thin" r="7" stroke-dasharray="${((n.cov.lit / n.cov.total) * c).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90)"/>`;
-}
-const leafAct = (tree, n) => `data-act="${n.cover ? 'tree-cover' : 'tree-lit'}" data-tree="${tree.id}" data-node="${n.id}" ${tree.isMap ? 'data-map="1"' : ''} role="button" tabindex="0" aria-pressed="${!!n.lit}"`;
-function treeSvg(tree, nodes, { interactive = true, narrow = narrowMap() } = {}) {
-  if (narrow) return treeRowsSvg(tree, nodes, { interactive });
-  // Columns stretch to the card's width so the map uses the space it has.
-  const depthOf = (ns, d = 1) => (ns.length ? 1 + Math.max(...ns.map((n, i) => (interactive && isFolded(n, d, i) ? 0 : depthOf(n.k, d + 1)))) : 0);
-  const maxDepth = depthOf(nodes);
-  const avail = Math.max(520, Math.min(($app.clientWidth || 1000) - 70, 1500));
-  const col = Math.max(150, Math.min(300, (avail - K_PAD * 2 - 230) / Math.max(1, maxDepth)));
-  const ROW = 36, CH = 7.4; // row height and approximate width of a character (13.5px text)
-  const items = [], links = [];
-  let y = K_PAD + 24;
-  const place = (n, depth, i) => {
-    const leaf = !n.k.length;
-    const folded = !leaf && interactive && isFolded(n, depth, i);
-    const it = { n, depth, leaf, folded, p: leaf ? null : treeProgress(n.k), x: K_PAD + depth * col };
-    if (leaf) { it.y = y; y += ROW; }
-    else if (folded) { y += ROW * 0.45; it.y = y; y += ROW; } // room for its label above
-    else {
-      y += ROW * 0.45; // room for the branch's label above its dot
-      const kids = n.k.map((c, j) => place(c, depth + 1, j));
-      it.y = (kids[0].y + kids[kids.length - 1].y) / 2;
-      for (const c of kids) links.push({ a: it, b: c });
-      y += ROW * 0.25;
-    }
-    items.push(it);
-    return it;
-  };
-  const root = { n: { id: 'root', t: tree.name || 'Tree', k: nodes }, depth: 0, leaf: false, p: treeProgress(nodes), x: K_PAD + 6, root: true };
-  const kids = nodes.map((c, i) => place(c, 1, i));
-  if (!kids.length) return '';
-  const h = y + K_PAD + (interactive ? 180 : 0); // space below the last branch so it can scroll clear of the thumbnail
-  root.y = (kids[0].y + kids[kids.length - 1].y) / 2;
-  for (const c of kids) links.push({ a: root, b: c });
-  const w = Math.max(avail, K_PAD * 2 + maxDepth * col + 260);
-  const litness = (it) => (it.leaf ? (it.n.lit ? 1 : 0) : it.p.pct);
-  const path = ({ a, b }) => { const mx = (a.x + b.x) / 2; return `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`; };
-  const back = ({ a, b }) => { const mx = (a.x + b.x) / 2; return `M${b.x},${b.y} C${mx},${b.y} ${mx},${a.y} ${a.x},${a.y}`; };
-  const ring = (it, r) => { const c = 2 * Math.PI * r; return `<circle class="kr-track" r="${r}"/><circle class="kr-fill" r="${r}" stroke-dasharray="${(it.p.pct * c).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90)"/>`; };
-  const nodeSvg = (it) => {
-    const t = escapeHtml(it.n.t);
-    if (it.leaf) {
-      const chars = Math.max(10, Math.floor((w - it.x - 40) / CH));
-      return `<g class="kn leaf ${it.n.lit ? 'lit' : ''} ${it.n.cov ? 'cov' : ''}" data-nid="${it.n.id}" transform="translate(${it.x},${it.y})" ${interactive ? leafAct(tree, it.n) : ''}>
-        <title>${t}${it.n.cov ? ` · ${it.n.cov.lit}/${it.n.cov.total} course topics` : ''}</title><rect class="khit" x="-12" y="-15" width="${Math.min(it.n.t.length, chars) * CH + 34}" height="30" rx="9"/>
-        ${leafDot(it.n)}<text x="15" y="5">${escapeHtml(clip(it.n.t, chars))}${it.n.cov ? ` <tspan class="kcount">${it.n.cov.lit}/${it.n.cov.total}</tspan>` : ''}</text></g>`;
-    }
-    const big = it.root ? 16 : 10;
-    const done = it.p.total > 0 && it.p.lit === it.p.total;
-    const chars = it.root ? 26 : Math.max(12, Math.floor((col - 16) / 7.6));
-    return `<g class="kn branch ${done ? 'lit' : ''} ${it.folded ? 'folded' : ''} ${it.root ? 'root' : ''}" data-nid="${it.n.id}" transform="translate(${it.x},${it.y})"
-        ${interactive && !it.root ? `data-act="tree-fold" data-node="${it.n.id}" role="button" tabindex="0" aria-expanded="${!it.folded}"` : ''}>
-      <title>${t} · ${it.p.lit}/${it.p.total}</title>
-      ${done ? `<circle class="kglow" r="${big + 6}"/>` : ''}<circle class="kcore" r="${big - 3}"/>${ring(it, big)}
-      ${it.root ? `<text class="kpct" y="4.5">${Math.round(it.p.pct * 100)}</text>` : it.folded ? `<text class="kplus" y="5">+</text>` : ''}
-      <text class="klabel" x="${it.root ? -12 : -8}" y="${it.root ? big + 22 : -(big + 8)}">${escapeHtml(clip(it.n.t, chars))}</text>
-      ${it.folded ? `<text class="kcount" x="${big + 7}" y="5">${it.p.lit}/${it.p.total}</text>` : ''}</g>`;
-  };
-  // The gradient is in page units: a gradient sized to each line's own box disappears on perfectly straight lines.
-  const gid = `klink-${tree.id}`;
-  const W = Math.ceil(w), H = Math.ceil(h);
-  const linkPaths = links.map((l) => { const v = litness(l.b); return `<path d="${path(l)}" data-from="${l.a.n.id}" data-to="${l.b.n.id}" data-back="${back(l)}" class="${v > 0 ? 'on' : ''}" ${v > 0 ? `style="stroke:url(#${gid});opacity:${(0.35 + 0.65 * v).toFixed(2)}"` : ''}/>`; }).join('');
-  const all = [root, ...items];
-  // Thumbnail keeps the map's shape: up to 200 wide and 220 tall.
-  const mw = Math.round(H / W > 1.1 ? Math.max(70, (220 * W) / H) : 200), mh = Math.round(Math.max(60, Math.min(220, (mw * H) / W)));
-  const mini = interactive ? `<div class="kmini" hidden aria-hidden="true" style="width:${mw}px;height:${mh}px"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-      ${links.map((l) => `<path d="${path(l)}" class="${litness(l.b) > 0 ? 'on' : ''}"/>`).join('')}
-      ${all.map((it) => `<circle cx="${it.x}" cy="${it.y}" r="${it.root ? 22 : it.leaf ? 9 : 14}" class="${(it.leaf ? it.n.lit : it.p.lit === it.p.total && it.p.total) ? 'on' : ''}"/>`).join('')}
-    </svg><i class="kmini-view"></i><button class="kmini-x" data-act="mini-hide" aria-label="Hide thumbnail">×</button></div>
-    <button class="kmini-show" data-act="mini-show" hidden>Show thumbnail</button>` : '';
-  return `<div class="kmap-wrap"><div class="kmap wide" ${interactive ? `data-tree="${tree.id}"` : ''}><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" data-rooty="${root.y}" role="img" aria-label="${escapeHtml(tree.name || 'Knowledge tree')}">
-    <defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${W}" y2="0"><stop offset="0" stop-color="#fa8072"/><stop offset="1" stop-color="#ffc93c"/></linearGradient></defs>
-    <g class="klinks">${linkPaths}</g>
-    ${nodeSvg(root)}${items.map(nodeSvg).join('')}
-  </svg></div>${mini}</div>`;
-}
-// Big maps scroll inside their card; a thumbnail in the corner shows where you are, and
-// tapping or dragging it moves there. Scroll positions survive re-rendering (e.g. after a tap).
-const mapScroll = new Map();
-let miniOff = false;
-try { miniOff = localStorage.getItem('kmini') === 'off'; } catch {}
-function setMini(off) {
-  miniOff = off;
-  try { localStorage.setItem('kmini', off ? 'off' : 'on'); } catch {}
-  initMaps();
-}
-function initMaps() {
-  for (const box of $app.querySelectorAll('.kmap.wide[data-tree]')) {
-    const id = box.dataset.tree, svg = box.querySelector('svg');
-    const mini = box.parentElement.querySelector('.kmini');
-    const saved = mapScroll.get(id);
-    if (saved) { box.scrollLeft = saved[0]; box.scrollTop = saved[1]; }
-    else box.scrollTop = Math.max(0, Number(svg.dataset.rooty) - box.clientHeight / 2); // centre dot in view
-    if (pendingFocusNode) {
-      const g = svg.querySelector(`[data-nid="${CSS.escape(pendingFocusNode)}"]`);
-      const m = g && (g.getAttribute('transform').match(/translate\(([-\d.]+),([-\d.]+)\)/) || []);
-      if (m && m[2] != null) {
-        const y = Number(m[2]);
-        if (y < box.scrollTop + 40 || y > box.scrollTop + box.clientHeight - 80) box.scrollTop = Math.max(0, y - box.clientHeight / 3);
-      }
-    }
-    if (!mini) continue;
-    const fits = box.scrollHeight <= box.clientHeight + 2 && box.scrollWidth <= box.clientWidth + 2;
-    mini.hidden = fits || miniOff;
-    const show = box.parentElement.querySelector('.kmini-show');
-    if (show) show.hidden = fits || !miniOff;
-    const view = mini.querySelector('.kmini-view');
-    const sync = () => {
-      const mw = mini.clientWidth, mh = mini.clientHeight;
-      view.style.left = `${(box.scrollLeft / box.scrollWidth) * mw}px`;
-      view.style.top = `${(box.scrollTop / box.scrollHeight) * mh}px`;
-      view.style.width = `${Math.min(1, box.clientWidth / box.scrollWidth) * mw}px`;
-      view.style.height = `${Math.min(1, box.clientHeight / box.scrollHeight) * mh}px`;
-      mapScroll.set(id, [box.scrollLeft, box.scrollTop]);
-    };
-    box.addEventListener('scroll', sync, { passive: true });
-    sync();
-    const go = (e) => {
-      const r = mini.getBoundingClientRect();
-      box.scrollLeft = ((e.clientX - r.left) / r.width) * box.scrollWidth - box.clientWidth / 2;
-      box.scrollTop = ((e.clientY - r.top) / r.height) * box.scrollHeight - box.clientHeight / 2;
-    };
-    mini.onpointerdown = (e) => { if (e.target.closest('.kmini-x')) return; e.preventDefault(); mini.setPointerCapture(e.pointerId); go(e); mini.onpointermove = go; };
-    mini.onpointerup = mini.onpointercancel = () => { mini.onpointermove = null; };
-  }
-  pendingFocusNode = null;
-}
-// When a topic lights up, a stream of light runs from its dot along the links to the centre dot.
-let pendingStream = null;
-function runStream() {
-  const id = pendingStream;
-  pendingStream = null;
-  if (!id || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  for (const svg of $app.querySelectorAll('.kmap svg')) {
-    const start = svg.querySelector(`[data-nid="${CSS.escape(id)}"]`);
-    if (!start) continue;
-    const segs = [];
-    let cur = id;
-    for (let guard = 0; guard < 12; guard++) {
-      const link = svg.querySelector(`.klinks path[data-to="${CSS.escape(cur)}"]`);
-      if (!link) break;
-      segs.push(link.dataset.back);
-      cur = link.dataset.from;
-    }
-    if (!segs.length) continue;
-    const d = segs.map((sg, i) => (i ? sg.replace(/^M/, 'L') : sg)).join(' ');
-    const ns = 'http://www.w3.org/2000/svg';
-    const g = document.createElementNS(ns, 'g');
-    g.setAttribute('class', 'kstream');
-    svg.insertBefore(g, svg.querySelector('.klinks').nextSibling);
-    const probe = document.createElementNS(ns, 'path');
-    probe.setAttribute('d', d);
-    g.appendChild(probe);
-    const len = probe.getTotalLength();
-    probe.remove();
-    const dur = Math.min(1600, 500 + len * 0.9);
-    [[46, 0, 5], [22, 120, 3], [10, 220, 2]].forEach(([dash, delay, width]) => {
-      const p = document.createElementNS(ns, 'path');
-      p.setAttribute('d', d);
-      p.style.strokeWidth = width;
-      p.style.strokeDasharray = `${dash} ${len + dash}`;
-      g.appendChild(p);
-      p.animate([{ strokeDashoffset: dash, opacity: 1 }, { strokeDashoffset: -len, opacity: 0.9 }],
-        { duration: dur, delay, easing: 'cubic-bezier(.45,0,.25,1)', fill: 'forwards' });
-    });
-    // Ripples: one where the topic lit up, one when the stream reaches the centre.
-    const xy = (el) => (el.getAttribute('transform').match(/translate\(([-\d.]+),([-\d.]+)\)/) || []).slice(1).map(Number);
-    const ripple = (el, delay, r) => {
-      const [cx, cy] = xy(el);
-      if (cx == null) return;
-      const c = document.createElementNS(ns, 'circle');
-      c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', r);
-      c.setAttribute('class', 'kripple');
-      g.appendChild(c);
-      c.style.transformOrigin = `${cx}px ${cy}px`;
-      c.animate([{ transform: 'scale(1)', opacity: 0.9 }, { transform: 'scale(3.2)', opacity: 0 }], { duration: 650, delay, easing: 'ease-out', fill: 'both' });
-    };
-    ripple(start, 0, 7);
-    const target = svg.querySelector(`[data-nid="${CSS.escape(cur)}"]`) || svg.querySelector('.kn.root');
-    if (target) ripple(target, dur - 120, 14);
-    setTimeout(() => g.remove(), dur + 400);
-  }
-}
-// Phones: the same dots and links, one topic per row (children step right under their branch).
-const R_ROW = 34, R_IND = 22;
-function treeRowsSvg(tree, nodes, { interactive }) {
-  const rows = [], links = [];
-  const walk = (n, depth, parent, i) => {
-    const leaf = !n.k.length;
-    const folded = !leaf && interactive && isFolded(n, depth, i);
-    const it = { n, depth, leaf, folded, p: leaf ? null : treeProgress(n.k), x: K_PAD + depth * R_IND, y: K_PAD + rows.length * R_ROW };
-    rows.push(it);
-    if (parent) links.push({ a: parent, b: it });
-    if (!leaf && !folded) n.k.forEach((c, j) => walk(c, depth + 1, it, j));
-  };
-  const root = { n: { id: 'root', t: tree.name || 'Tree', k: nodes }, depth: 0, leaf: false, p: treeProgress(nodes), x: K_PAD, y: K_PAD, root: true };
-  rows.push(root);
-  nodes.forEach((c, i) => walk(c, 1, root, i));
-  if (rows.length < 2) return '';
-  const h = K_PAD * 2 + (rows.length - 1) * R_ROW;
-  const v = (it) => (it.leaf ? (it.n.lit ? 1 : 0) : it.p.pct);
-  const path = ({ a, b }) => `M${a.x},${a.y + 8} L${a.x},${b.y - 10} Q${a.x},${b.y} ${a.x + 10},${b.y} L${b.x - 8},${b.y}`;
-  const back = ({ a, b }) => `M${b.x - 8},${b.y} L${a.x + 10},${b.y} Q${a.x},${b.y} ${a.x},${b.y - 10} L${a.x},${a.y + 8}`;
-  const ring = (it, r) => { const c = 2 * Math.PI * r; return `<circle class="kr-track" r="${r}"/><circle class="kr-fill" r="${r}" stroke-dasharray="${(it.p.pct * c).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90)"/>`; };
-  // Card width minus margins, in characters of ~7px, so long names end in … instead of running off.
-  const room = (it, extra = 0) => Math.max(8, Math.floor((Math.min(window.innerWidth, 640) - 70 - it.x - extra) / 7.1));
-  const node = (it) => {
-    const t = escapeHtml(it.n.t);
-    if (it.leaf) {
-      return `<g class="kn leaf ${it.n.lit ? 'lit' : ''} ${it.n.cov ? 'cov' : ''}" data-nid="${it.n.id}" transform="translate(${it.x},${it.y})" ${interactive ? leafAct(tree, it.n) : ''}>
-        <title>${t}</title><rect class="khit" x="-12" y="-15" width="1000" height="30" rx="8"/>
-        ${leafDot(it.n)}<text x="14" y="4.5">${escapeHtml(clip(it.n.t, room(it, it.n.cov ? 30 : 0)))}${it.n.cov ? ` <tspan class="kcount">${it.n.cov.lit}/${it.n.cov.total}</tspan>` : ''}</text></g>`;
-    }
-    const big = it.root ? 11 : 8, done = it.p.lit === it.p.total;
-    return `<g class="kn branch ${done ? 'lit' : ''} ${it.folded ? 'folded' : ''} ${it.root ? 'root' : ''}" data-nid="${it.n.id}" transform="translate(${it.x},${it.y})"
-        ${interactive && !it.root ? `data-act="tree-fold" data-node="${it.n.id}" role="button" tabindex="0" aria-expanded="${!it.folded}"` : ''}>
-      <title>${t}</title><rect class="khit" x="-12" y="-15" width="1000" height="30" rx="8"/>
-      ${done ? `<circle class="kglow" r="${big + 5}"/>` : ''}<circle class="kcore" r="${big - 3}"/>${ring(it, big)}
-      ${it.folded ? '<text class="kplus" y="4.5">+</text>' : ''}
-      <text class="klabel" x="${big + 9}" y="4.5">${escapeHtml(clip(it.n.t, room(it, 40)))} <tspan class="kcount">${it.p.lit}/${it.p.total}</tspan></text></g>`;
-  };
-  return `<div class="kmap rows"><svg width="100%" height="${h}" role="img" aria-label="${escapeHtml(tree.name || 'Knowledge tree')}">
-    <defs><linearGradient id="klink-r-${tree.id}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="${h}"><stop offset="0" stop-color="#fa8072"/><stop offset="1" stop-color="#ffc93c"/></linearGradient></defs>
-    <g class="klinks">${links.map((l) => { const x = v(l.b); return `<path d="${path(l)}" data-from="${l.a.n.id}" data-to="${l.b.n.id}" data-back="${back(l)}" class="${x > 0 ? 'on' : ''}" ${x > 0 ? `style="stroke:url(#klink-r-${tree.id});opacity:${(0.35 + 0.65 * x).toFixed(2)}"` : ''}/>`; }).join('')}</g>
-    ${rows.map(node).join('')}</svg></div>`;
-}
-let lastNarrow = narrowMap();
-window.addEventListener('resize', () => {
-  if (narrowMap() === lastNarrow) return;
-  lastNarrow = narrowMap();
-  if ((route.page === 'knowledge' || route.page === 'course') && !typing()) render();
-});
-function treeBodyHtml(t) {
-  if (treeView === 'list' && t.nodes.length) return treeNodesHtml(t, t.nodes);
-  if (!t.map.length) return treeSvg(t, t.nodes) + `<p class="help center">This map shows the full course list. <a href="#/knowledge/${t.id}/edit">Add a simplified map</a> to see just the core skills.</p>`;
-  return treeSvg({ ...t, isMap: true }, deriveMap(t.nodes, t.map).nodes);
-}
-let nextLeafId = null;
-const treeOpen = new Set(); // list view: branches folded open this session (top level starts open)
-function treeNodesHtml(tree, nodes, depth = 0) {
-  return `<ul class="ktree">${nodes.map((n) => {
-    if (!n.k.length) {
-      return `<li><button class="kleaf ${n.lit ? 'lit' : ''} ${n.id === nextLeafId ? 'next' : ''}" data-act="tree-lit" data-tree="${tree.id}" data-node="${n.id}" aria-pressed="${!!n.lit}">
-        <span class="kdot"></span><span class="kt">${escapeHtml(n.t)}</span></button></li>`;
-    }
-    const p = treeProgress(n.k);
-    const open = depth === 0 ? !treeOpen.has(`-${n.id}`) : treeOpen.has(n.id);
-    return `<li class="kbranch ${p.lit === p.total ? 'lit' : ''}"><details data-tnode="${n.id}" data-depth="${depth}" ${open ? 'open' : ''}>
-      <summary><span class="kring" style="--p:${Math.round(p.pct * 100)}%"></span><b>${escapeHtml(n.t)}</b><small>${p.lit}/${p.total}</small></summary>
-      ${treeNodesHtml(tree, n.k, depth + 1)}</details></li>`;
-  }).join('')}</ul>`;
-}
-const treeMain = (t) => (t.nodes.length ? t.nodes : deriveMap(t.nodes, t.map).nodes);
-function treeCardHtml(t) {
-  const p = treeProgress(treeMain(t));
-  const c = t.commitmentId && state.commitments.find((x) => x.id === t.commitmentId);
-  nextLeafId = (nextTopic(t) || {}).id;
-  return `<section class="card ktree-card" id="tree-${t.id}" data-section="${escapeHtml(t.name)}">
-    <div class="card-head"><h2>${escapeHtml(t.name)}</h2><a class="txt-btn" href="#/knowledge/${t.id}/edit">Edit</a></div>
-    <div class="kprog"><b>${Math.round(p.pct * 100)}%</b><span>${t.map.length && t.nodes.length ? 'of the course' : 'lit'} · ${p.lit} of ${p.total} topics${p.week ? ` · <em>+${p.week} this week</em>` : ''}</span></div>
-    <div class="hbar"><i style="width:${p.pct * 100}%"></i></div>
-    ${c || t.source ? `<p class="small muted pad">${c ? `Routine: <a href="#/c/${c.id}">${escapeHtml(c.name)}</a>` : ''}${c && t.source ? ' · ' : ''}${t.source ? linkify(escapeHtml(t.source)) : ''}</p>` : ''}
-    ${treeBodyHtml(t)}
-  </section>`;
-}
-function knowledgePageHtml() {
-  const trees = state.trees;
-  return `
-    <header class="top">${topBar({ label: 'Routine', title: 'Knowledge', right: '<a class="txt-btn" href="#/knowledge/new">+ New</a>' })}${routineNav('knowledge')}
-      ${trees.length ? `<div class="seg-mini kview"><button data-act="tree-view" data-v="map" class="${treeView === 'map' ? 'on' : ''}">Map</button><button data-act="tree-view" data-v="list" class="${treeView === 'list' ? 'on' : ''}">List</button></div>` : ''}</header>
-    ${trees.length ? trees.map(treeCardHtml).join('') : `
-      <section class="card empty">
-        <p><b>Light up what you've learned.</b></p>
-        <p class="muted small">Turn a course (e.g. your Felix technicals) or a self-study plan into a tree of topics, then tap each topic as you learn it.</p>
-        <a class="btn primary" href="#/knowledge/new">Make a knowledge tree</a>
-      </section>`}`;
-}
-let treeDraft = null; // { outline, map } while editing
-function treePrompt(name, source) {
-  return `Draft the course list for: ${name || '<subject or course>'}
-Source: ${source || '<course page link, syllabus, or what I am teaching myself>'}
-
-Read the source and list everything it covers, in the order it is taught. Keep the course's own section and lesson names.
-Reply with only an indented outline: two spaces per level, one topic per line, at most 4 levels.
-No numbering, no bullets, no commentary.`;
-}
-function mapPrompt(name, outline) {
-  return `Here is the full course list for "${name || 'my course'}":
-
-${outline.trim() || '<paste the course list here>'}
-
-Turn it into a compact skill map: the core skills I am really building, not the course's lesson structure.
-- At most 3 levels and 8 to 25 lines in total. Merge lessons that train the same skill; leave out admin, intros and recaps.
-- On each lowest-level line, after " | ", list the course topics it covers, copied exactly from the list above, separated by commas.
-Reply with only the indented outline (two spaces per level). Example line:  DCF | Unlevered free cash flow, WACC, Terminal value`;
-}
-function treePreviewHtml(name, outline, mapText) {
-  const course = parseOutline(outline);
-  const map = parseMapOutline(mapText);
-  const d = deriveMap(course, map);
-  const missing = [...new Set(d.missing)];
-  return `<span>Preview · ${treeLeaves(course).length} course topics · ${map.length ? `${treeLeaves(map).length} map skills` : 'no map yet'}</span>
-    ${missing.length ? `<span class="help err">Not found in the course list: ${escapeHtml(missing.slice(0, 6).join(', '))}${missing.length > 6 ? '…' : ''}</span>` : ''}
-    <div class="tpreview">${map.length ? treeSvg({ id: 'preview', name: name || 'Preview', isMap: true }, d.nodes, { interactive: false })
-      : course.length ? treeSvg({ id: 'preview', name: name || 'Preview' }, course, { interactive: false }) : '<p class="muted small">Nothing yet.</p>'}</div>`;
-}
-function treeEditHtml() {
-  const isNew = route.treeId === 'new';
-  const t = isNew ? normaliseTree({ name: '', nodes: [] }) : state.trees.find((x) => x.id === route.treeId);
-  if (!t) return knowledgePageHtml();
-  const course = isNew ? (acad.courses || []).find((c) => c.id === treeNewCourse) : (acad.courses || []).find((c) => c.id === t.courseId);
-  if (isNew && course) {
-    t.name = course.shortname ? `${course.shortname} · ${course.fullname}` : course.fullname;
-    t.source = `${acad.site || 'https://moodle.lse.ac.uk'}/course/view.php?id=${course.id}`;
-  }
-  const outline = treeDraft ? treeDraft.outline : outlineOf(t.nodes);
-  const mapText = treeDraft ? treeDraft.map : outlineOf(t.map);
-  return `
-    <header class="top">${topBar({ left: '<button class="txt-btn" data-act="back">Cancel</button>', title: isNew ? 'New knowledge tree' : 'Edit tree',
-      right: '<button class="txt-btn strong" type="submit" form="tform">Save</button>' })}</header>
-    <form id="tform" class="card form" data-form="tree" data-id="${isNew ? '' : t.id}">
-      ${course ? `<input type="hidden" name="courseId" value="${course.id}"><p class="help">For your Moodle course <b>${escapeHtml(course.shortname || course.fullname)}</b>. The prompt below already includes what Moodle lists for it.</p>` : ''}
-      <label class="f">Name<input name="name" required value="${escapeHtml(t.name)}" placeholder="e.g. Felix technicals"></label>
-      <label class="f">What it covers<input name="source" value="${escapeHtml(t.source)}" placeholder="Course page link, or e.g. “self-study: VC fund basics”"></label>
-      <label class="f">Linked routine<span class="help">Its page shows how much of the course is done.</span>${routineSelect('commitmentId', t.commitmentId)}</label>
-
-      <div class="kstep"><b>1 · Course list</b><span class="help">The full, detailed structure from the course website. You tick these in List view.</span>
-        <button type="button" class="btn" data-act="tree-prompt">Copy prompt for Claude</button>
-        <span class="help">Paste it into Claude with the course page link (or the page open), then paste the outline back here.</span>
-        <textarea name="outline" class="code" rows="10" placeholder="Accounting&#10;  Three statements&#10;    Income statement&#10;    Balance sheet">${escapeHtml(outline)}</textarea></div>
-
-      <div class="kstep"><b>2 · Map (simplified)</b><span class="help">A short picture of the core skills, separate from the course structure. Optional.</span>
-        <button type="button" class="btn" data-act="map-prompt">Copy prompt for Claude</button>
-        <span class="help">The prompt includes your course list. A line can end with “ | topic, topic” to light up from those course topics; without it you tap the skill yourself.</span>
-        <textarea name="mapOutline" class="code" rows="8" placeholder="Valuation&#10;  DCF | Unlevered free cash flow, WACC, Terminal value&#10;  Comps | Trading comps, Precedent transactions">${escapeHtml(mapText)}</textarea></div>
-
-      <div class="f tpreview-wrap">${treePreviewHtml(t.name, outline, mapText)}</div>
-      <button class="btn primary" type="submit">${isNew ? 'Import tree' : 'Save'}</button>
-      ${isNew ? '' : '<div class="danger"><button type="button" class="btn warn" data-act="tree-delete">Delete tree</button></div>'}
-    </form>`;
-}
-function saveTreeForm(form) {
-  const f = new FormData(form);
-  const name = String(f.get('name') || '').trim();
-  const nodes = parseOutline(f.get('outline'));
-  const map = parseMapOutline(f.get('mapOutline'));
-  if (!name) { toast('Give it a name'); return; }
-  if (!nodes.length && !map.length) { toast('Paste the course list or a map first'); return; }
-  const fields = { name, source: String(f.get('source') || '').trim(), commitmentId: f.get('commitmentId') || null };
-  if (f.get('courseId')) fields.courseId = +f.get('courseId');
-  let t = state.trees.find((x) => x.id === form.dataset.id);
-  if (t) Object.assign(t, fields, { nodes: carryLit(nodes, t.nodes), map: carryLit(map, t.map) });
-  else { t = normaliseTree({ ...fields, nodes, map }); state.trees.push(t); }
-  treeDraft = null; treeNewCourse = null;
-  save();
-  location.replace(t.courseId ? `#/academics/${t.courseId}` : '#/knowledge');
-}
-// Tapping a map skill that covers course topics ticks them all (or clears them if all were done).
-function toggleCover(treeId, nodeId) {
-  const t = state.trees.find((x) => x.id === treeId);
-  const d = t && findNode(deriveMap(t.nodes, t.map).nodes, nodeId);
-  if (!d || !d.cover) return;
-  const leaves = d.cover.map((id) => findNode(t.nodes, id)).filter(Boolean);
-  const all = leaves.every((l) => l.lit);
-  let fresh = 0;
-  for (const l of leaves) { if (all) { delete l.lit; delete l.at; } else if (!l.lit) { l.lit = true; l.at = todayISO(); fresh++; } }
-  if (!all) pendingStream = nodeId;
-  const note = fresh ? logRoutineFromTree(t, fresh) : '';
-  save();
-  render();
-  runStream();
-  const topics = `${leaves.length} course topic${leaves.length === 1 ? '' : 's'}`;
-  toast((all ? `Cleared ${topics}` : `Ticked ${topics}`) + (note ? ` · ${note}` : ''));
-}
-// Learning course topics counts as doing the linked routine today: a task is ticked; a counter of
-// lessons/topics goes up by the number learned (hour counters are left for you to log).
-function logRoutineFromTree(t, n) {
-  const c = t.commitmentId && state.commitments.find((x) => x.id === t.commitmentId);
-  const w = c && getWeek(currentWeekKey());
-  const it = w && w.items[c.id];
-  if (!it) return '';
-  const i = todayIndex(currentWeekKey());
-  if (it.kind === 'counter') {
-    if (isHourUnit(it.unit)) return '';
-    if (it.freq === 'weekly') it.count = round2(it.count + n * (it.step || 1)); else it.counts[i] = round2(it.counts[i] + n * (it.step || 1));
-    return `${c.name} +${n}`;
-  }
-  if (it.freq === 'weekly') { if (it.done) return ''; it.done = true; }
-  else { if (it.ticks[i]) return ''; it.ticks[i] = true; }
-  return `${c.name} ticked for today`;
-}
-// The next topic to learn in the course list (first one not yet lit).
-const nextTopic = (t) => treeLeaves(t.nodes).find((n) => !n.lit) || null;
-function pathTo(nodes, id, trail = []) {
-  for (const n of nodes) { if (n.id === id) return trail; const r = pathTo(n.k, id, [...trail, n]); if (r) return r; }
-  return null;
-}
-// Opens the list view at the next topic of a tree (used from Today and the routine's page).
-function focusTree(id) {
-  const t = state.trees.find((x) => x.id === id);
-  if (!t) return;
-  treeView = 'list';
-  const next = nextTopic(t);
-  for (const b of (next && pathTo(t.nodes, next.id)) || []) { treeOpen.add(b.id); treeOpen.delete(`-${b.id}`); }
-  setTimeout(() => {
-    const el = document.querySelector(`.kleaf[data-node="${CSS.escape(next ? next.id : '')}"]`) || document.getElementById(`tree-${id}`);
-    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, 60);
-}
-function routineTreeLines(cid) {
-  const today = todayISO();
-  return state.trees.filter((t) => t.commitmentId === cid && t.nodes.length).map((t) => {
-    const next = nextTopic(t);
-    const done = treeLeaves(t.nodes).filter((n) => n.lit && n.at === today).length;
-    return `<a class="trow-extra" href="#/knowledge/${t.id}">${done ? `${done} topic${done === 1 ? '' : 's'} today · ` : ''}${next ? `Next: ${escapeHtml(clip(next.t, 48))}` : 'Course finished 🎉'} ›</a>`;
-  }).join('');
-}
-function toggleLeaf(treeId, nodeId, inMap = false) {
-  const t = state.trees.find((x) => x.id === treeId);
-  const n = t && findNode(inMap ? t.map : t.nodes, nodeId);
-  if (!n) return;
-  if (n.lit) { delete n.lit; delete n.at; } else { n.lit = true; n.at = todayISO(); pendingStream = nodeId; }
-  const note = n.lit && !inMap ? logRoutineFromTree(t, 1) : '';
-  save();
-  render();
-  runStream();
-  if (note) toast(note);
-}
-function treesForCommitment(id) {
-  const ts = state.trees.filter((t) => t.commitmentId === id);
-  return ts.map((t) => { const p = treeProgress(treeMain(t)); return `<a class="crow" href="#/knowledge/${t.id}"><div class="ctext"><div class="n">🌳 ${escapeHtml(t.name)}</div>
-    <div class="sub">${Math.round(p.pct * 100)}% lit · ${p.lit}/${p.total} topics</div><div class="mini"><i style="width:${p.pct * 100}%"></i></div></div><span class="chev">›</span></a>`; }).join('');
-}
-
-// ---------- Online test results ----------
-// Each practice or real test is logged with type, provider, score, percentile and time, and the
-// results are summarised per type and as evidence for the Capability Radar dimensions.
-const TEST_TYPES = { numerical: 'Numerical', verbal: 'Verbal', logical: 'Logical / inductive', sjt: 'Situational judgement',
-  game: 'Game-based', personality: 'Personality / behavioural', coding: 'Coding / technical', other: 'Other' };
-const TEST_PROVIDERS = ['SHL', 'Cappfinity', 'Pymetrics', 'Talogy (Cubiks)', 'Aon (cut-e)', 'Korn Ferry', 'Saville', 'Criteria', 'Arctic Shores', 'HireVue',
-  'Practice Aptitude Tests', 'JobTestPrep', 'AssessmentDay', 'Graduate Monkey'];
-// Capability Radar dimensions (ids from the radar's profile) each test type is evidence for.
-const RADAR_DIMS = { 'finance-industry-knowledge': 'Finance & industry knowledge', judgement: 'Judgement', 'written-communication': 'Written communication',
-  'attention-to-detail': 'Attention to detail', 'composure-under-pressure': 'Composure under pressure', 'technical-ai-tooling': 'Technical & AI tooling' };
-const TEST_RADAR = { numerical: ['finance-industry-knowledge', 'attention-to-detail', 'composure-under-pressure'],
-  verbal: ['written-communication', 'attention-to-detail', 'composure-under-pressure'], logical: ['judgement', 'composure-under-pressure'],
-  sjt: ['judgement'], game: ['composure-under-pressure'], personality: [], coding: ['technical-ai-tooling', 'composure-under-pressure'], other: ['composure-under-pressure'] };
-const pctNum = (v, max) => { const n = parseFloat(v); return isFinite(n) && n >= 0 ? Math.min(max, n) : null; };
-function normaliseTest(x) {
-  const total = pctNum(x.total, 999), correct = pctNum(x.correct, 999);
-  return {
-    id: String(x.id || uid()), date: /^\d{4}-\d{2}-\d{2}$/.test(x.date || '') ? x.date : todayISO(),
-    type: TEST_TYPES[x.type] ? x.type : 'other', provider: String(x.provider || '').slice(0, 60),
-    mode: x.mode === 'real' ? 'real' : 'practice', firm: String(x.firm || '').slice(0, 60),
-    correct, total: total || null, pct: pctNum(x.pct, 100), mins: pctNum(x.mins, 600),
-    outcome: ['pass', 'fail', 'pending'].includes(x.outcome) ? x.outcome : '', note: String(x.note || '').slice(0, 500),
-  };
-}
-const testAcc = (x) => (x.total && x.correct != null ? x.correct / x.total : null);
-const testMetric = (x) => (x.pct != null ? x.pct : testAcc(x) != null ? testAcc(x) * 100 : null); // 0–100
-const ordinal = (n) => { const r = Math.round(n); const s = r % 100 >= 11 && r % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' })[r % 10] || 'th'; return `${r}${s}`; };
-const avg = (a) => (a.length ? a.reduce((s, n) => s + n, 0) / a.length : null);
-function testSummary(list) {
-  const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
-  const metrics = sorted.map(testMetric).filter((m) => m != null);
-  const pct = avg(sorted.map((x) => x.pct).filter((v) => v != null));
-  const acc = avg(sorted.map(testAcc).filter((v) => v != null));
-  const mins = avg(sorted.map((x) => x.mins).filter((v) => v != null));
-  let trend = null;
-  if (metrics.length >= 2) {
-    const h = Math.floor(metrics.length / 2);
-    const d = avg(metrics.slice(metrics.length - h)) - avg(metrics.slice(0, h));
-    trend = d >= 5 ? 'getting better' : d <= -5 ? 'slipping' : 'steady';
-  }
-  const real = sorted.filter((x) => x.mode === 'real');
-  return { n: list.length, pct, acc, mins, trend, metrics, passed: real.filter((x) => x.outcome === 'pass').length, failed: real.filter((x) => x.outcome === 'fail').length, real: real.length };
-}
-function summaryLine(label, s) {
-  const bits = [`${s.n} test${s.n === 1 ? '' : 's'}`];
-  if (s.pct != null) bits.push(`${ordinal(s.pct)} percentile on average`);
-  else if (s.acc != null) bits.push(`${Math.round(s.acc * 100)}% correct on average`);
-  if (s.trend) bits.push(s.trend);
-  if (s.real) bits.push(`real: ${s.passed} passed, ${s.failed} failed${s.real - s.passed - s.failed ? `, ${s.real - s.passed - s.failed} pending` : ''}`);
-  return `${label}: ${bits.join(', ')}`;
-}
-const byType = () => {
-  const m = new Map();
-  for (const x of state.tests) { if (!m.has(x.type)) m.set(x.type, []); m.get(x.type).push(x); }
-  return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
-};
-function radarEvidence() {
-  const out = [];
-  for (const [dim, name] of Object.entries(RADAR_DIMS)) {
-    const types = byType().filter(([t]) => TEST_RADAR[t].includes(dim));
-    if (types.length) out.push({ dim, name, lines: types.map(([t, l]) => summaryLine(TEST_TYPES[t], testSummary(l))) });
-  }
-  return out;
-}
-function radarExport() {
-  const ev = radarEvidence();
-  const lines = [`Online test evidence from I Commit! (${fmtShort(todayISO())}) for /capability-radar.`,
-    'Please assess this as external evidence (mode 3) and propose any score changes before writing.', ''];
-  for (const e of ev) lines.push(`${e.name} (${e.dim}):`, ...e.lines.map((l) => `  - ${l}`));
-  lines.push('', 'Raw results (JSON):', JSON.stringify(state.tests.map(({ id, ...x }) => x)));
-  return lines.join('\n');
-}
-function sparkHtml(metrics) {
-  const last = metrics.slice(-10);
-  return `<span class="spark" aria-hidden="true">${last.map((m) => `<i style="height:${Math.max(8, m)}%"></i>`).join('')}</span>`;
-}
-// Adds one to (or ticks) the linked routine for the test's day.
-function logOnRoutine(cid, date) {
-  const c = state.commitments.find((x) => x.id === cid);
-  if (!c || date > todayISO()) return '';
-  const w = getWeek(weekOf(date), weekOf(date) === currentWeekKey());
-  const it = w && w.items[cid];
-  if (!it) return '';
-  const i = dayIndexOf(date);
-  if (it.freq === 'weekly') { if (it.kind === 'counter') it.count = round2(it.count + (it.step || 1)); else it.done = true; }
-  else if (it.kind === 'counter') it.counts[i] = round2(it.counts[i] + (it.step || 1));
-  else it.ticks[i] = true;
-  return ` · ${c.name} logged`;
-}
-function testsPageHtml() {
-  const editing = route.testId && state.tests.find((x) => x.id === route.testId);
-  const x = editing || normaliseTest({ date: todayISO(), type: state.lastTestType || 'numerical', provider: state.lastTestProvider || '' });
-  const types = byType();
-  const ev = radarEvidence();
-  const list = [...state.tests].sort((a, b) => b.date.localeCompare(a.date) || 0);
-  const opt = (v, label, cur) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
-  const radio = (name, value, label, cur) => `<label><input type="radio" name="${name}" value="${value}" ${cur === value ? 'checked' : ''}><span>${label}</span></label>`;
-  return `
-    <header class="top">${topBar({ label: 'Routine', title: 'Online tests' })}${routineNav('tests')}</header>
-    <form class="card form" data-form="test" data-id="${editing ? x.id : ''}" data-mode="${x.mode}" data-section="Log a test">
-      <div class="card-head"><h2>${editing ? 'Edit result' : 'Log a test'}</h2>${editing ? '<a class="txt-btn" href="#/tests">Cancel</a>' : ''}</div>
-      <datalist id="providers">${TEST_PROVIDERS.map((p) => `<option value="${escapeHtml(p)}">`).join('')}</datalist>
-      <div class="f2"><label class="f">Date<input type="date" name="date" value="${x.date}"></label>
-        <label class="f">Type<select name="type">${Object.entries(TEST_TYPES).map(([v, l]) => opt(v, l, x.type)).join('')}</select></label></div>
-      <div class="f2"><label class="f">Provider<input name="provider" list="providers" value="${escapeHtml(x.provider)}" placeholder="e.g. SHL"></label>
-        <div class="f">For<div class="seg">${radio('mode', 'practice', 'Practice', x.mode)}${radio('mode', 'real', 'Real', x.mode)}</div></div></div>
-      <div class="f2 only-real"><label class="f">Firm<input name="firm" value="${escapeHtml(x.firm)}" placeholder="e.g. Nomura"></label>
-        <label class="f">Outcome<select name="outcome">${opt('', '—', x.outcome)}${opt('pending', 'Waiting', x.outcome)}${opt('pass', 'Passed', x.outcome)}${opt('fail', 'Not passed', x.outcome)}</select></label></div>
-      <div class="f4">
-        <label class="f">Correct<input name="correct" type="number" inputmode="numeric" min="0" step="1" value="${x.correct ?? ''}"></label>
-        <label class="f">Out of<input name="total" type="number" inputmode="numeric" min="0" step="1" value="${x.total ?? ''}"></label>
-        <label class="f">Percentile<input name="pct" type="number" inputmode="numeric" min="0" max="100" step="1" value="${x.pct ?? ''}"></label>
-        <label class="f">Minutes<input name="mins" type="number" inputmode="numeric" min="0" step="1" value="${x.mins ?? ''}"></label>
-      </div>
-      <label class="f">Note<input name="note" value="${escapeHtml(x.note)}" placeholder="What tripped you up, what to practise next"></label>
-      ${editing ? '' : `<label class="f">Also log on routine${routineSelect('routine', state.testRoutine || (routineChoices().find((c) => /test/i.test(c.name)) || {}).id, "Don't")}</label>`}
-      <button class="btn primary" type="submit">${editing ? 'Save' : 'Log result'}</button>
-      ${editing ? '<div class="danger"><button type="button" class="btn warn" data-act="test-delete">Delete result</button></div>' : ''}
-    </form>
-    <section class="card" data-section="How you're doing">
-      <div class="card-head"><h2>How you're doing</h2></div>
-      ${types.length ? types.map(([t, l]) => { const s = testSummary(l); return `<div class="tsum">
-        <div><b>${TEST_TYPES[t]}</b><span>${escapeHtml(summaryLine('', s).replace(/^: /, ''))}${s.mins != null ? ` · ${Math.round(s.mins)} min avg` : ''}</span></div>
-        ${s.metrics.length > 1 ? sparkHtml(s.metrics) : ''}</div>`; }).join('') : '<p class="muted pad small">Log your first test to see averages and trends per type.</p>'}
-    </section>
-    <section class="card" data-section="Capability Radar">
-      <div class="card-head"><h2>Capability Radar evidence</h2></div>
-      ${ev.length ? ev.map((e) => `<div class="rev"><b>${escapeHtml(e.name)}</b>${e.lines.map((l) => `<span>${escapeHtml(l)}</span>`).join('')}</div>`).join('') +
-        `<button class="btn full" data-act="tests-export">Copy for Capability Radar</button>
-        <p class="help center">Paste it into Claude with <b>/capability-radar</b>. Claude proposes score changes from this evidence before saving anything.</p>`
-        : '<p class="muted pad small">Results feed the radar dimensions they test: numerical → finance knowledge, attention to detail and composure under pressure; verbal → writing; logical and situational judgement → judgement.</p>'}
-    </section>
-    ${list.length ? `<section class="card" data-section="History"><div class="card-head"><h2>History</h2><span class="hint">${list.length} logged</span></div>
-      ${list.map((t) => `<a class="crow" href="#/tests/${t.id}"><div class="ctext"><div class="n">${TEST_TYPES[t.type]}${t.provider ? ` · ${escapeHtml(t.provider)}` : ''}${t.mode === 'real' ? ` · <span class="tag">${escapeHtml(t.firm || 'Real')}${t.outcome ? ` ${t.outcome === 'pass' ? '✓' : t.outcome === 'fail' ? '✗' : '…'}` : ''}</span>` : ''}</div>
-        <div class="sub">${fmtShort(t.date)}${t.total ? ` · ${t.correct ?? '?'}/${t.total}` : ''}${t.pct != null ? ` · ${ordinal(t.pct)} pct` : ''}${t.mins != null ? ` · ${t.mins} min` : ''}${t.note ? ` · ${escapeHtml(t.note)}` : ''}</div></div><span class="chev">›</span></a>`).join('')}
-    </section>` : ''}`;
-}
-function saveTestForm(form) {
-  const f = new FormData(form);
-  const fields = Object.fromEntries(['date', 'type', 'provider', 'mode', 'firm', 'correct', 'total', 'pct', 'mins', 'outcome', 'note'].map((k) => [k, f.get(k)]));
-  if (fields.mode !== 'real') { fields.firm = ''; fields.outcome = ''; }
-  const x = normaliseTest({ ...fields, id: form.dataset.id || undefined, provider: String(fields.provider || '').trim(), note: String(fields.note || '').trim() });
-  if (x.correct != null && x.total && x.correct > x.total) { toast('Correct answers can’t be more than the total'); return; }
-  const i = state.tests.findIndex((t) => t.id === x.id);
-  let extra = '';
-  if (i >= 0) state.tests[i] = x;
-  else {
-    state.tests.push(x);
-    const cid = f.get('routine') || '';
-    state.testRoutine = cid || null;
-    if (cid) extra = logOnRoutine(cid, x.date);
-  }
-  state.lastTestType = x.type; state.lastTestProvider = x.provider;
-  save();
-  if (form.dataset.id) location.replace('#/tests'); else render();
-  toast(`${form.dataset.id ? 'Saved' : 'Logged'}${extra}`);
 }
 
 // ---------- Work Buddy (on Supabase) ----------
@@ -2974,9 +2046,6 @@ function buddyTabHtml() {
   const h = treeHistory(p), { cur } = h, streak = pactStreak(p);
   const prefs = state.buddy || { commitmentId: null };
   const share = (myProfile && myProfile.share_calendar) || 'off';
-  const days = Array.from({ length: 14 }, (_, i) => addDaysISO(today, i - 13));
-  const row = (m) => `<div class="bgrid-row"><span class="bname">${m.me ? 'You' : escapeHtml(m.name)}</span>${days.map((d) =>
-    `<i class="${m.days[d] ? 'on' : ''} ${d === today ? 'today' : ''}" title="${fmtShort(d)}"></i>`).join('')}</div>`;
   const grown = cur.state === 'fruit';
   const labels = `<div class="gd-label" data-anchor="tree"><b>${cur.state === 'wilted' ? 'Wilting' : TREE_STAGES[cur.good]}</b><small>Day ${cur.good} of ${TREE_DAYS}</small></div>
     <div class="gd-label small" data-anchor="box"><b>${grown ? cur.fruit.name : 'Mystery fruit'}</b><small>${grown ? 'revealed' : '? ? ?'}</small></div>`;
@@ -2988,7 +2057,6 @@ function buddyTabHtml() {
     <p class="gd-say ${cur.state}">${gardenSay(h)}${!others.length ? ` ${p.invited.length ? `Waiting for ${escapeHtml(p.invited.join(' & '))} to accept; until then your own days grow it.` : 'Invite your buddy below.'}` : ''}</p>
     ${gardenTasksHtml(p, me, others)}
     ${gardenYardHtml(h.yard, three)}
-    <section class="gd-card" data-section="Last 14 days"><div class="card-head"><h2>Last 14 days</h2></div><div class="bgrid">${row(me)}${others.map(row).join('')}</div></section>
     <details class="gd-card" data-section="Settings" ${others.length || p.invited.length ? '' : 'open'}>
       <summary><h2>Invite & settings</h2></summary>
       <form class="inline binvite" data-form="buddy-email"><input name="email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="Invite by Gmail, e.g. han@gmail.com"><button class="btn primary" type="submit">Invite</button></form>
@@ -3033,10 +2101,6 @@ window.addEventListener('resize', () => layoutGarden());
 // Pinned notes show in My plan and on Today with a tick box.
 // Note: { id, text, color, x (0–1), y, w, h (free view), cy (calendar view), rot, date, endDate, time, done }.
 const NOTE_COLORS = { gold: '#fff1a6', salmon: '#ffd5cc', sky: '#d3ecf8', mint: '#d5f5d1', lilac: '#e7ddfb' };
-const NOTE_W = 128, NOTE_H = 96, BOARD_HEAD = 46, BOARD_COLS = 8;
-let editingNote = null; // note being written in
-let boardCal = false, boardWeek = null;
-try { boardCal = localStorage.getItem('boardCal') === '1'; } catch {}
 const isoOk = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : null);
 function normaliseNote(n) {
   const date = isoOk(n.date);
@@ -3050,183 +2114,10 @@ function normaliseNote(n) {
     date, endDate: end, time: validTime(n.time), done: !!n.done, created: n.created || todayISO(),
   };
 }
-function calNav(on) {
-  const a = (href, key, label) => `<a href="${href}" class="${on === key ? 'on' : ''}" ${on === key ? 'aria-current="page"' : ''}>${label}</a>`;
-  return `<nav class="subnav">${a('#/cal', 'cal', 'Calendar')}${a('#/board', 'board', 'Whiteboard')}</nav>`;
-}
 const shortDay = (iso) => (iso === todayISO() ? 'Today' : daysUntil(iso) === 1 ? 'Tomorrow'
   : fmtDay(parseISO(iso), { weekday: 'short', day: 'numeric', ...(Math.abs(daysUntil(iso)) > 6 ? { month: 'short' } : {}) }));
-const noteDateLabel = (n) => (n.date ? `${shortDay(n.date)}${n.endDate ? ` to ${shortDay(n.endDate)}` : ''}${n.time ? ` ${n.time}` : ''}` : '');
-const noteDays = (n) => (n.endDate ? Math.round((parseISO(n.endDate) - parseISO(n.date)) / 864e5) + 1 : 1);
-// A whole push pin, leaning a little: round head, collar and needle.
-const PIN_SVG = `<svg class="pin" viewBox="0 0 30 40" aria-hidden="true"><g transform="rotate(24 15 14)">
-  <path d="M15 21 L15 37" stroke="#9aa3ab" stroke-width="1.8" stroke-linecap="round"/>
-  <path d="M10.5 17.5 h9 l-1.6 4 h-5.8 z" fill="#b8352a"/>
-  <ellipse cx="15" cy="11" rx="8.5" ry="8.2" fill="#e2483a"/>
-  <ellipse cx="15" cy="13.5" rx="8.5" ry="5.8" fill="#c73a2e" opacity=".55"/>
-  <ellipse cx="12.2" cy="8" rx="3.2" ry="2.3" fill="#fff" opacity=".55"/></g></svg>`;
 
-function noteInner(n) {
-  const editing = editingNote === n.id;
-  return `${PIN_SVG}
-    ${editing
-      ? `<textarea class="note-text" data-note-text="${n.id}" maxlength="400" placeholder="What's on your mind?">${escapeHtml(n.text)}</textarea>
-         <div class="note-colors">${Object.keys(NOTE_COLORS).map((c) => `<button class="nc c-${c} ${c === n.color ? 'on' : ''}" data-act="note-color" data-id="${n.id}" data-color="${c}" aria-label="${c}"></button>`).join('')}
-           <button class="note-ok" data-act="note-close">Done</button></div>`
-      : `<div class="note-body">${n.text ? linkify(escapeHtml(n.text)) : '<span class="muted">Empty note</span>'}</div>`}
-    <div class="note-foot">
-      <button class="note-date ${n.date ? 'on' : ''}" data-act="note-date" data-id="${n.id}" title="Pin to calendar">${n.date ? noteDateLabel(n) : '📅'}</button>
-      ${n.date ? `<button class="note-tick ${n.done ? 'on' : ''}" data-act="note-done" data-id="${n.id}" aria-label="Done" aria-pressed="${n.done}">${n.done ? CHECK : ''}</button>` : ''}
-      <button class="note-task" data-act="note-task" data-id="${n.id}" title="Turn into a task">→ Task</button>
-      <button class="note-x" data-act="note-delete" data-id="${n.id}" aria-label="Delete note">×</button>
-    </div>
-    <span class="note-resize" data-resize="${n.id}" aria-hidden="true"></span>`;
-}
-const noteClass = (n) => `note c-${n.color} ${n.done ? 'done' : ''} ${editingNote === n.id ? 'editing' : ''}`;
 
-function boardFreeHtml(notes) {
-  const height = Math.max(480, ...notes.map((n) => n.y + (n.h || NOTE_H + 60) + 160));
-  const days = Array.from({ length: 7 }, (_, i) => addDaysISO(todayISO(), i));
-  return `
-    <div class="board-days" aria-label="Drop a note on a day to pin it">
-      ${days.map((d) => `<div class="bday ${d === todayISO() ? 'today' : ''}" data-drop-date="${d}"><span>${d === todayISO() ? 'Today' : DAY_NAMES[dayIndexOf(d)].slice(0, 3)}</span><b>${parseISO(d).getDate()}</b></div>`).join('')}
-      <div class="bday pick" data-drop-date="pick"><span>Other</span><b>…</b></div>
-    </div>
-    <div class="board" data-mode="free" style="height:${height}px">
-      ${notes.length ? '' : '<p class="board-empty">Jot down anything that pops into your head.<br>Drag a note onto a day above to pin it to your calendar.</p>'}
-      ${notes.map((n) => `<div class="${noteClass(n)}" data-note="${n.id}"
-        style="left:${(n.x * 100).toFixed(2)}%;top:${n.y}px;width:${n.w || NOTE_W}px;${n.h ? `min-height:${n.h}px;` : ''}--rot:${n.rot}deg">${noteInner(n)}</div>`).join('')}
-    </div>`;
-}
-// Calendar view: your week's schedule as a time grid (faint blocks), with notes on top. A note's
-// column is its date and its height on the grid is its time; notes in the "Anytime" band have no time.
-const B_HPX = 52;
-function boardCalHtml(notes) {
-  const wk = boardWeek || currentWeekKey();
-  const days = DAY_NAMES.map((_, i) => isoDate(dayDate(wk, i)));
-  const first = days[0], last = days[6];
-  const col = 100 / BOARD_COLS;
-  const w = getWeek(wk);
-  const events = w ? itemsOf(w, 'once').filter(([, it]) => days.includes(it.date)) : [];
-  const timed = events.filter(([, it]) => it.time);
-  const allDay = events.filter(([, it]) => !it.time);
-  const mins = (t) => toMinutes(t);
-  const noteMins = notes.filter((n) => n.time).map((n) => mins(n.time));
-  const startHour = Math.min(8, ...timed.map(([, it]) => Math.floor(mins(it.time) / 60)), ...noteMins.map((m) => Math.floor(m / 60)));
-  const endHour = Math.max(22, ...timed.map(([, it]) => Math.ceil((it.endTime ? mins(it.endTime) : mins(it.time) + 60) / 60)), ...noteMins.map((m) => Math.ceil(m / 60) + 1));
-  const placed = [];
-  let elsewhere = 0;
-  for (const n of notes) {
-    let c0 = 0, span = 1, cut = '';
-    if (n.date) {
-      const end = n.endDate || n.date;
-      if (end < first || n.date > last) { elsewhere++; continue; }
-      const st = n.date < first ? first : n.date, e = end > last ? last : end;
-      c0 = 1 + dayIndexOf(st);
-      span = dayIndexOf(e) - dayIndexOf(st) + 1;
-      cut = `${n.date < first ? 'cut-l' : ''} ${end > last ? 'cut-r' : ''}`;
-    }
-    placed.push({ n, c0, span, cut, lane: !n.date ? 'unpinned' : n.time ? 'timed' : 'anytime' });
-  }
-  placed.sort((x, y) => (x.n.time || '').localeCompare(y.n.time || ''));
-  const isThis = wk === currentWeekKey();
-  const evHtml = timed.map(([id, it]) => {
-    const s0 = mins(it.time), e0 = it.endTime && mins(it.endTime) > s0 ? mins(it.endTime) : s0 + Math.max(30, Math.round((it.hours || 1) * 60));
-    return `<div class="bev ${it.schedule ? 'sched' : ''}" data-ev-min="${s0 - startHour * 60}" data-ev-len="${e0 - s0}" title="${escapeHtml(`${it.name} · ${it.time}${it.endTime ? '–' + it.endTime : ''}`)}"
-      style="--ev:${eventColor(id)};left:calc(${((1 + dayIndexOf(it.date)) * col).toFixed(3)}% + 3px);width:calc(${col.toFixed(3)}% - 6px)">
-      <b>${escapeHtml(it.name)}</b><span>${it.time}${it.endTime ? `–${it.endTime}` : ''}</span></div>`;
-  }).join('');
-  return `
-    <div class="board-week">
-      <button class="icon-btn" data-act="board-prev" aria-label="Previous week">‹</button>
-      ${isThis ? `<b class="board-range">${weekRange(wk)}</b>` : `<button class="txt-btn" data-act="board-this">${weekRange(wk)} · back to this week</button>`}
-      <button class="icon-btn" data-act="board-next" aria-label="Next week">›</button>
-      ${elsewhere ? `<span class="hint">${elsewhere} pinned in other weeks</span>` : ''}
-    </div>
-    <div class="board-scroll"><div class="board cal" data-mode="cal" data-week="${wk}" data-start-hour="${startHour}" data-end-hour="${endHour}">
-      <div class="bcols">${['Not pinned', ...days].map((d, i) => `<div class="bcol ${i === 0 ? 'unpinned' : ''} ${d === todayISO() ? 'today' : ''}">
-        <div class="bcol-head">${i === 0 ? '<span>Not pinned</span>' : `<span>${DAY_NAMES[i - 1].slice(0, 3)}</span><b>${parseISO(d).getDate()}</b>`}</div></div>`).join('')}</div>
-      <div class="bband"><span>Anytime</span></div>
-      <div class="bhours">${Array.from({ length: endHour - startHour }, (_, i) => `<div class="bhour" data-h="${i}"><span>${pad(startHour + i)}:00</span></div>`).join('')}</div>
-      ${allDay.map(([id, it]) => `<div class="bev allday ${it.schedule ? 'sched' : ''}" data-allday="${1 + dayIndexOf(it.date)}" style="--ev:${eventColor(id)};left:calc(${((1 + dayIndexOf(it.date)) * col).toFixed(3)}% + 3px);width:calc(${col.toFixed(3)}% - 6px)"><b>${escapeHtml(it.name)}</b></div>`).join('')}
-      ${evHtml}
-      ${placed.map(({ n, c0, span, cut, lane }) => `<div class="${noteClass(n)} in-cal ${cut}" data-note="${n.id}" data-c0="${c0}" data-span="${span}" data-lane="${lane}" ${n.time ? `data-min="${mins(n.time) - startHour * 60}"` : ''}
-        style="left:calc(${(c0 * col).toFixed(3)}% + 5px);width:calc(${(span * col).toFixed(3)}% - 10px);${n.h ? `min-height:${Math.min(n.h, 160)}px;` : ''}--rot:0deg">${noteInner(n)}</div>`).join('')}
-    </div></div>`;
-}
-function boardPageHtml() {
-  const notes = state.notes;
-  const pinned = notes.filter((n) => n.date && !n.done).length;
-  const doneCount = notes.filter((n) => n.done).length;
-  return `
-    <header class="top">${topBar({ label: 'Calendar', title: 'Whiteboard', right: menuBtn })}${calNav('board')}</header>
-    <section class="card board-card" data-section="Whiteboard">
-      <div class="board-tools">
-        <button class="btn primary" data-act="note-new">+ Note</button>
-        <div class="seg-mini"><button data-act="board-mode" data-v="free" class="${boardCal ? '' : 'on'}">Free</button><button data-act="board-mode" data-v="cal" class="${boardCal ? 'on' : ''}">Calendar</button></div>
-        <span class="hint">${notes.length ? `${notes.length} note${notes.length === 1 ? '' : 's'}${pinned ? ` · ${pinned} pinned` : ''}` : 'Tap + Note to start'}</span>
-        ${doneCount ? `<button class="txt-btn" data-act="note-clear">Clear ${doneCount} done</button>` : ''}
-      </div>
-      ${boardCal ? boardCalHtml(notes) : boardFreeHtml(notes)}
-    </section>`;
-}
-function addNote(extra = {}) {
-  const k = state.notes.length;
-  let base = { x: 0.03 + (k % 5) * 0.19, y: 14 + Math.floor(k / 5) * 150 + (k % 2) * 12 };
-  if (boardCal) {
-    // New notes go on today's column (or "Not pinned" when looking at another week).
-    const wk = boardWeek || currentWeekKey();
-    base = wk === currentWeekKey() ? { date: todayISO() } : {};
-  }
-  const n = normaliseNote({ text: '', color: Object.keys(NOTE_COLORS)[k % 5], rot: Math.round((Math.random() * 6 - 3) * 10) / 10, ...base, ...extra });
-  state.notes.push(n);
-  editingNote = n.id;
-  save();
-  render();
-  focusNote();
-  return n;
-}
-function focusNote() {
-  const ta = editingNote && $app.querySelector(`[data-note-text="${CSS.escape(editingNote)}"]`);
-  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
-}
-function closeNote() {
-  const n = state.notes.find((x) => x.id === editingNote);
-  editingNote = null;
-  if (n && !n.text.trim()) state.notes = state.notes.filter((x) => x !== n); // drop empty notes
-  save();
-  render();
-}
-function openNoteDate(id) {
-  const n = state.notes.find((x) => x.id === id);
-  if (!n) return;
-  const quick = [[todayISO(), 'Today'], [addDaysISO(todayISO(), 1), 'Tomorrow'], [addDaysISO(todayISO(), 7 - dayIndexOf(todayISO())), 'Next Monday']];
-  openSheet(`
-    <div class="sheet-head"><h3>Pin to calendar</h3></div>
-    <form class="form flat" data-form="note-date" data-id="${id}">
-      <p class="small muted">${escapeHtml(clip(n.text || 'Empty note', 80))}</p>
-      <div class="btn-row">${quick.map(([d, l]) => `<button type="button" class="btn" data-act="note-quick" data-date="${d}">${l}</button>`).join('')}</div>
-      <div class="f2"><label class="f">From<input type="date" name="date" value="${n.date || todayISO()}"></label>
-        <label class="f">Until (optional)<input type="date" name="endDate" value="${n.endDate || ''}"></label></div>
-      <label class="f">Time (optional)<input type="time" name="time" value="${n.time || ''}"></label>
-      <button class="btn primary" type="submit">Pin it</button>
-      ${n.date ? '<button type="button" class="btn" data-act="note-unpin">Unpin from calendar</button>' : ''}
-      <button type="button" class="btn" data-act="note-task" data-id="${id}">Turn into a task</button>
-    </form>`, { note: id });
-}
-function pinNote(id, date, time = null, endDate = undefined) {
-  const n = state.notes.find((x) => x.id === id);
-  if (!n) return;
-  const days = noteDays(n);
-  n.date = date;
-  n.endDate = !date ? null : endDate !== undefined ? (endDate && endDate > date ? endDate : null) : days > 1 ? addDaysISO(date, days - 1) : null;
-  n.time = date ? validTime(time) : null;
-  n.done = false;
-  save();
-  closeSheet();
-  render();
-  if (date) toast(`Pinned to ${noteDateLabel(n)}`);
-}
 // A note becomes a one-off task (Today only / the calendar) with the same date and time; the first
 // line is its name and the rest goes into "What to do". Without a date it becomes "Date to be confirmed".
 function noteToTask(id) {
@@ -3238,7 +2129,6 @@ function noteToTask(id) {
     hours: 0.5, timeUnit: 'min', notes, order: nextOrder() });
   state.commitments.push(normaliseCommitment(c));
   state.notes = state.notes.filter((x) => x !== n);
-  if (editingNote === id) editingNote = null;
   renumber();
   save();
   closeSheet();
@@ -3248,166 +2138,6 @@ function noteToTask(id) {
 // Notes pinned to a day, including ones lasting several days.
 const notesOn = (iso) => state.notes.filter((n) => n.date && n.date <= iso && iso <= (n.endDate || n.date))
   .sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
-// A pinned note as a small sticky in My plan / Today.
-function notePillHtml(n, d) {
-  const st = n.done ? 'done' : (n.endDate || n.date) < todayISO() ? 'missed' : 'pending';
-  const multi = n.endDate ? `<small class="dtime">${d === n.date ? 'starts' : d === n.endDate ? 'last day' : 'ongoing'}</small> ` : '';
-  return `<div class="dpill notepill c-${n.color} ${st}">
-    <button class="dbox" data-act="note-done" data-id="${n.id}" aria-label="Done" aria-pressed="${n.done}">${n.done ? CHECK : ''}</button>
-    <a class="dname" href="#/board">${n.time && d === n.date ? `<small class="dtime">${n.time}</small> ` : ''}${multi}${escapeHtml(n.text || 'Note')}</a></div>`;
-}
-
-// Calendar view layout (after drawing, using real heights): unpinned notes stack in the first column,
-// untimed notes and all-day events stack in the Anytime band, and the time grid starts below it.
-function layoutBoard() {
-  const board = $app.querySelector('.board.cal');
-  if (!board) return;
-  const GAP = 10;
-  const band = Array(BOARD_COLS).fill(BOARD_HEAD + 30);
-  for (const el of board.querySelectorAll('.bev.allday')) {
-    const c = Number(el.dataset.allday);
-    el.style.top = `${band[c]}px`;
-    band[c] += el.offsetHeight + 6;
-  }
-  for (const el of board.querySelectorAll('.note.in-cal[data-lane="anytime"]')) {
-    const c0 = Number(el.dataset.c0), span = Number(el.dataset.span);
-    const top = Math.max(...band.slice(c0, c0 + span));
-    el.style.top = `${top}px`;
-    for (let c = c0; c < c0 + span; c++) band[c] = top + el.offsetHeight + GAP + 8;
-  }
-  const gridTop = Math.max(BOARD_HEAD + 74, ...band.slice(1)) + 6;
-  board.dataset.gridTop = gridTop;
-  const bandEl = board.querySelector('.bband');
-  bandEl.style.top = `${BOARD_HEAD}px`;
-  bandEl.style.height = `${gridTop - BOARD_HEAD}px`;
-  const hours = board.querySelector('.bhours');
-  hours.style.top = `${gridTop}px`;
-  for (const el of board.querySelectorAll('.bev[data-ev-min]')) {
-    el.style.top = `${gridTop + (Number(el.dataset.evMin) / 60) * B_HPX}px`;
-    el.style.height = `${Math.max(20, (Number(el.dataset.evLen) / 60) * B_HPX - 3)}px`;
-  }
-  // Timed notes sit at their time; ones that would overlap in the same column step down.
-  const lastBottom = Array(BOARD_COLS).fill(0);
-  for (const el of board.querySelectorAll('.note.in-cal[data-lane="timed"]')) {
-    const c0 = Number(el.dataset.c0), span = Number(el.dataset.span);
-    let top = gridTop + (Number(el.dataset.min) / 60) * B_HPX;
-    top = Math.max(top, ...lastBottom.slice(c0, c0 + span));
-    el.style.top = `${top}px`;
-    for (let c = c0; c < c0 + span; c++) lastBottom[c] = top + el.offsetHeight + 4;
-  }
-  let un = BOARD_HEAD + 30;
-  for (const el of board.querySelectorAll('.note.in-cal[data-lane="unpinned"]')) { el.style.top = `${un}px`; un += el.offsetHeight + GAP + 8; }
-  const gridBottom = gridTop + hours.offsetHeight;
-  board.style.height = `${Math.max(gridBottom + 40, un + 40, ...lastBottom.map((b) => b + 40))}px`;
-}
-// While dragging in the calendar view, the note shows the time it would get.
-function whenAt(board, top) {
-  const gridTop = Number(board.dataset.gridTop);
-  if (top + 8 < gridTop) return 'Anytime';
-  return fmtTime(Number(board.dataset.startHour) * 60 + Math.round(((top - gridTop) / B_HPX) * 4) * 15);
-}
-// Dragging: move a note with the pointer (drop on a day or a calendar column to pin it), or drag
-// its corner / right edge to resize it. A tap without moving starts writing.
-let noteDrag = null, noteTapAt = 0;
-document.addEventListener('pointerdown', (e) => {
-  const el = e.target.closest('.note');
-  if (!el || e.button > 0) return;
-  const resize = e.target.closest('[data-resize]');
-  if (!resize && e.target.closest('button, textarea, a')) return;
-  const board = el.closest('.board');
-  const r = el.getBoundingClientRect();
-  noteDrag = { el, id: el.dataset.note, board, cal: board.dataset.mode === 'cal', resize: !!resize, dx: e.clientX - r.left, dy: e.clientY - r.top,
-    w0: el.offsetWidth, h0: el.offsetHeight, sx: e.clientX, sy: e.clientY, moved: false };
-  el.setPointerCapture(e.pointerId);
-  e.preventDefault();
-});
-document.addEventListener('pointermove', (e) => {
-  const d = noteDrag;
-  if (!d) return;
-  if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 6) return;
-  if (!d.moved) { d.moved = true; d.el.classList.add(d.resize ? 'resizing' : 'dragging'); }
-  const br = d.board.getBoundingClientRect();
-  if (d.resize) {
-    d.el.style.width = `${Math.max(90, d.w0 + e.clientX - d.sx)}px`;
-    if (!d.cal) d.el.style.minHeight = `${Math.max(70, d.h0 + e.clientY - d.sy)}px`;
-    return;
-  }
-  d.el.style.left = `${Math.min(br.width - 40, Math.max(0, e.clientX - br.left - d.dx))}px`;
-  d.el.style.top = `${Math.max(d.cal ? BOARD_HEAD + 4 : 0, e.clientY - br.top - d.dy)}px`;
-  if (d.cal) d.el.dataset.when = whenAt(d.board, parseFloat(d.el.style.top));
-  const over = document.elementsFromPoint(e.clientX, e.clientY).find((x) => x.dataset && x.dataset.dropDate);
-  $app.querySelectorAll('.bday.over').forEach((x) => x !== over && x.classList.remove('over'));
-  if (over) over.classList.add('over');
-});
-document.addEventListener('pointerup', (e) => {
-  const d = noteDrag;
-  noteDrag = null;
-  if (!d) return;
-  const n = state.notes.find((x) => x.id === d.id);
-  if (!n) return;
-  if (!d.moved) {
-    if (!d.resize && editingNote !== n.id) { noteTapAt = Date.now(); editingNote = n.id; render(); focusNote(); }
-    return;
-  }
-  const br = d.board.getBoundingClientRect();
-  const colW = br.width / BOARD_COLS;
-  if (d.cal) {
-    const wk = d.board.dataset.week;
-    if (d.resize) {
-      // Width in whole days; a note can't stretch past the week shown.
-      if (n.date) {
-        const startCol = Math.max(0, dayIndexOf(n.date < wk ? wk : n.date));
-        const days = Math.max(1, Math.min(7 - startCol, Math.round(parseFloat(d.el.style.width) / colW)));
-        const endIso = addDaysISO(n.date < wk ? wk : n.date, days - 1);
-        n.endDate = endIso > n.date ? endIso : null;
-      }
-    } else {
-      const left = parseFloat(d.el.style.left);
-      const c = Math.max(0, Math.min(BOARD_COLS - 1, Math.floor((left + colW * 0.4) / colW)));
-      if (c === 0) { n.date = null; n.endDate = null; n.time = null; }
-      else {
-        const days = noteDays(n);
-        n.date = addDaysISO(wk, c - 1);
-        n.endDate = days > 1 ? addDaysISO(n.date, days - 1) : null;
-        const gridTop = Number(d.board.dataset.gridTop), top = parseFloat(d.el.style.top);
-        if (top + 8 < gridTop) n.time = null;
-        else {
-          const m = Number(d.board.dataset.startHour) * 60 + Math.round(((top - gridTop) / B_HPX) * 4) * 15;
-          n.time = fmtTime(Math.min(23 * 60 + 45, Math.max(0, m)));
-        }
-      }
-    }
-    save(); render();
-    return;
-  }
-  if (d.resize) {
-    n.w = Math.round(parseFloat(d.el.style.width));
-    n.h = Math.round(parseFloat(d.el.style.minHeight));
-    save(); render();
-    return;
-  }
-  const over = document.elementsFromPoint(e.clientX, e.clientY).find((x) => x.dataset && x.dataset.dropDate);
-  if (over) {
-    if (over.dataset.dropDate === 'pick') { render(); openNoteDate(n.id); } else pinNote(n.id, over.dataset.dropDate, n.time);
-    return;
-  }
-  n.x = Math.min(0.95, Math.max(0, parseFloat(d.el.style.left) / br.width));
-  n.y = Math.max(0, Math.round(parseFloat(d.el.style.top)));
-  save();
-  render();
-});
-document.addEventListener('pointercancel', () => { if (noteDrag) { noteDrag = null; render(); } });
-document.addEventListener('dblclick', (e) => {
-  const board = e.target.closest('.board');
-  if (!board || e.target.closest('.note')) return;
-  const br = board.getBoundingClientRect();
-  if (board.dataset.mode === 'cal') {
-    const c = Math.floor((e.clientX - br.left) / (br.width / BOARD_COLS));
-    const y = e.clientY - br.top, gridTop = Number(board.dataset.gridTop);
-    const time = y < gridTop ? null : fmtTime(Number(board.dataset.startHour) * 60 + Math.floor(((y - gridTop) / B_HPX) * 4) * 15);
-    addNote({ date: c > 0 ? addDaysISO(board.dataset.week, c - 1) : null, time: c > 0 ? time : null });
-  } else addNote({ x: Math.max(0, (e.clientX - br.left - 60) / br.width), y: Math.max(0, Math.round(e.clientY - br.top - 20)) });
-});
 
 // ---------- Commitment detail page ----------
 function weekKeyFor(c) { return c.freq === 'once' && c.date ? weekOf(c.date) : currentWeekKey(); }
@@ -3434,7 +2164,7 @@ function detailPageHtml(id) {
   const c = state.commitments.find((x) => x.id === id);
   if (c && c.schedule) return scheduleDetailHtml(c);
   if (!c) return `<header class="top">${topBar({ left: '<button class="icon-btn" data-act="back">‹</button>', title: 'Not found' })}</header>
-    <section class="card empty"><p>This commitment no longer exists.</p><a class="btn" href="#/commitments">All commitments</a></section>`;
+    <section class="card empty"><p>This commitment no longer exists.</p><a class="btn" href="#/plan">This week</a></section>`;
   const wk = weekKeyFor(c);
   const w = c.archived ? state.weeks[wk] : getWeek(wk, true);
   const it = w && w.items[id];
@@ -3502,10 +2232,9 @@ function detailPageHtml(id) {
     </header>
     ${stageCard}
     ${progress ? `<section class="card">${progress}</section>` : ''}
-    ${treesForCommitment(id) ? `<section class="card"><div class="card-head"><h2>Knowledge</h2></div>${treesForCommitment(id)}</section>` : ''}
     <section class="card">
       <div class="card-head"><h2>What to do</h2></div>
-      ${c.notes ? `<div class="notes">${linkify(c.notes)}</div>` : `<p class="muted small pad">Nothing yet. Tap <a href="#/c/${id}/edit">Edit</a> to add what to do, resource links and your Notion page.</p>`}
+      ${c.notes ? `<div class="notes">${linkify(c.notes)}</div>` : `<p class="muted small pad">Nothing yet. Tap <a href="#/c/${id}/edit">Edit</a> to add what to do and any links.</p>`}
       ${links.length ? `<div class="links">${links.join('')}</div>` : ''}
     </section>
     ${past ? `<section class="card"><div class="card-head"><h2>Previous weeks</h2></div>${past}</section>` : ''}`;
@@ -3524,6 +2253,7 @@ function editPageHtml() {
     <div class="linkrow"><input name="linkLabel" placeholder="Label (e.g. Course website)" value="${escapeHtml(l.label)}">
       <input name="linkUrl" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="https://…" value="${escapeHtml(l.url)}">
       <button type="button" class="mini-btn" data-act="rmlink" aria-label="Remove link">×</button></div>`;
+  const allLinks = [...(c.notionUrl ? [{ label: 'Notion page', url: c.notionUrl }] : []), ...c.links];
   return `
     <header class="top">
       ${topBar({
@@ -3536,7 +2266,6 @@ function editPageHtml() {
     <form id="cform" class="card form" data-form="commitment" data-id="${isNew ? '' : c.id}"
       data-freq="${c.freq}" data-kind="${c.kind}" data-hourunit="${isHourUnit(c.unit)}" data-tbc="${!!c.tbc}" data-unit="${c.timeUnit === 'min' ? 'min' : 'h'}">
       <label class="f">Name<input name="name" required value="${escapeHtml(c.name)}" placeholder="e.g. Practice questions"></label>
-      <label class="f">Section<input name="section" list="sections" value="${escapeHtml(c.section === 'Other' && isNew ? '' : c.section)}" placeholder="e.g. Career prep"></label>
       <div class="f">How often<div class="seg seg4">${radio('freq', 'daily', 'Daily', c.freq)}${radio('freq', 'weekly', 'Weekly', c.freq)}${radio('freq', 'periodic', 'Periodic', c.freq)}${radio('freq', 'once', 'One-off', c.freq)}</div></div>
       <div class="f only-periodic"><span>Repeat every</span>
         <div class="time-row">
@@ -3553,6 +2282,9 @@ function editPageHtml() {
         <label class="f">End time<input type="time" name="endTime" value="${c.endTime || ''}"></label>
       </div>
       ${c.source ? '<p class="help">📅 Synced from your calendar: date, time and name will follow the calendar.</p>' : ''}
+      <details class="more" ${c.kind === 'counter' || (!isNew && (c.notes || allLinks.length || c.stage)) ? 'open' : ''}>
+        <summary>More options</summary>
+      <label class="f">Section<input name="section" list="sections" value="${escapeHtml(c.section === 'Other' && isNew ? '' : c.section)}" placeholder="e.g. Career prep"></label>
       <div class="f kind-field">Type<div class="seg">${radio('kind', 'task', 'Task', c.kind)}${radio('kind', 'counter', 'Counter', c.kind)}</div>
         <span class="help only-task">Done or not done, e.g. a lecture, seminar, coffee chat or study block.</span>
         <span class="help only-counter">Count towards a number, e.g. send 3 emails or log 15 hours.</span></div>
@@ -3570,9 +2302,9 @@ function editPageHtml() {
         <span class="help">With “Record focus time” the task gets a ▶ button: run a stopwatch or a countdown and the minutes are saved on its day.</span></div>
       <label class="f">What to do<textarea name="notes" rows="5" placeholder="Steps, chapter you're on, checklist…">${escapeHtml(c.notes)}</textarea></label>
       ${c.stage ? `<label class="f">Test / interview link<input name="stageUrl" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(c.stageUrl || '')}" placeholder="HireVue invite, test portal, Zoom…"></label>` : ''}
-      <label class="f">Notion page<input name="notionUrl" inputmode="url" autocapitalize="off" autocorrect="off" value="${escapeHtml(c.notionUrl)}" placeholder="https://www.notion.so/…"></label>
-      <div class="f">Links<div class="linklist">${(c.links.length ? c.links : [undefined]).map(linkRow).join('')}</div>
+      <div class="f">Links<div class="linklist">${(allLinks.length ? allLinks : [undefined]).map(linkRow).join('')}</div>
         <button type="button" class="mini-btn add-link" data-act="addlink">+ Add link</button></div>
+      </details>
       <button class="btn primary" type="submit">Save</button>
       ${isNew ? '' : `<div class="danger">
         ${c.archived ? '<button type="button" class="btn" data-act="restore-one">Restore</button>' : '<button type="button" class="btn" data-act="archive-one">Archive</button>'}
@@ -3603,10 +2335,13 @@ function saveCommitmentForm(form) {
     hours: kind === 'counter' && isHourUnit(unit) ? target : (f.get('timeUnit') === 'min' ? num(f.get('hours')) / 60 : num(f.get('hours'))),
     notes: String(f.get('notes') || '').trim(),
     track: f.get('track') === 'yes',
-    notionUrl: cleanUrl(f.get('notionUrl')),
     ...(f.has('stageUrl') ? { stageUrl: cleanUrl(f.get('stageUrl')) } : {}),
-    links: f.getAll('linkUrl').map((u, i) => ({ label: String(f.getAll('linkLabel')[i] || '').trim(), url: cleanUrl(u) })).filter((l) => l.url),
   };
+  // a Notion link among the links is kept as the task's Notion page (it gets its own button)
+  const links = f.getAll('linkUrl').map((u, i) => ({ label: String(f.getAll('linkLabel')[i] || '').trim(), url: cleanUrl(u) })).filter((l) => l.url);
+  const notion = links.findIndex((l) => /^https:\/\/([\w-]+\.)?notion\.(so|site|com)\//i.test(l.url));
+  fields.notionUrl = notion < 0 ? '' : links.splice(notion, 1)[0].url;
+  fields.links = links;
   let c = state.commitments.find((x) => x.id === form.dataset.id);
   if (c) {
     if (c.freq === 'once' && fields.freq === 'once') moveOnceItem(c.id, c.date, fields.date);
@@ -3957,7 +2692,7 @@ function calendarPageHtml() {
       </div>
       <datalist id="sections">${sectionNames().map((s) => `<option value="${escapeHtml(s)}">`).join('')}</datalist>
       <button class="btn primary" type="submit">Connect</button>
-      <p class="help">🔒 The link is stored only on this phone (and in your JSON backups). Anyone with it can read that calendar, so treat it like a password.</p>
+      <p class="help">🔒 The link is stored only on this phone. Anyone with it can read that calendar, so treat it like a password.</p>
     </form>
     <section class="card howto">
       <div class="card-head"><h2>Where to find the link</h2></div>
@@ -4284,7 +3019,7 @@ function applyRecord(k, p) {
     if (i >= 0) state.commitments[i] = c; else state.commitments.push(c);
   } else if (type === 't' || type === 'x' || type === 'n') {
     const list = type === 't' ? state.trees : type === 'x' ? state.tests : state.notes;
-    const v = type === 't' ? normaliseTree(p) : type === 'x' ? normaliseTest(p) : normaliseNote(p);
+    const v = type === 'n' ? normaliseNote(p) : p; // tree and test records are only kept
     const i = list.findIndex((x) => x.id === v.id);
     if (i >= 0) list[i] = v; else list.push(v);
   } else if (type === 'b') {
@@ -4633,7 +3368,7 @@ function accountPageHtml() {
   return head + `
     <section class="card signin-card" data-section="Sign in">
       <h2>Sign in to I Commit!</h2>
-      <p class="small muted">Keep your routines, notes and Work Buddy in your Google account, the same on your iPhone, Mac and any browser.</p>
+      <p class="small muted">Keep your routines, notes and Our Tree in your Google account, the same on your iPhone, Mac and any browser.</p>
       ${loginWait ? `<p class="pad"><b>Finish signing in in the Google window…</b><br><span class="small muted">This page continues by itself once you've picked your account.</span></p>
         <button class="btn full" data-act="google-cancel">Cancel</button>`
         : `<button class="btn gbtn full" data-act="google-signin" ${cfg && !cfg.error ? '' : 'disabled'}><span class="glogo">G</span>Continue with Google</button>
@@ -4915,10 +3650,8 @@ function notifyPageHtml() {
 
 // ---------- Gallery (projects) ----------
 // Longer pieces of work (a consulting project, an internship, a society event) with their own
-// page: links to Notion and Drive/OneDrive, a week-by-week timeline of steps and meetings, and a
-// task board (Brainstorm: cards anywhere, linked to each other; Sort: put them in order and turn
-// them into tasks). Stored in Supabase (supabase/projects.sql). Meetings and step deadlines show on
-// the calendar and on Today.
+// page: links, and a week-by-week timeline of steps and meetings. Stored in Supabase
+// (supabase/projects.sql). Meetings and step deadlines show on This week and the calendar.
 // Colours: [dark text, light fill, mid, soft]
 const PROJ_COLORS = {
   blue: ['#0C447C', '#E6F1FB', '#185FA5', '#B5D4F4'], purple: ['#3C3489', '#EEEDFE', '#534AB7', '#CECBF6'],
@@ -4926,7 +3659,6 @@ const PROJ_COLORS = {
   pink: ['#72243E', '#FBEAF0', '#993556', '#F4C0D1'], amber: ['#633806', '#FAEEDA', '#854F0B', '#FAC775'],
   green: ['#27500A', '#EAF3DE', '#3B6D11', '#C0DD97'], gray: ['#444441', '#F1EFE8', '#5F5E5A', '#D3D1C7'],
 };
-const CARD_COLORS = ['amber', 'coral', 'teal', 'purple', 'blue'];
 const MEETING_KINDS = { kickoff: 'Kick-off', checkin: 'Check-in', mid: 'Mid-project', final: 'Final', other: 'Other' };
 let projects = null;                 // [{ ...project, steps, meetings }] once loaded
 const projBoards = new Map();        // project id -> { cards, links }
@@ -4992,10 +3724,6 @@ async function loadProjects() {
   }
   scheduleOutbound();
   if (['gallery', 'cal', 'today'].includes(route.tab) && !formOpen() && !sheetCtx && !typing()) render();
-}
-async function loadBoard(id) {
-  try { projBoards.set(id, await projDb.board(id)); } catch (e) { toast(sbErr(e)); return; }
-  if (route.page === 'project' && route.projId === id && !typing()) render();
 }
 const projById = (id) => (projects || []).find((p) => p.id === id);
 // Any '#rrggbb' colour works too: darker for text, paler for fills, and white or dark text on top.
@@ -5182,23 +3910,6 @@ function projectItemsOn(iso) {
   }
   return out.sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
 }
-function projPillHtml(x) {
-  const [ink, fill, mid] = pcol(x.p);
-  const icon = x.kind === 'due' ? '⚑' : x.kind === 'final' ? '★' : '▲';
-  return `<a class="dpill projpill" href="#/gallery/${x.p.id}" style="--pc:${mid};background:${fill};color:${ink}">
-    <span class="pp-ic">${icon}</span><span class="dname">${x.time ? `<small class="dtime">${x.time}</small> ` : ''}${escapeHtml(x.title)}<small class="pp-name"> · ${escapeHtml(x.p.name)}</small></span></a>`;
-}
-// The final presentation (or any "final" meeting) in the next 7 days, for Today.
-function projectTodayLine() {
-  let best = null;
-  for (const p of projects || []) for (const m of p.meetings) {
-    if (m.kind !== 'final' || noTime(p)) continue;
-    const d = meetingDate(p, m), n = daysUntil(d);
-    if (n >= 0 && n <= 7 && (!best || n < best.n)) best = { p, m, n };
-  }
-  if (!best) return '';
-  return `<div class="pace"><a href="#/gallery/${best.p.id}">★ ${escapeHtml(best.m.title)} · ${escapeHtml(best.p.name)} · ${best.n === 0 ? 'today' : best.n === 1 ? 'tomorrow' : `in ${best.n} days`} ›</a></div>`;
-}
 
 // ---- pages
 const gallerySignIn = (head) => head + `<section class="card banner-card"><b>${state.account ? 'One more Google sign-in' : 'Sign in with Google to use the Gallery'}</b>
@@ -5214,7 +3925,7 @@ function galleryHtml() {
   }
   if (!projects.length) {
     return head + `<section class="card empty"><p><b>Start your first project</b></p>
-      <p class="small muted">A project page keeps its Notion and Drive links, a week-by-week timeline and a task board in one place.</p>
+      <p class="small muted">A project page keeps its links and a week-by-week timeline in one place.</p>
       <a class="btn primary" href="#/gallery/new">Create project</a></section>`;
   }
   return head + `<div class="pgallery">${projects.map((p) => {
@@ -5226,7 +3937,7 @@ function galleryHtml() {
         ${now ? `<i style="width:${Math.round((now / p.weeks) * 100)}%;background:${mid}"></i>` : ''}</div>
       <div class="pg-body"><b>${escapeHtml(p.name)}</b><span>${projStatus(p)}</span>
         ${next ? `<span class="pg-next" style="color:${ink}">Next: ${escapeHtml(next.m.title)} · ${fmtShort(next.d)}</span>` : ''}
-        <div class="pg-icons">${p.notion_url ? '<span title="Notion">N</span>' : ''}${p.files.length ? `<span>${p.files.length} ${p.files.length === 1 ? 'file' : 'files'}</span>` : ''}<span>${p.steps.length} steps</span>${p.refs.length ? `<span>${p.refs.length} refs</span>` : ''}</div></div></a>`;
+        <div class="pg-icons">${p.notion_url ? '<span title="Notion">N</span>' : ''}<span>${p.steps.length} steps</span>${p.files.length + p.refs.length ? `<span>${p.files.length + p.refs.length} link${p.files.length + p.refs.length === 1 ? '' : 's'}</span>` : ''}</div></div></a>`;
   }).join('')}</div>`;
 }
 
@@ -5255,24 +3966,20 @@ function linkService(u) {
   return h;
 }
 // Files (Drive, OneDrive, decks…) and References (articles, reports…): the same kind of list.
-const LINK_LISTS = {
-  file: { section: 'Files', placeholder: 'Paste a Drive, OneDrive or any file link', none: 'files' },
-  ref: { section: 'References', placeholder: 'Paste a link', none: 'references' },
-};
-function linksHtml(p, kind) {
-  const list = kind === 'file' ? p.files : p.refs, L = LINK_LISTS[kind];
+function linksHtml(p) {
+  const list = [...p.files, ...p.refs];
   // Untitled Drive/OneDrive/Docs links have only IDs in their address, so they're named after the service.
   const name = (r) => { const sv = linkService(r.url); return r.title || (sv !== hostOf(r.url) && !sv.startsWith('PDF') && sv !== 'Notion' ? sv : refName(r)); };
   const rows = list.map((r) => `<div class="pref">
       <a class="pref-link" href="${escapeHtml(/notion\.so\//.test(r.url) ? notionAppUrl(r.url) : r.url)}" target="_blank" rel="noopener">
         <b>${escapeHtml(name(r))}</b><small>${escapeHtml(name(r) === linkService(r.url) ? hostOf(r.url) : linkService(r.url))} ↗</small></a>
       <button class="mini-btn" data-act="ref-delete" data-id="${r.id}" aria-label="Remove ${escapeHtml(name(r))}">×</button></div>`).join('');
-  return `<section class="card" data-section="${L.section}">
-    <div class="card-head"><h2>${L.section}</h2>${list.length ? `<span class="hint">${list.length}</span>` : ''}</div>
-    ${refsMissing ? `<p class="help">Run the Gallery setup in Supabase once more to turn ${L.none} on.</p>` : `${rows}
-    <form class="pref-add" data-form="ref" data-kind="${kind}">
-      <input name="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="${L.placeholder}" required>
-      <input name="title" maxlength="120" placeholder="Name (optional)">
+  return `<section class="card" data-section="Links">
+    <div class="card-head"><h2>Links</h2>${list.length ? `<span class="hint">${list.length}</span>` : ''}</div>
+    ${refsMissing ? '<p class="help">Run the Gallery setup in Supabase once more to turn links on.</p>' : `${rows}
+    <form class="pref-add" data-form="ref">
+      <input name="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="Paste a file or web link" aria-label="Link" required>
+      <input name="title" maxlength="120" placeholder="Name (optional)" aria-label="Name">
       <button class="btn" type="submit">Add</button></form>`}
   </section>`;
 }
@@ -5281,8 +3988,7 @@ async function addRef(form) {
   const url = cleanUrl(f.get('url'));
   if (!p || !url) { toast('Paste a full link (https://…)'); return; }
   try {
-    const kind = form.dataset.kind === 'file' ? 'file' : 'ref';
-    await projDb.save('project_refs', { project_id: p.id, url, kind, title: String(f.get('title') || '').trim().slice(0, 120), sort: (kind === 'file' ? p.files : p.refs).length });
+    await projDb.save('project_refs', { project_id: p.id, url, kind: 'ref', title: String(f.get('title') || '').trim().slice(0, 120), sort: p.refs.length });
     await loadProjects();
     render();
   } catch (e) { toast(/schema cache|kind/i.test(e.message || '') ? 'Run the Gallery setup in Supabase once more to turn Files on.' : sbErr(e)); }
@@ -5359,12 +4065,6 @@ function timelineHtml(p) {
     html += `<div class="ptl-cell ptl-sep ptl-meets" style="grid-row:${mr};grid-column:${w + 1}">${ms.map((m) =>
       `<button class="ptl-meet k-${m.kind}" data-act="meet-edit" data-id="${m.id}"><span>▲</span>${escapeHtml(m.title)}<small>${DAY_NAMES[(m.weekday || 1) - 1]}${m.time ? ` ${m.time.slice(0, 5)}` : ''}</small></button>`).join('')}</div>`;
   }
-  html += `<div class="ptl-cell ptl-lab ptl-sep" style="grid-row:${mr + 1};grid-column:1">Tasks</div>`;
-  for (let w = 1; w <= p.weeks; w++) {
-    const from = projWeekStart(p, w);
-    const chips = Array.from({ length: 7 }, (_, k) => cardChipsOn(p, addDaysISO(from, k), true)).join('');
-    html += `<div class="ptl-cell ptl-sep ptl-tasks" data-drop-week="${w}" style="grid-row:${mr + 1};grid-column:${w + 1}">${chips}</div>`;
-  }
   return `<div class="ptl-scroll"><div class="ptl" style="grid-template-columns:${cols}">${html}</div></div>`;
 }
 
@@ -5394,16 +4094,6 @@ function toggleProjFold(id) {
 }
 // Monthly format: a calendar grid per month with meetings and step deadlines on their days,
 // and the steps listed underneath. Tap a date to add a meeting on it.
-// Cards scheduled on a day, as small stickies you can drag elsewhere (tap opens the task).
-function cardChipsOn(p, iso, short = false) {
-  const b = projBoards.get(p.id);
-  if (!b) return '';
-  return b.cards.filter((c) => cardDate(c) === iso).map((c) => {
-    const done = cardDone(c), text = c.text.trim().split('\n')[0];
-    return `<div class="pm-card c-${CARD_COLORS.includes(c.color) ? c.color : 'amber'} ${done ? 'done' : ''}" data-dragcard="${c.id}" title="${escapeHtml(text)} · drag to move, tap to open">
-      ${short ? `<small>${DAY_NAMES[(parseISO(iso).getDay() + 6) % 7]}</small> ` : ''}${done ? '✓ ' : ''}${escapeHtml(text)}</div>`;
-  }).join('');
-}
 function monthViewHtml(p) {
   const today = todayISO(), open = noTime(p), [a, z] = open ? ['0000-00-00', '9999-12-31'] : projSpan(p), [ink, fill, mid] = pcol(p);
   const on = {};
@@ -5425,8 +4115,8 @@ function monthViewHtml(p) {
   let cells = '';
   for (let d = weekOf(monthStart(mk)); !(d > end && parseISO(d).getDay() === 1); d = addDaysISO(d, 1)) {
     const inMonth = d.slice(0, 7) === mk;
-    cells += `<div class="pm-day ${inMonth ? '' : 'out'} ${d === today ? 'today' : ''} ${d < a || d > z ? 'off' : ''}" ${inMonth ? `data-drop-day="${d}"` : ''}>
-      ${inMonth ? `${open ? `<span class="pm-num">${parseISO(d).getDate()}</span>` : `<button class="pm-num" data-act="meet-new" data-day="${d}" aria-label="Add a meeting on ${fmtShort(d)}">${parseISO(d).getDate()}</button>`}${on[d] || ''}${cardChipsOn(p, d)}` : ''}</div>`;
+    cells += `<div class="pm-day ${inMonth ? '' : 'out'} ${d === today ? 'today' : ''} ${d < a || d > z ? 'off' : ''}">
+      ${inMonth ? `${open ? `<span class="pm-num">${parseISO(d).getDate()}</span>` : `<button class="pm-num" data-act="meet-new" data-day="${d}" aria-label="Add a meeting on ${fmtShort(d)}">${parseISO(d).getDate()}</button>`}${on[d] || ''}` : ''}</div>`;
   }
   const month = `<div class="pm-month"><div class="pm-nav">
       <button class="icon-btn" data-act="pm-month" data-mk="${prev || ''}" ${prev ? '' : 'disabled'} aria-label="Previous month">‹</button>
@@ -5439,29 +4129,6 @@ function monthViewHtml(p) {
   return `<div class="pmonths">${month}</div>${steps ? `<div class="pm-steps"><h3>Steps</h3>${steps}</div>` : ''}`;
 }
 
-function boardHtml(p) {
-  const b = projBoards.get(p.id);
-  if (!b) { loadBoard(p.id); return '<p class="muted pad small">Loading the board…</p>'; }
-  const h = Math.max(340, ...b.cards.map((c) => c.y + 150));
-  const byId = new Map(b.cards.map((c) => [c.id, c]));
-  const lines = b.links.map((l) => {
-    const a = byId.get(l.from_card), z = byId.get(l.to_card);
-    if (!a || !z) return '';
-    return `<line x1="${a.x + 75}" y1="${a.y + 30}" x2="${z.x + 75}" y2="${z.y + 30}" data-from="${l.from_card}" data-to="${l.to_card}"/>`;
-  }).join('');
-  return `<div class="pbrain" data-proj="${p.id}" style="height:${h}px">
-    <svg class="pbrain-lines">${lines}<line class="pbrain-temp" x1="0" y1="0" x2="0" y2="0" style="display:none"/></svg>
-    ${b.cards.map((c) => `<div class="pcard c-${CARD_COLORS.includes(c.color) ? c.color : 'amber'} ${editingCard === c.id ? 'editing' : ''}" data-card="${c.id}" style="left:${c.x}px;top:${c.y}px">
-      ${editingCard === c.id ? `<textarea data-card-text="${c.id}" maxlength="400" placeholder="Type a thought…">${escapeHtml(c.text)}</textarea>
-        <div class="pcard-tools">${CARD_COLORS.map((k) => `<button class="nc c-${k}" data-act="card-color" data-id="${c.id}" data-color="${k}" aria-label="${k}"></button>`).join('')}
-        <button class="mini-btn" data-act="card-done">Done</button><button class="mini-btn" data-act="card-delete" data-id="${c.id}" aria-label="Delete card">×</button></div>
-        <label class="pcard-when">Day <input type="date" data-card-date="${c.id}" value="${cardDate(c) || ''}"></label>`
-        : `<div class="pcard-text">${c.text ? escapeHtml(c.text) : '<span class="muted">Empty</span>'}</div>
-        ${cardDate(c) ? `<span class="pcard-date ${cardDone(c) ? 'done' : ''}">${cardDone(c) ? '✓' : '📅'} ${fmtShort(cardDate(c))}</span>` : ''}`}
-      <span class="pcard-link" data-link-from="${c.id}" title="Drag to another card to connect"></span></div>`).join('')}
-    ${b.cards.length ? '' : '<p class="pbrain-empty">Double-click (or tap + Card) to write a thought. Drag the dot on a card onto another card to connect them, or drag a card onto a day in the calendar above to schedule it.</p>'}
-  </div>`;
-}
 
 function projectPageHtml() {
   const back = '<button class="icon-btn" data-act="back" aria-label="Back">‹</button>';
@@ -5476,8 +4143,7 @@ function projectPageHtml() {
         <button class="mini-btn" data-act="proj-done">${p.done_on ? '✓ Complete · reopen' : `Mark complete · +${puzProjectPieces(p)} pieces`}</button>
         ${p.notion_url ? `<a class="mini-btn" href="${escapeHtml(notionAppUrl(p.notion_url))}" target="_blank" rel="noopener">N Notion page</a>` : `<a class="mini-btn" href="#/gallery/${p.id}/edit">+ Add Notion page</a>`}</div>
     </header>
-    ${linksHtml(p, 'file')}
-    ${linksHtml(p, 'ref')}
+    ${linksHtml(p)}
     ${noTime(p) ? stepsChecklistHtml(p) : ''}
     <section class="card ${foldedCal.has(p.id) ? 'folded' : ''}" data-section="${p.layout === 'weeks' ? 'Timeline' : 'Calendar'}">
       <div class="card-head"><h2>${p.layout === 'weeks' ? 'Timeline' : 'Calendar'}</h2>
@@ -5485,11 +4151,6 @@ function projectPageHtml() {
         <button class="mini-btn" data-act="proj-fold" aria-expanded="${!foldedCal.has(p.id)}">${foldedCal.has(p.id) ? 'Show' : 'Hide'}</button></div>
       ${foldedCal.has(p.id) ? '' : `${p.layout === 'weeks' ? timelineHtml(p) : monthViewHtml(p)}
       ${noTime(p) ? '' : '<div class="btn-row"><button class="btn" data-act="step-new">+ Step</button><button class="btn" data-act="meet-new">+ Meeting</button></div>'}`}
-    </section>
-    <section class="card" data-section="Task board">
-      <div class="card-head"><h2>Task board</h2><span class="hint">Drag a card onto a day to schedule it</span></div>
-      <div class="btn-row"><button class="btn" data-act="card-new">+ Card</button></div>
-      ${boardHtml(p)}
     </section>`;
 }
 
@@ -5599,7 +4260,7 @@ async function saveProjectForm(form) {
 }
 async function deleteProject() {
   const p = projById(route.projId);
-  if (!p || !confirm(`Delete “${p.name}” with its timeline and task board?`)) return;
+  if (!p || !confirm(`Delete “${p.name}” with its timeline?`)) return;
   try { await projDb.remove('projects', { id: p.id }); } catch (e) { toast(sbErr(e)); return; }
   projBoards.delete(p.id);
   await loadProjects();
@@ -5674,224 +4335,6 @@ async function removeFromSheet(table) {
   closeSheet();
   await loadProjects();
 }
-
-// ---- task board
-let editingCard = null;
-async function addCard(x, y) {
-  const p = projById(route.projId), b = projBoards.get(p.id);
-  if (!b) return;
-  try {
-    const c = await projDb.save('project_cards', { project_id: p.id, text: '', x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)),
-      color: CARD_COLORS[b.cards.length % CARD_COLORS.length], rank: b.cards.length });
-    b.cards.push(c);
-    editingCard = c.id;
-    render();
-    const ta = $app.querySelector(`[data-card-text="${CSS.escape(c.id)}"]`);
-    if (ta) ta.focus();
-  } catch (e) { toast(sbErr(e)); }
-}
-const findCard = (id) => { const b = projBoards.get(route.projId); return b && b.cards.find((c) => c.id === id); };
-let cardSaveTimer = null;
-function saveCardSoon(c) {
-  clearTimeout(cardSaveTimer);
-  cardSaveTimer = setTimeout(() => projDb.save('project_cards', { id: c.id, text: c.text, color: c.color, x: c.x, y: c.y, rank: c.rank, week: c.week, task_id: c.task_id }).catch((e) => toast(sbErr(e))), 400);
-}
-async function closeCard() {
-  const c = editingCard && findCard(editingCard);
-  editingCard = null;
-  if (c) {
-    clearTimeout(cardSaveTimer);
-    const t = cardTask(c), name = c.text.trim().split('\n')[0].slice(0, 120);
-    if (t && name && t.name !== name) { t.name = name; save(); } // the task keeps the card's wording
-    try { await projDb.save('project_cards', { id: c.id, text: c.text, color: c.color }); } catch (e) { toast(sbErr(e)); }
-  }
-  render();
-}
-async function deleteCard(id) {
-  const b = projBoards.get(route.projId);
-  try { await projDb.remove('project_cards', { id }); } catch (e) { toast(sbErr(e)); return; }
-  b.cards = b.cards.filter((c) => c.id !== id);
-  b.links = b.links.filter((l) => l.from_card !== id && l.to_card !== id);
-  if (editingCard === id) editingCard = null;
-  render();
-}
-// A scheduled card is a one-off task (so it's on Today and in My plan); the task's date is the
-// card's day, so changing the date on the task moves the card too.
-const cardTask = (c) => (c && c.task_id && state.commitments.find((x) => x.id === c.task_id && x.freq === 'once')) || null;
-const cardDate = (c) => { const t = cardTask(c); return t ? t.date : null; };
-function cardDone(c) {
-  const t = cardTask(c);
-  const it = t && t.date && state.weeks[weekOf(t.date)] && state.weeks[weekOf(t.date)].items[t.id];
-  return !!(it && periodDone(it));
-}
-async function scheduleCard(id, date) {
-  const p = projById(route.projId), c = findCard(id);
-  if (!p || !c || !/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return;
-  if (!c.text.trim()) { toast('Write something on the card first'); return; }
-  let t = cardTask(c);
-  if (t) {
-    if (t.date === date) return;
-    moveOnceItem(t.id, t.date, date);
-    t.date = date;
-    save(); render();
-    toast(`Moved to ${fmtShort(date)}`);
-    return;
-  }
-  const [first, ...rest] = c.text.trim().split('\n');
-  t = normaliseCommitment(newCommitment({ name: first.slice(0, 120), section: p.name.slice(0, 40), freq: 'once', kind: 'task',
-    date, hours: 1, notes: rest.join('\n').trim(), notionUrl: p.notion_url || '', order: nextOrder() }));
-  state.commitments.push(t);
-  renumber(); save();
-  c.task_id = t.id;
-  render();
-  toast(`Scheduled for ${fmtShort(date)} · it’s on Today then`);
-  try { await projDb.save('project_cards', { id: c.id, task_id: t.id }); } catch (e) { toast(sbErr(e)); }
-}
-// Back to the board: the task it made goes away (unless it's already been ticked off).
-async function unscheduleCard(id) {
-  const c = findCard(id), t = cardTask(c);
-  if (!t) return;
-  const it = t.date && state.weeks[weekOf(t.date)] && state.weeks[weekOf(t.date)].items[t.id];
-  if (it && hasData(it)) { toast('It’s already ticked off, so it stays on that day'); return; }
-  removeCommitment(t.id);
-  renumber(); save();
-  c.task_id = null;
-  render();
-  toast('Back on the board, not scheduled');
-  try { await projDb.save('project_cards', { id: c.id, task_id: null }); } catch (e) { toast(sbErr(e)); }
-}
-// Dropped on a week of the week-by-week timeline: pick the day.
-function openDayPicker(cardId, week) {
-  const p = projById(route.projId), [a, z] = projSpan(p), from = projWeekStart(p, week), cur = cardDate(findCard(cardId));
-  openSheet(`<div class="sheet-head"><h3>Which day in week ${week}?</h3></div>
-    <div class="daypick">${DAY_NAMES.map((n, i) => {
-      const d = addDaysISO(from, i);
-      return `<button class="mini-btn ${d === cur ? 'on' : ''}" data-act="card-day" data-day="${d}" ${d < a || d > z ? 'disabled' : ''}><b>${n}</b><small>${fmtDay(parseISO(d), { day: 'numeric', month: 'short' })}</small></button>`;
-    }).join('')}</div>`, { card: cardId });
-}
-
-// Dragging on the brainstorm board: move a card, or drag its dot onto another card to link them.
-// Dragged out of the board, a card floats with the pointer and can be dropped on a day of the project
-// calendar (or a week of the timeline) to schedule it. Cards already on the calendar can be dragged
-// to another day, or back onto the board to unschedule them.
-let cardDrag = null;
-document.addEventListener('pointerdown', (e) => {
-  if (e.button > 0) return;
-  const chip = e.target.closest('[data-dragcard]');
-  if (chip) {
-    cardDrag = { chip: true, el: chip, id: chip.dataset.dragcard, sx: e.clientX, sy: e.clientY, moved: false };
-    chip.setPointerCapture(e.pointerId);
-    e.preventDefault();
-    return;
-  }
-  const board = e.target.closest('.pbrain');
-  if (!board) return;
-  const linkFrom = e.target.closest('[data-link-from]');
-  const el = e.target.closest('.pcard');
-  if (!el || (!linkFrom && e.target.closest('button, textarea, a, input, label'))) return;
-  const r = el.getBoundingClientRect();
-  cardDrag = { board, el, id: el.dataset.card, link: !!linkFrom, dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moved: false };
-  el.setPointerCapture(e.pointerId);
-  e.preventDefault();
-});
-const dropTargetAt = (x, y) => document.elementsFromPoint(x, y).map((el) => el.closest && el.closest('[data-drop-day], [data-drop-week], .pbrain')).find(Boolean) || null;
-function floatCard(d, e) {
-  if (!d.ghost) {
-    const c = findCard(d.id);
-    d.ghost = Object.assign(document.createElement('div'), { className: `pcard-ghost c-${c && CARD_COLORS.includes(c.color) ? c.color : 'amber'}`, textContent: (c && c.text) || '' });
-    document.body.appendChild(d.ghost);
-    d.el.classList.add('lifted');
-    d.scroll = setInterval(() => { // scroll the page when held near the top or bottom
-      if (d.y < 70) window.scrollBy(0, -14); else if (d.y > innerHeight - 70) window.scrollBy(0, 14);
-      markDrop(d);
-    }, 16);
-  }
-  d.x = e.clientX; d.y = e.clientY;
-  d.ghost.style.transform = `translate(${e.clientX - 60}px, ${e.clientY - 20}px)`;
-  markDrop(d);
-}
-function markDrop(d) {
-  const t = dropTargetAt(d.x, d.y);
-  if (t === d.target) return;
-  if (d.target) d.target.classList.remove('drop-on');
-  d.target = t && !t.classList.contains('pbrain') ? t : null;
-  if (d.target) d.target.classList.add('drop-on');
-}
-function endFloat(d) {
-  clearInterval(d.scroll);
-  if (d.ghost) d.ghost.remove();
-  if (d.target) d.target.classList.remove('drop-on');
-  if (d.el) d.el.classList.remove('lifted');
-}
-document.addEventListener('pointermove', (e) => {
-  const d = cardDrag;
-  if (!d) return;
-  if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 6) return;
-  d.moved = true;
-  if (d.chip) { floatCard(d, e); return; }
-  const br = d.board.getBoundingClientRect();
-  if (d.link) {
-    const c = findCard(d.id), temp = d.board.querySelector('.pbrain-temp');
-    temp.style.display = '';
-    temp.setAttribute('x1', c.x + 75); temp.setAttribute('y1', c.y + 30);
-    temp.setAttribute('x2', e.clientX - br.left); temp.setAttribute('y2', e.clientY - br.top);
-    return;
-  }
-  const outside = e.clientX < br.left || e.clientX > br.right || e.clientY < br.top || e.clientY > br.bottom;
-  if (outside || d.ghost) { floatCard(d, e); d.el.classList.remove('dragging'); return; }
-  d.el.classList.add('dragging');
-  d.el.style.left = `${Math.max(0, Math.min(br.width - 60, e.clientX - br.left - d.dx))}px`;
-  d.el.style.top = `${Math.max(0, e.clientY - br.top - d.dy)}px`;
-});
-document.addEventListener('pointerup', async (e) => {
-  const d = cardDrag;
-  cardDrag = null;
-  if (!d) return;
-  const c = findCard(d.id);
-  if (d.ghost) {
-    const t = dropTargetAt(e.clientX, e.clientY);
-    endFloat(d);
-    if (t && t.dataset.dropDay) scheduleCard(d.id, t.dataset.dropDay);
-    else if (t && t.dataset.dropWeek) openDayPicker(d.id, +t.dataset.dropWeek);
-    else if (t && t.classList.contains('pbrain') && d.chip) unscheduleCard(d.id);
-    else render();
-    return;
-  }
-  if (d.chip) { if (!d.moved) { const task = cardTask(c); if (task) location.hash = `#/c/${task.id}`; } return; }
-  if (!c) return;
-  if (d.link) {
-    const target = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest && x.closest('.pcard')).find((x) => x && x.dataset.card !== d.id);
-    const b = projBoards.get(route.projId);
-    if (target && !b.links.some((l) => (l.from_card === d.id && l.to_card === target.dataset.card) || (l.to_card === d.id && l.from_card === target.dataset.card))) {
-      const row = { project_id: route.projId, from_card: d.id, to_card: target.dataset.card };
-      b.links.push(row);
-      try { await projDb.link(row); } catch (err) { toast(sbErr(err)); }
-    }
-    render();
-    return;
-  }
-  if (!d.moved) { if (editingCard !== c.id) { editingCard = c.id; render(); const ta = $app.querySelector(`[data-card-text="${CSS.escape(c.id)}"]`); if (ta) ta.focus(); } return; }
-  c.x = Math.round(parseFloat(d.el.style.left));
-  c.y = Math.round(parseFloat(d.el.style.top));
-  render();
-  try { await projDb.save('project_cards', { id: c.id, x: c.x, y: c.y }); } catch (err) { toast(sbErr(err)); }
-});
-document.addEventListener('pointercancel', () => { if (cardDrag) { endFloat(cardDrag); cardDrag = null; render(); } });
-document.addEventListener('dblclick', (e) => {
-  const board = e.target.closest('.pbrain');
-  if (!board || e.target.closest('.pcard')) return;
-  const br = board.getBoundingClientRect();
-  addCard(e.clientX - br.left - 70, e.clientY - br.top - 24);
-});
-// Tapping a link line removes it.
-document.addEventListener('click', async (e) => {
-  const line = e.target.closest && e.target.closest('.pbrain-lines line[data-from]');
-  if (!line || !confirm('Remove this connection?')) return;
-  const b = projBoards.get(route.projId);
-  b.links = b.links.filter((l) => !(l.from_card === line.dataset.from && l.to_card === line.dataset.to));
-  render();
-  try { await projDb.remove('project_links', { from_card: line.dataset.from, to_card: line.dataset.to }); } catch (err) { toast(sbErr(err)); }
-});
 
 // ---------- Academics (Moodle) ----------
 // Reads your courses from Moodle (through the server, see server/moodle.mjs) so you never have to log
@@ -5978,7 +4421,7 @@ function acadReset() {
   acad.contents.clear(); acad.errors.clear(); acad.progress.clear(); acad.tracked.clear(); acad.notes.clear(); acad.kinds.clear(); acad.lanes.clear(); acad.offsets.clear(); acad.lpw.clear();
   try { localStorage.removeItem('acadCache'); } catch {}
 }
-const rerenderAcad = () => { if (['academics', 'today', 'plan', 'home'].includes(route.tab) && !sheetCtx && !typing() && !wDrag && !cardDrag) render(); };
+const rerenderAcad = () => { if (['academics', 'today', 'plan', 'home'].includes(route.tab) && !sheetCtx && !typing() && !wDrag) render(); };
 
 // ---- loading: your choices from Supabase, then Moodle
 async function acadLoad({ force = false } = {}) {
@@ -6193,16 +4636,15 @@ const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 
 // ---- pieces: an item row (used on the course page, in the catch-up list and on Today)
 function acadItemHtml(i, { inWeek = false } = {}) {
   const done = acadDone(i), moodle = i.moodleDone && !acad.progress.has(i.id);
-  const notes = acad.notes.get(i.courseId);
   const f = i.files || [];
-  const open = f.length ? `<a class="mini-btn go" href="${escapeHtml(f[0].link)}" target="_blank" rel="noopener">Open</a>${f.length > 1 ? f.slice(1, 4).map((x, k) => `<a class="mini-btn" href="${escapeHtml(x.link)}" target="_blank" rel="noopener" title="${escapeHtml(x.name)}">${k + 2}</a>`).join('') : ''}`
+  const open = f.length ? `<a class="mini-btn go" href="${escapeHtml(f[0].link)}" target="_blank" rel="noopener">Open</a>`
     : i.link ? `<a class="mini-btn ${/moodle/.test(hostOf(i.link)) ? '' : 'go'}" href="${escapeHtml(i.link)}" target="_blank" rel="noopener">${/moodle/.test(hostOf(i.link)) ? 'Moodle ↗' : 'Open ↗'}</a>` : '';
   const meta = [inWeek ? '' : i.week != null ? `Week ${i.week}` : i.section, i.label, f.length === 1 ? fmtBytes(f[0].size) : f.length > 1 ? `${f.length} files` : '', i.due ? `due ${fmtShort(isoDate(new Date(i.due * 1000)))}` : ''].filter(Boolean).join(' · ');
   return `<div class="aitem ${done ? 'done' : ''}">
     <button class="acheck" data-act="acad-tick" data-id="${i.id}" data-course="${i.courseId}" aria-pressed="${done}" ${moodle ? 'disabled title="Done in Moodle"' : ''}
       aria-label="${escapeHtml(i.name)} ${done ? 'done' : 'not done'}">${done ? CHECK : ''}</button>
     <div class="aitem-main"><b>${escapeHtml(i.name)}</b>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</div>
-    <div class="aitem-go">${open}${notes ? `<a class="mini-btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener" title="Your notes for this course">Notes</a>` : ''}<button class="mini-btn ghost logo-btn" data-act="acad-wb" data-id="${i.id}" data-course="${i.courseId}" aria-label="Add ${escapeHtml(i.name)} to this week’s whiteboard" title="Add to this week’s whiteboard"><img src="icons/icon-192.png" alt="">＋</button><button class="mini-btn ghost" data-act="acad-plan" data-id="${i.id}" data-course="${i.courseId}" aria-label="Add ${escapeHtml(i.name)} to my plan" title="Add to my plan as a task or routine">＋ Plan</button>${inWeek ? `<button class="mini-btn ghost" data-act="acad-move" data-id="${i.id}" data-course="${i.courseId}" aria-label="Move to another category" title="Move to another category">⋯</button>` : ''}</div>
+    <div class="aitem-go">${open}<button class="mini-btn ghost logo-btn" data-act="acad-wb" data-id="${i.id}" data-course="${i.courseId}" aria-label="Add ${escapeHtml(i.name)} to this week’s whiteboard" title="Add to this week’s whiteboard"><img src="icons/icon-192.png" alt="">＋</button><button class="mini-btn ghost" data-act="acad-more" data-id="${i.id}" data-course="${i.courseId}" data-week="${inWeek ? 1 : ''}" aria-label="More for ${escapeHtml(i.name)}">⋯</button></div>
   </div>`;
 }
 
@@ -6245,28 +4687,6 @@ function acadWeekHtml(c, w) {
     <div class="arows">${acadTopicRow(c, w)}${LANE_ORDER.map((l) => acadLaneHtml(c, w, l)).join('')}</div>
   </details>`;
 }
-// The knowledge tree for a course: the same builder as the technicals (paste Claude's outline), kept with the course.
-function acadKnowledgeHtml(meta) {
-  const trees = state.trees.filter((t) => t.courseId === meta.id);
-  if (!trees.length) {
-    return `<section class="card" data-section="Knowledge tree">
-      <div class="card-head"><h2>Knowledge tree</h2></div>
-      <p class="small">Turn this course into a tree of topics and light them up as you learn them, like your technicals. Copy the ready-made prompt (it already has this course’s topics from Moodle), paste Claude’s outline back, and it’s built.</p>
-      <button class="btn primary" data-act="acad-tree-new" data-course="${meta.id}">Build a knowledge tree</button></section>`;
-  }
-  return `<div class="seg-mini kview acad-kview"><button data-act="tree-view" data-v="map" class="${treeView === 'map' ? 'on' : ''}">Map</button><button data-act="tree-view" data-v="list" class="${treeView === 'list' ? 'on' : ''}">List</button></div>
-    ${trees.map(treeCardHtml).join('')}`;
-}
-// The prompt for the course's tree: the usual one, plus what Moodle lists for the course.
-function acadListing(cid) {
-  const d = acad.contents.get(cid);
-  return d ? d.sections.filter((s) => s.items.length).map((s) => `${s.name}\n${s.items.map((i) => `  - ${i.name}`).join('\n')}`).join('\n') : '';
-}
-function courseTreePrompt(name, source, cid) {
-  const listing = acadListing(cid);
-  return treePrompt(name, source) + (listing ? `\n\nMoodle lists these sections and items for the course (titles only, in the order they were posted). Use them with the course page to work out the topics:\n${listing}` : '');
-}
-let treeNewCourse = null; // the course a new knowledge tree is being made for
 
 // ---- the pages
 const acadSignIn = (head) => head + `<section class="card banner-card"><b>${state.account ? 'One more Google sign-in' : 'Sign in with Google to use Academics'}</b>
@@ -6368,12 +4788,10 @@ function courseHtml() {
   </div>`;
   const tests = c.tests.length ? c.tests.map((i) => acadItemHtml(i)).join('') : '';
   const info = c.info.length ? c.info.map((i) => acadItemHtml(i)).join('') : '';
-  const trees = state.trees.filter((t) => t.courseId === cid);
   const ref = `<div class="acref">
     ${g.coming.length ? acadFold(cid, 'coming', 'Coming up', `${g.coming.length} week${g.coming.length === 1 ? '' : 's'}`, g.coming.map((w) => acadWeekHtml(c, w)).join('')) : ''}
     ${g.done.length ? acadFold(cid, 'done', 'Done', `${g.done.length} week${g.done.length === 1 ? '' : 's'}`, g.done.map((w) => acadWeekHtml(c, w)).join('')) : ''}
     ${tests ? acadFold(cid, 'tests', 'Tests', `${c.tests.filter(acadDone).length} of ${c.tests.length} done`, tests) : ''}
-    ${acadFold(cid, 'tree', 'Knowledge tree', trees.length ? `${trees.length} tree${trees.length === 1 ? '' : 's'}` : 'not built yet', acadKnowledgeHtml(meta))}
     ${info ? acadFold(cid, 'info', 'Course info', String(c.info.length), info) : ''}
   </div>`;
   return header + `<div class="acourse">${side}${main}${ref}</div>`;
@@ -6389,22 +4807,6 @@ const acadRefOpen = new Map();
 const acadFold = (cid, key, title, hint, body) => `<details class="card afold" data-afold="${cid}:${key}" ${acadRefOpen.get(`${cid}:${key}`) ? 'open' : ''}>
   <summary><h2>${title}</h2>${hint ? `<span class="hint">${escapeHtml(hint)}</span>` : ''}</summary><div class="afold-b">${body}</div></details>`;
 
-// Today: the next thing to study in each course (a catch-up item if you're behind), one tap to open.
-function studyTodayHtml() {
-  if (acad.conn !== true || !acad.courses) return '';
-  acadEnsure();
-  const rows = (acad.courses || []).filter((m) => acad.tracked.has(m.id)).map((m) => acadCourse(m.id)).filter(Boolean)
-    .sort((a, b) => b.behind - a.behind || a.meta.id - b.meta.id);
-  if (!rows.length) return '';
-  const next = rows.filter((c) => c.next);
-  return `<section class="card" data-section="Study">
-    <div class="card-head"><h2>Study</h2><a class="txt-btn" href="#/academics">Academics ›</a></div>
-    ${next.length ? next.slice(0, 4).map((c) => {
-      const st = acadStatus(c);
-      return `<div class="astudy"><a class="achip ${st.cls}" href="#/academics/${c.meta.id}" style="--ac:${acadColor(c.meta.id)[2]}">${escapeHtml(c.meta.shortname || c.meta.fullname)} · ${escapeHtml(st.text)}</a>${acadItemHtml(c.next)}</div>`;
-    }).join('') : '<p class="muted pad small">You’re on track in every course. ✓</p>'}
-  </section>`;
-}
 
 // ---- actions
 async function acadTick(itemId, courseId) {
@@ -6491,6 +4893,19 @@ async function acadLaneAll(cid, week, lane) {
   render();
   try { if (allDone) await acadDb.untickMany(ids); else await acadDb.tickMany(ids, cid); }
   catch (e) { acad.progress = before; render(); toast(sbErr(e)); }
+}
+// Everything else you can do with a course item.
+function openItemMore(cid, itemId, inWeek) {
+  const data = acad.contents.get(cid), item = data && data.sections.flatMap((x) => x.items).find((x) => x.id === itemId);
+  if (!item) return;
+  const notes = acad.notes.get(cid), files = (item.files || []).slice(1, 6);
+  const ids = `data-id="${itemId}" data-course="${cid}"`;
+  openSheet(`<div class="sheet-head"><h3>${escapeHtml(clip(item.name, 60))}</h3></div>
+    <div class="menu"><button class="btn" data-act="acad-plan" ${ids}>Add to my plan as a task or routine</button>
+      ${notes ? `<a class="btn" href="${escapeHtml(notes)}" target="_blank" rel="noopener">My notes for this course</a>` : ''}
+      ${files.map((x) => `<a class="btn" href="${escapeHtml(x.link)}" target="_blank" rel="noopener">Open ${escapeHtml(clip(x.name, 40))}</a>`).join('')}
+      ${inWeek ? `<button class="btn" data-act="acad-move" ${ids}>Move to another category</button>` : ''}
+      <button class="btn" data-act="close">Close</button></div>`);
 }
 // Moving an item to a different lane (kept for the course).
 function openLaneSheet(cid, itemId) {
@@ -6587,8 +5002,9 @@ function acadJump(week) {
 // Weeks you open or fold on a course page stay that way when the page redraws.
 document.addEventListener('toggle', (e) => {
   const d = e.target;
+  if (d.dataset && d.dataset.wsc) { if (d.open) planStudyOpen.add(+d.dataset.wsc); else planStudyOpen.delete(+d.dataset.wsc); }
   if (d.dataset && d.dataset.asec) acadOpenWeeks.set(d.dataset.asec, d.open);
-  if (d.dataset && d.dataset.afold) { acadRefOpen.set(d.dataset.afold, d.open); if (d.open && d.querySelector('.kmap')) initMaps(); } // a map drawn while folded needs placing
+  if (d.dataset && d.dataset.afold) { acadRefOpen.set(d.dataset.afold, d.open); }
 }, true);
 
 // ---------- This week: the simplified dashboard ----------
@@ -6628,7 +5044,7 @@ function planDayHtml(wk, w, i) {
     total++; if (n.done) done++;
     rows.push(`<li class="wb note c-${n.color} ${n.done ? 'done' : ''}">
       <button class="wbox" data-act="note-done" data-id="${n.id}" aria-label="Done" aria-pressed="${n.done}">${n.done ? CHECK : ''}</button>
-      <a class="wname" href="#/board">${escapeHtml(n.text.split('\n')[0] || 'Note')}</a></li>`);
+      <span class="wname">${escapeHtml(n.text.split('\n')[0] || 'Note')}</span></li>`);
   }
   const extra = [];
   if (planExtras.projects) for (const x of projectItemsOn(d)) extra.push(`<li class="wx"><span class="wdot" style="--c:${pcol(x.p)[2]}"></span><a href="#/gallery/${x.p.id}">${x.time ? `<small class="wtime">${x.time}</small> ` : ''}${escapeHtml(x.title)}<small> · ${escapeHtml(x.p.name)}</small></a></li>`);
@@ -6642,6 +5058,7 @@ function planDayHtml(wk, w, i) {
 }
 // Study on the weekly list: for each course you track, this week's lectures and problem sets (and reading,
 // where it counts), tickable, each with Open. Moodle gives a week, not a day, so they sit with the week.
+const planStudyOpen = new Set(); // courses opened on This week
 function planStudyHtml(wk) {
   if (!planExtras.study || acad.conn !== true || !acad.courses || wk !== currentWeekKey()) return ''; // drawn from the remembered copy; the sign-in can finish later
   acadEnsure();
@@ -6654,22 +5071,22 @@ function planStudyHtml(wk) {
       return `<li class="wb ${ok ? 'done' : ''}"><button class="wbox" data-act="acad-tick" data-id="${i.id}" data-course="${c.meta.id}" aria-pressed="${ok}" aria-label="${escapeHtml(i.name)} ${ok ? 'done' : 'not done'}" ${i.moodleDone && !acad.progress.has(i.id) ? 'disabled' : ''}>${ok ? CHECK : ''}</button>
         <a class="wname" href="#/academics/${c.meta.id}">${escapeHtml(i.name)}</a><small>${escapeHtml(LANE_SHORT[i.lane])}</small>${f ? `<a class="mini-btn go" href="${escapeHtml(f.link)}" target="_blank" rel="noopener">Open</a>` : ''}</li>`;
     }).join('');
-    return `<div class="wstudy-c"><div class="wstudy-h"><a href="#/academics/${c.meta.id}"><b>${escapeHtml(c.meta.shortname || c.meta.fullname)}</b></a>
-      <span class="achip ${st.cls}">${escapeHtml(st.text)}</span></div>
+    const left = items.filter((i) => !acadDone(i)).length;
+    return `<details class="wstudy-c" data-wsc="${c.meta.id}" ${planStudyOpen.has(c.meta.id) ? 'open' : ''}><summary class="wstudy-h"><b>${escapeHtml(c.meta.shortname || c.meta.fullname)}</b>
+      <span class="achip ${st.cls}">${escapeHtml(st.text.split(' · ')[0])}</span><small>${left ? `${left} this week` : items.length ? 'week done' : ''}</small></summary>
       <ul class="wlist">${rows || `<li class="wempty">${c.weeks.length ? 'Nothing posted for this week yet' : 'No weeks found in Moodle'}</li>`}</ul>
-      ${c.catchUp.length ? `<a class="wcatch" href="#/academics/${c.meta.id}">${c.catchUp.length} to catch up from earlier weeks ›</a>` : ''}</div>`;
+      <a class="wcatch" href="#/academics/${c.meta.id}">${c.catchUp.length ? `${c.catchUp.length} to catch up from earlier weeks` : 'Open the course'} ›</a></details>`;
   }).join('');
   return `<section class="wstudy" data-section="Study"><div class="wstudy-t"><b>Study this week</b><a href="#/academics">Academics ›</a></div>${blocks}</section>`;
 }
 function planWeeklyHtml(wk, w) {
   const weekly = w ? itemsOf(w, 'weekly') : [];
   if (!weekly.length) return '';
-  return `<div class="wweekly"><b>This week</b>${weekly.map(([id, it]) => {
+  return `<div class="wweekly"><b>Weekly</b>${weekly.map(([id, it]) => {
     const ok = periodDone(it);
-    const prog = it.kind === 'counter' ? `${round2(it.count)}/${round2(it.target)}${it.unit ? ` ${it.unit}` : ''}` : '';
-    return it.kind === 'task'
-      ? `<span class="wwk ${ok ? 'done' : ''}"><button class="wbox" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-pressed="${ok}" aria-label="${escapeHtml(it.name)} done">${ok ? CHECK : ''}</button><a href="#/c/${id}">${escapeHtml(it.name)}</a></span>`
-      : `<a class="wwk ${ok ? 'done' : ''}" href="#/c/${id}">${escapeHtml(it.name)} <small>${escapeHtml(prog)}</small></a>`;
+    if (it.kind === 'task') return `<span class="wwk ${ok ? 'done' : ''}"><button class="wbox" data-act="pdone" data-wk="${wk}" data-id="${id}" aria-pressed="${ok}" aria-label="${escapeHtml(it.name)} done">${ok ? CHECK : ''}</button><a href="#/c/${id}">${escapeHtml(it.name)}</a></span>`;
+    const step = (dir, sign, word) => `<button class="wstep" data-act="pstep" data-wk="${wk}" data-id="${id}" data-dir="${dir}" aria-label="${word} ${it.step} ${escapeHtml(it.name)}" ${dir < 0 && it.count <= 0 ? 'disabled' : ''}>${sign}</button>`;
+    return `<span class="wwk counter ${ok ? 'done' : ''}">${step(-1, '−', 'Minus')}<a href="#/c/${id}">${escapeHtml(it.name)} <small>${escapeHtml(`${round2(it.count)}/${round2(it.target)}${it.unit ? ` ${it.unit}` : ''}`)}</small></a>${step(1, '+', 'Plus')}</span>`;
   }).join('')}</div>`;
 }
 function whiteboardColHtml() {
@@ -6683,23 +5100,28 @@ function whiteboardColHtml() {
     <form class="wb-add" data-form="wb-add" autocomplete="off"><input name="text" maxlength="120" placeholder="Type a task, press Enter" aria-label="New task"></form>
     <div class="wb-list">${tasks.map((c) => sticky(`task:${c.id}`, c.name, 'gold', c.section !== 'Tasks' ? c.section : '')).join('')}
       ${notes.map((n) => sticky(`note:${n.id}`, n.text.split('\n')[0], n.color, 'note')).join('')}
-      ${!tasks.length && !notes.length ? '<p class="wempty">Nothing undated. Type a task above, then drag it onto a day.</p>' : ''}</div>
-    <p class="help">${wbPick ? '<b>Now tap a day</b> to place it, or tap it again to cancel.' : 'Drag a task onto a day to give it that date. On a phone: tap it, then tap a day. Drag a task from a day back here to undate it.'}</p>
+      ${!tasks.length && !notes.length ? '<p class="wempty">Type a task, then place it on a day.</p>' : ''}</div>
+    ${wbPick ? '<p class="help"><b>Now tap a day</b> to place it, or tap it again to cancel.</p>' : tasks.length + notes.length ? '<p class="help">Tap one, then tap a day. Or drag it there.</p>' : ''}
   </aside>`;
 }
 function planHtml() {
   const wk = planWk || currentWeekKey(), w = getWeek(wk);
   const cur = wk === currentWeekKey();
+  const ws = w ? weekStats(w) : null, focused = weekFocusMin(w);
   return `
     <header class="top">${topBar({ left: '<button class="icon-btn" data-act="plan-week" data-d="-1" aria-label="Previous week">‹</button>',
       label: cur ? 'This week' : weekLabel(wk), title: weekRange(wk), titleAct: cur ? '' : 'data-act="plan-week" data-d="0"',
-      right: '<button class="icon-btn" data-act="plan-week" data-d="1" aria-label="Next week">›</button>' })}
-      <div class="plan-links"><a href="#/today">Today</a>${weekFocusMin(w) ? `<span class="plan-focus" title="Focus time recorded this week">⏱ ${fmtMin(weekFocusMin(w))} focused</span>` : ''}<a href="#/cal">Full calendar</a><a href="#/board">Notes board</a>
+      right: '<button class="icon-btn" data-act="plan-week" data-d="1" aria-label="Next week">›</button>' + menuBtn })}
+      ${ws && ws.total ? `<div class="pace"><a href="#/routine">${fmtH(ws.actual)} of ${fmtH(ws.planned)} · ${Math.round(ws.pct * 100)}% ticked${focused ? ` · ${fmtMin(focused)} focused` : ''} ›</a></div>` : ''}
+      ${cur ? buddyTodayLine() : ''}
+      <div class="plan-links"><a href="#/cal">Calendar</a>
         <span class="plan-show">Show:${PLAN_EXTRAS.map(([k, l]) => `<button class="mini-btn ${planExtras[k] ? 'on' : ''}" data-act="plan-extra" data-k="${k}" aria-pressed="${!!planExtras[k]}">${l}</button>`).join('')}</span></div>
     </header>
+    ${reviewBannerHtml()}
+    ${signInHintHtml()}
     <div class="plan">
-      <div class="plan-days" data-section="Week">${planWeeklyHtml(wk, w)}${planStudyHtml(wk)}${DAY_NAMES.map((_, i) => planDayHtml(wk, w, i)).join('')}</div>
-      <div class="plan-side">${whiteboardColHtml()}${puzzleCardHtml()}</div>
+      <div class="plan-days" data-section="Week">${puzzleLineHtml()}${planWeeklyHtml(wk, w)}${planStudyHtml(wk)}${DAY_NAMES.map((_, i) => planDayHtml(wk, w, i)).join('')}</div>
+      <div class="plan-side">${whiteboardColHtml()}</div>
     </div>`;
 }
 
@@ -6802,14 +5224,13 @@ document.addEventListener('pointercancel', () => { if (wDrag) { endWDrag(wDrag);
 // for each area, filled as far as this week's progress there. Click one to go in. Inside the app the
 // ring stays as a small floating donut that opens when you point at it (or tap it on a phone).
 const HOME_AREAS = [
-  { key: 'routine', name: 'Routine', href: '#/routine', tabs: ['routine'], color: 'green' },
+  { key: 'routine', name: 'Routine', href: '#/routine', tabs: ['routine', 'commitments'], color: 'green' },
   { key: 'academics', name: 'Academics', href: '#/academics', tabs: ['academics'], color: 'blue' },
   { key: 'apps', name: 'Career', href: '#/apps', tabs: ['apps'], color: 'amber' },
   { key: 'gallery', name: 'Projects', href: '#/gallery', tabs: ['gallery'], color: 'purple' },
   { key: 'buddy', name: 'Our Tree', href: '#/buddy', tabs: ['buddy'], color: 'coral' },
-  { key: 'commitments', name: 'All', href: '#/commitments', tabs: ['commitments'], color: 'gray' },
 ];
-const CENTRE_TABS = ['plan', 'today', 'cal'];
+const CENTRE_TABS = ['plan', 'cal'];
 // What each slice says, and how full it is (null = no fill, just the slice).
 function areaStatus(key) {
   const wk = currentWeekKey(), w = getWeek(wk), end = addDaysISO(wk, 6), today = todayISO();
@@ -6841,10 +5262,6 @@ function areaStatus(key) {
       if (!buddyView) return { pct: null, text: 'Plant a seed' };
       const others = buddyView.members.filter((m) => !m.me), { cur } = treeHistory(buddyView);
       return { pct: cur.good / TREE_DAYS, text: `Day ${cur.good} of ${TREE_DAYS}${cur.state === 'wilted' ? ' · wilting' : others.length ? ` · ${others.map((m) => m.name).join(', ')} ${others.every((m) => m.days[today]) ? 'done ✓' : 'not yet'}` : ''}` };
-    }
-    if (key === 'commitments') {
-      const n = state.commitments.filter((c) => !c.archived).length;
-      return { pct: null, text: `${n} commitment${n === 1 ? '' : 's'}` };
     }
   } catch { /* data still loading */ }
   return { pct: null, text: '' };
@@ -6881,6 +5298,11 @@ function donutSvg({ labels = true, current = null, big = false } = {}) {
       <text y="23" class="dc-s">${c.left ? `${c.left} left today` : 'all done today'}</text></a>
   </svg>`;
 }
+function puzzleAreaHtml() {
+  const cur = puzEnsure(), st = puzStatus(), [ink, , mid, soft] = PROJ_COLORS.teal;
+  return `<a class="harea" href="#/puzzle" style="--hc:${mid};--hs:${soft};--hk:${ink}"><span class="hdot"></span><b>Jigsaw</b>
+    <span>${st.tray ? `${st.tray} piece${st.tray === 1 ? '' : 's'} to place` : `${cur.placed.length} of ${PUZ_A} placed`}</span></a>`;
+}
 function homeHtml() {
   const areas = HOME_AREAS.map((a) => {
     const st = areaStatus(a.key), [ink, fill, mid, soft] = PROJ_COLORS[a.color];
@@ -6891,13 +5313,11 @@ function homeHtml() {
   if (sbUser) { if (projects === null) loadProjects(); acadEnsure(); }
   return `
     <header class="top home-top"><div class="home-brand"><img src="icons/icon-192.png" alt=""><b>I Commit!</b></div>
-      <p class="amuted">${fmtDay(startOfToday(), { weekday: 'long', day: 'numeric', month: 'long' })}</p></header>
+      <p class="amuted">${fmtDay(startOfToday(), { weekday: 'long', day: 'numeric', month: 'long' })}</p>${menuBtn}</header>
     <section class="home" data-section="Overview">
       <div class="home-donut">${donutSvg({ big: true })}<p class="help center">Tap the centre for your week, or a slice to go there.</p></div>
-      <div class="home-areas"><a class="harea centre" href="#/plan"><span class="hdot"></span><b>This week</b><span>Your week, day by day, with the whiteboard</span></a>${areas}</div>
-    </section>
-    <nav class="home-links"><a href="#/puzzle">Puzzle</a><a href="#/today">Today</a><a href="#/cal">Calendar</a><a href="#/calendar">Calendars</a><a href="#/reminders">Reminders</a>
-      <a href="#/account">${state.account ? 'Account' : 'Sign in'}</a><a href="#/widget">Phone widget</a><button data-act="export-xlsx">Export to Excel</button><button data-act="menu">More…</button></nav>`;
+      <div class="home-areas"><a class="harea centre" href="#/plan"><span class="hdot"></span><b>This week</b><span>Your week, day by day, with the whiteboard</span></a>${areas}${puzzleAreaHtml()}</div>
+    </section>`;
 }
 // The floating mini-donut on every other page.
 function floatDonutHtml() {
@@ -7516,15 +5936,10 @@ document.addEventListener('pointercancel', () => { if (pzDrag) { clearInterval(p
 window.addEventListener('resize', () => { if (route.page === 'puzzle' && !pzDrag) layoutPuzzle(); });
 
 // ---- the card on This week, and the Puzzle page
-function puzzleCardHtml() {
-  const cur = puzEnsure(), st = puzStatus();
-  return `<aside class="card pzcard" data-section="Puzzle">
-    <div class="card-head"><h2>Puzzle</h2><span class="hint">${cur.placed.length}/${PUZ_A} placed</span></div>
-    <span class="pz-bar" style="--p:${Math.round((cur.placed.length / PUZ_A) * 100)}%" aria-hidden="true"><i></i></span>
-    <p class="small">${st.tray} piece${st.tray === 1 ? '' : 's'} ready to place${st.waiting ? ` · ${st.waiting} saved for the next jigsaw` : ''}</p>
-    <p class="small muted">Routine tick +${PUZ_ROUTINE} · one-off task +${PUZ_ONCE} · project complete +${PUZ_PROJECT_MIN}, or ${PUZ_PROJECT_WEEK} a week for long ones</p>
-    <a class="btn ${st.tray ? 'primary' : ''}" href="#/puzzle">${st.tray ? `Place ${st.tray} piece${st.tray === 1 ? '' : 's'} ›` : 'Open puzzle ›'}</a>
-  </aside>`;
+function puzzleLineHtml() {
+  puzEnsure();
+  const st = puzStatus();
+  return st.tray ? `<a class="wpuzzle" href="#/puzzle">${st.tray} jigsaw piece${st.tray === 1 ? '' : 's'} to place ›</a>` : '';
 }
 function puzzleSeriesHtml() {
   const rows = puz.series.map((s) => {
@@ -7646,123 +6061,24 @@ function bumpCount(key, dir) {
 }
 
 function openMenu() {
-  const last = state.lastBackup ? fmtDay(new Date(state.lastBackup), { day: 'numeric', month: 'short', year: 'numeric' }) : 'never';
   openSheet(`
     <div class="sheet-head"><h3>Menu</h3></div>
     <div class="menu">
       <a class="btn" href="#/account">${state.account ? `Account · ${escapeHtml(state.account.email)}` : 'Sign in with Google'}</a>
+      <a class="btn" href="#/calendar">Calendars</a>
       <a class="btn" href="#/reminders">Reminders &amp; Google Calendar</a>
       <a class="btn" href="#/widget">Phone widget</a>
-      <button class="btn" data-act="bg-sheet">Background picture…</button>
-      <button class="btn" data-act="export-xlsx">Export all weeks to Excel</button>
-      <button class="btn" data-act="export-json">Back up (JSON)</button>
-      <button class="btn" data-act="import-json">Restore from backup…</button>
-      <p class="muted small">Last backup: ${last}. Data lives only on this device, so back up now and then.</p>
+      <a class="btn" href="#/puzzle">Jigsaw</a>
       ${LEGAL_LINKS}
       <button class="btn" data-act="close">Close</button>
     </div>`);
 }
 
 // ---------- Export / import ----------
-async function deliver(blob, filename) {
-  const file = new File([blob], filename, { type: blob.type });
-  const mobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  if (mobile && navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: filename }); return true; }
-    catch (e) { if (e.name === 'AbortError') return false; }
-  }
-  const url = URL.createObjectURL(blob);
-  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-  return true;
-}
 
-function exportedWeeks() {
-  const cur = currentWeekKey();
-  return Object.values(state.weeks)
-    .filter((w) => Object.keys(w.items).length && (w.start <= cur || Object.values(w.items).some(hasData)))
-    .sort((a, b) => (a.start < b.start ? 1 : -1));
-}
 
-function exportXlsx() {
-  const bold = (v) => ({ v, s: 'b' });
-  const kindLabel = (it) => (it.kind === 'counter' ? 'Counter' : 'Task');
-  const targetCell = (it) => (it.kind === 'counter' ? `${round2(it.target)} ${it.unit}`.trim() : fmtH(it.hours));
 
-  const summary = [[bold('Week starting'), bold('Week ending'), bold('Planned h'), bold('Actual h'),
-    bold('Actual vs plan'), bold('Ticked'), bold('Total'), bold('% ticked')]];
-  const log = [[bold('Week starting'), bold('Date'), bold('Day'), bold('Frequency'), bold('Kind'), bold('Section'),
-    bold('Commitment'), bold('Target'), bold('Unit'), bold('Done / count'), bold('Met target'), bold('Actual h')]];
-  const weekSheets = [];
 
-  for (const w of exportedWeeks()) {
-    const s = weekStats(w);
-    summary.push([w.start, weekEnd(w.start), round2(s.planned), round2(s.actual),
-      { v: s.planned ? s.actual / s.planned : 0, s: 'pct' }, s.ticked, s.total, { v: s.pct, s: 'pct' }]);
-
-    const rows = [
-      [bold(`Week of ${weekRange(w.start)}`)],
-      ['Planned h', round2(s.planned), 'Actual h', round2(s.actual), '% ticked', { v: s.pct, s: 'pct' }],
-      [],
-      [bold('Section'), bold('Daily commitment'), bold('Kind'), bold('Target/day'),
-        ...DAY_NAMES.map((d, i) => bold(`${d} ${dayDate(w.start, i).getDate()}`)), bold('Days met'), bold('Actual h')],
-    ];
-    for (const [, it] of itemsOf(w, 'daily')) {
-      // Task cells: 1 when done. Counter cells: the count.
-      const cells = it.ticks.map((t, i) => (it.kind === 'task' ? (t ? 1 : null) : it.counts[i] || null));
-      rows.push([it.section, it.name, kindLabel(it), targetCell(it), ...cells,
-        it.ticks.filter((_, i) => dayDone(it, i)).length, round2(it.ticks.reduce((a, _, i) => a + dayHours(it, i), 0))]);
-      for (let i = 0; i < 7; i++) {
-        log.push([w.start, isoDate(dayDate(w.start, i)), DAY_NAMES[i], 'Daily', kindLabel(it), it.section, it.name,
-          it.kind === 'counter' ? it.target : 1, it.unit, it.kind === 'counter' ? it.counts[i] : it.ticks[i] ? 1 : 0,
-          dayDone(it, i) ? 1 : 0, round2(dayHours(it, i))]);
-      }
-    }
-    rows.push([], [bold('Section'), bold('Weekly / one-off'), bold('Kind'), bold('Date'), bold('Target'),
-      bold('Progress'), bold('Met target'), bold('Actual h')]);
-    for (const [, it] of [...itemsOf(w, 'weekly'), ...itemsOf(w, 'once').filter(isTask)]) {
-      rows.push([it.section, it.name, kindLabel(it), it.date || 'This week', targetCell(it),
-        it.kind === 'counter' ? it.count : it.done ? 'Done' : '', periodDone(it) ? 'Yes' : '', round2(periodHours(it))]);
-      log.push([w.start, it.date || '', it.date ? DAY_NAMES[dayIndexOf(it.date)] : '', FREQ_LABEL[it.freq], kindLabel(it),
-        it.section, it.name, it.kind === 'counter' ? it.target : 1, it.unit, it.kind === 'counter' ? it.count : it.done ? 1 : 0,
-        periodDone(it) ? 1 : 0, round2(periodHours(it))]);
-    }
-    weekSheets.push({ name: `Wk ${w.start}`, cols: [14, 30, 9, 12, 8, 8, 8, 8, 8, 8, 8, 10, 10], rows });
-  }
-
-  const blob = buildXlsx([
-    { name: 'Summary', cols: [14, 14, 11, 11, 14, 9, 8, 10], rows: summary },
-    ...weekSheets,
-    { name: 'Log', cols: [14, 12, 6, 10, 9, 14, 32, 8, 8, 12, 11, 9], rows: log },
-  ]);
-  deliver(blob, `commitments-${todayISO()}.xlsx`);
-}
-
-function exportJson() {
-  flush();
-  state.lastBackup = new Date().toISOString();
-  save();
-  const data = { app: 'weekly-commitment-tracker', exportedAt: state.lastBackup, state };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  deliver(blob, `commitments-backup-${todayISO()}.json`);
-}
-
-async function importJson(file) {
-  try {
-    const data = JSON.parse(await file.text());
-    const next = migrate(data.state || data);
-    const n = Object.keys(next.weeks).length;
-    if (!confirm(`Replace everything on this device with this backup (${next.commitments.length} commitments, ${n} weeks)?`)) return;
-    next.sync = state.sync;
-    state = next;
-    save(); flush();
-    closeSheet(); render();
-    toast('Backup restored');
-  } catch (e) {
-    toast(e.message || 'Import failed');
-  }
-}
 
 // ---------- Toast ----------
 let toastTimer;
@@ -7815,7 +6131,6 @@ document.addEventListener('click', (e) => {
     jumpHoldUntil = Date.now() + 900;
     return;
   }
-  if (editingNote && Date.now() - noteTapAt > 400 && !e.target.closest('.note.editing') && !e.target.closest('#sheet')) closeNote();
   const btn = e.target.closest('[data-act]');
   if (!btn) {
     const open = e.target.closest('[data-open]');
@@ -7826,50 +6141,7 @@ document.addEventListener('click', (e) => {
   const periodItem = () => state.weeks[btn.dataset.wk]?.items[btn.dataset.id];
   switch (act) {
     case 'apps-refresh': refreshApps({ force: true }); break;
-    case 'note-new': addNote(); break;
-    case 'board-mode': boardCal = btn.dataset.v === 'cal'; try { localStorage.setItem('boardCal', boardCal ? '1' : '0'); } catch {} render(); break;
-    case 'board-prev': boardWeek = addDaysISO(boardWeek || currentWeekKey(), -7); render(); break;
-    case 'board-next': boardWeek = addDaysISO(boardWeek || currentWeekKey(), 7); render(); break;
-    case 'board-this': boardWeek = null; render(); break;
-    case 'note-close': closeNote(); break;
-    case 'note-color': { const n = state.notes.find((x) => x.id === btn.dataset.id); if (n) { n.color = btn.dataset.color; save(); render(); focusNote(); } break; }
-    case 'note-date': openNoteDate(btn.dataset.id); break;
-    case 'note-task': noteToTask(btn.dataset.id); break;
-    case 'note-quick': pinNote(sheetCtx && sheetCtx.note, btn.dataset.date, btn.closest('form').time.value); break;
-    case 'note-unpin': pinNote(sheetCtx && sheetCtx.note, null); toast('Unpinned'); break;
     case 'note-done': { const n = state.notes.find((x) => x.id === btn.dataset.id); if (n) { n.done = !n.done; save(); render(); } break; }
-    case 'note-delete': {
-      const n = state.notes.find((x) => x.id === btn.dataset.id);
-      if (n && (!n.text.trim() || confirm('Delete this note?'))) { state.notes = state.notes.filter((x) => x !== n); if (editingNote === n.id) editingNote = null; save(); render(); }
-      break;
-    }
-    case 'note-clear': state.notes = state.notes.filter((n) => !n.done); save(); render(); break;
-    case 'tree-lit': toggleLeaf(btn.dataset.tree, btn.dataset.node, btn.dataset.map === '1'); break;
-    case 'tree-cover': toggleCover(btn.dataset.tree, btn.dataset.node); break;
-    case 'map-prompt': { const f = btn.closest('form'); copyText(mapPrompt(f.name.value.trim(), f.outline.value)); break; }
-    case 'tree-fold': {
-      const id = btn.dataset.node, open = btn.getAttribute('aria-expanded') === 'false';
-      foldState.set(id, !open);
-      if (open) pendingFocusNode = id;
-      render(); break;
-    }
-    case 'tree-view': treeView = btn.dataset.v; render(); break;
-    case 'mini-hide': setMini(true); break;
-    case 'mini-show': setMini(false); break;
-    case 'tree-prompt': {
-      const f = btn.closest('form'), cid = f.courseId ? +f.courseId.value : 0;
-      copyText(cid ? courseTreePrompt(f.name.value.trim(), f.source.value.trim(), cid) : treePrompt(f.name.value.trim(), f.source.value.trim())); break;
-    }
-    case 'tree-delete': {
-      if (!confirm('Delete this knowledge tree?')) break;
-      const gone = state.trees.find((t) => t.id === route.treeId);
-      state.trees = state.trees.filter((t) => t.id !== route.treeId); save(); location.replace(gone && gone.courseId ? `#/academics/${gone.courseId}` : '#/knowledge'); break;
-    }
-    case 'test-delete': {
-      if (!confirm('Delete this result?')) break;
-      state.tests = state.tests.filter((t) => t.id !== route.testId); save(); location.replace('#/tests'); break;
-    }
-    case 'tests-export': copyText(radarExport()); break;
     case 'buddy-tick': { const me = buddyView && buddyView.members.find((m) => m.me); buddyAutoDate = null; buddyTick(!(me && me.days[todayISO()])); break; }
     case 'buddy-nudge': {
       const names = buddyView.members.filter((m) => !m.me && !m.days[todayISO()]).map((m) => m.name).join(' & ');
@@ -7916,7 +6188,6 @@ document.addEventListener('click', (e) => {
     case 'acad-copy-list': acadCopyList(); break;
     case 'acad-wb': acadToWhiteboard(+btn.dataset.course, +btn.dataset.id); break;
     case 'acad-plan': openAcadPlan(+btn.dataset.course, btn.dataset.id ? +btn.dataset.id : null); break;
-    case 'acad-tree-new': treeNewCourse = +btn.dataset.course; location.hash = '#/knowledge/new'; break;
     case 'acad-untrack': { const id = route.courseId; closeSheet(); acadSetTracked(id, false).then(() => { location.hash = '#/academics'; }); break; }
     case 'buddy-ev': openBuddyEvent(btn.dataset); break;
     case 'pm-month': if (btn.dataset.mk) { projMonthView.set(route.projId, btn.dataset.mk); render(); } break;
@@ -7931,17 +6202,6 @@ document.addEventListener('click', (e) => {
     }
     case 'meet-edit': openMeetSheet(btn.dataset.id); break;
     case 'meet-delete': removeFromSheet('project_meetings'); break;
-    case 'card-new': {
-      // the next free spot, left to right, in rows that fit the board's width
-      const b = projBoards.get(route.projId), n = b ? b.cards.length : 0, board = $app.querySelector('.pbrain');
-      const per = Math.max(1, Math.floor(((board ? board.clientWidth : 360) - 20) / 170));
-      addCard(20 + (n % per) * 170, 20 + Math.floor(n / per) * 110); break;
-    }
-    case 'card-done': closeCard(); break;
-    case 'card-delete': deleteCard(btn.dataset.id); break;
-    case 'card-color': { const c = findCard(btn.dataset.id); if (c) { c.color = btn.dataset.color; saveCardSoon(c); render(); } break; }
-    case 'card-unschedule': unscheduleCard(btn.dataset.id); break;
-    case 'card-day': scheduleCard(sheetCtx && sheetCtx.card, btn.dataset.day); closeSheet(); break;
     case 'invite-accept': acceptInvite(btn.dataset.id); break;
     case 'invite-decline': declineInvite(btn.dataset.id); break;
     case 'invite-takeback': takeBackInvite(btn.dataset.email); break;
@@ -7962,9 +6222,12 @@ document.addEventListener('click', (e) => {
       if (appsExpanded.has(k)) appsExpanded.delete(k); else appsExpanded.add(k);
       render(); break;
     }
-    case 'app-today': toggleAppToday(btn.dataset.id); break;
+    case 'app-more': openAppMore(btn.dataset.id); break;
+    case 'acad-more': openItemMore(+btn.dataset.course, +btn.dataset.id, !!btn.dataset.week); break;
+    case 'app-today': closeSheet(); toggleAppToday(btn.dataset.id); break;
     case 'app-followup': openFollowupSheet(btn.dataset.id); break;
     case 'app-done': {
+      closeSheet();
       const a = state.apps.items.find((x) => x.id === btn.dataset.id);
       if (a) { updateApp(a.id, { done: !a.done }); toast(a.done ? `${a.company}: done ✓` : `${a.company}: not done`); }
       break;
@@ -8074,12 +6337,6 @@ document.addEventListener('click', (e) => {
     case 'review-all': document.querySelectorAll('input[name="imp"]').forEach((x) => { x.checked = btn.dataset.on === '1'; }); btn.dataset.on = btn.dataset.on === '1' ? '0' : '1'; break;
     case 'sync-on': case 'sync-now': case 'sync-copy': case 'sync-off': case 'sync-delete': syncAction(act); break;
     case 'widget-on': case 'widget-off': case 'widget-send': case 'widget-reset': case 'widget-copy': widgetAction(act); break;
-    case 'export-xlsx': exportXlsx(); break;
-    case 'export-json': exportJson(); break;
-    case 'import-json': document.getElementById('importFile').click(); break;
-    case 'bg-sheet': openBgSheet(); break;
-    case 'bg-pick': document.getElementById('bgFile').click(); break;
-    case 'bg-remove': bg.blob = null; applyBg(); bgWrite().catch(() => {}); openBgSheet(); break;
   }
 });
 
@@ -8106,34 +6363,9 @@ function syncFormVisibility(form) {
   form.dataset.tbc = String(fd.get('tbc') === 'on');
 }
 document.addEventListener('input', (e) => {
-  if (e.target.dataset && e.target.dataset.cardText) {
-    const c = findCard(e.target.dataset.cardText);
-    if (c) { c.text = e.target.value.slice(0, 400); saveCardSoon(c); }
-    return;
-  }
-  if (e.target.dataset && e.target.dataset.noteText) {
-    const n = state.notes.find((x) => x.id === e.target.dataset.noteText);
-    if (n) { n.text = e.target.value.slice(0, 400); save(); }
-    return;
-  }
-  const tform = e.target.closest('form[data-form="tree"]');
-  if (tform && ['outline', 'mapOutline', 'name'].includes(e.target.name)) {
-    treeDraft = { outline: tform.outline.value, map: tform.mapOutline.value };
-    const box = $app.querySelector('.tpreview-wrap');
-    if (box) box.innerHTML = treePreviewHtml(tform.name.value, treeDraft.outline, treeDraft.map);
-    return;
-  }
-  const tf = e.target.closest('form[data-form="test"]');
-  if (tf && e.target.name === 'mode') { tf.dataset.mode = e.target.value; return; }
   if (e.target.name === 'customColor') { pickCustomColor(e.target); return; }
   if ((e.target.name === 'starts' || e.target.name === 'ends') && e.target.form && e.target.form.dataset.form === 'project') {
     document.getElementById('projLength').textContent = projLengthLabel(e.target.form.starts.value, e.target.form.ends.value);
-    return;
-  }
-  if (e.target.id === 'bgStrength') {
-    bg.strength = Number(e.target.value) / 100;
-    document.getElementById('bgpic').style.opacity = bg.strength;
-    document.getElementById('bgPct').textContent = `${e.target.value}%`;
     return;
   }
   const fu = e.target.closest('form[data-form="followup"]');
@@ -8157,10 +6389,6 @@ document.addEventListener('change', (e) => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { acad.termStart = v; render(); acadDb.term(v).catch((err) => toast(sbErr(err))); }
     return;
   }
-  if (e.target.dataset && e.target.dataset.cardDate) { // the date box on a card being edited
-    if (e.target.value) scheduleCard(e.target.dataset.cardDate, e.target.value); else unscheduleCard(e.target.dataset.cardDate);
-    return;
-  }
   if (e.target.name === 'owner' && e.target.closest('form[data-form="tree-task"]')) { treeNewOwner = e.target.value; return; }
   if (e.target.closest('form[data-form="buddy-routine"]')) {
     if (e.target.name === 'share') { setShareCalendar(e.target.value); return; }
@@ -8168,25 +6396,12 @@ document.addEventListener('change', (e) => {
     if (e.target.name.startsWith('link:')) { const id = e.target.name.slice(5); if (e.target.value) prefs.links[id] = e.target.value; else delete prefs.links[id]; } else prefs.commitmentId = e.target.value || null;
     state.buddy = prefs; buddyAutoDate = null; save(); render(); return;
   }
-  if (e.target.id === 'bgFile') {
-    const file = e.target.files[0];
-    e.target.value = '';
-    if (file) shrinkImage(file).then((blob) => { bg.blob = blob; applyBg(); openBgSheet(); return bgWrite(); })
-      .catch((err) => toast('Could not use that picture: ' + err.message));
-    return;
-  }
-  if (e.target.id === 'bgStrength') { bgWrite().catch(() => {}); return; }
   if (e.target.closest('form[data-form="notify-prefs"]')) { saveNotifyPrefs(e.target.form); return; }
-  if (e.target.id === 'importFile') {
-    const f = e.target.files[0];
-    e.target.value = '';
-    if (f) importJson(f);
-    return;
-  }
   const form = e.target.closest('form[data-form="commitment"]');
   if (form) syncFormVisibility(form);
 });
 
+document.addEventListener('invalid', (e) => { const d = e.target.closest && e.target.closest('details.more'); if (d) d.open = true; }, true);
 document.addEventListener('submit', (e) => {
   const form = e.target.dataset.form;
   if (!form) return;
@@ -8198,9 +6413,6 @@ document.addEventListener('submit', (e) => {
   else if (form === 'review') submitReview(e.target);
   else if (form === 'sync-join') joinSync(e.target);
   else if (form === 'followup') saveFollowup(e.target);
-  else if (form === 'tree') saveTreeForm(e.target);
-  else if (form === 'note-date') { const f = new FormData(e.target); pinNote(e.target.dataset.id, f.get('date') || todayISO(), f.get('time'), f.get('endDate') || null); }
-  else if (form === 'test') saveTestForm(e.target);
   else if (form === 'buddy-create') createPact(e.target);
   else if (form === 'tree-task') treeAddTask(e.target);
   else if (form === 'project') saveProjectForm(e.target);
@@ -8266,8 +6478,6 @@ document.addEventListener('keydown', (e) => {
   // Enter in the logo website box finds the logo instead of saving the project
   if (e.key === 'Enter' && e.target.id === 'logoSite') { e.preventDefault(); e.target.form.querySelector('[data-act="logo-find"]').click(); return; }
   if (e.key === 'Escape' && !$sheet.hidden) closeSheet();
-  else if (e.key === 'Escape' && editingNote) closeNote();
-  else if (e.key === 'Escape' && editingCard) closeCard();
 });
 
 // Coming back to the app (e.g. next morning): refresh "today", and follow the week
@@ -8278,14 +6488,13 @@ let hiddenAt = 0;
 function backToToday() {
   viewKey = currentWeekKey();
   calViewDay = todayISO();
-  boardWeek = null;
   planWk = null;
   planJump = true;
   if (route.tab !== 'plan' || route.id || route.page) location.hash = '#/plan'; else render();
 }
 document.addEventListener('visibilitychange', () => {
   if (!state) return; // still loading saved data
-  if (document.visibilityState === 'visible' && hiddenAt && Date.now() - hiddenAt > BACK_TO_TODAY_MS && !formOpen() && !sheetCtx && !editingNote) backToToday();
+  if (document.visibilityState === 'visible' && hiddenAt && Date.now() - hiddenAt > BACK_TO_TODAY_MS && !formOpen() && !sheetCtx) backToToday();
   if (document.visibilityState === 'hidden') {
     hiddenAt = Date.now();
     flush();
@@ -8339,7 +6548,6 @@ let reloadingForUpdate = false;
   }
   if (state.sync.enabled) resetRecordHashes();
   render();
-  bgRead().then((saved) => { if (saved) { bg = { strength: 0.5, ...saved }; applyBg(); } });
   syncThenCalendars();
   setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, SYNC_POLL_MS);
   refreshBuddy();

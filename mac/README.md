@@ -18,3 +18,14 @@ A native Mac app around the web app plus a desktop widget.
    and copy `build/Build/Products/Release/Commitments.app` to /Applications.
 
 With a free Personal Team the signature lasts about a year; rebuild when it expires.
+
+## iPhone
+
+The same project has an iPhone app (`ICommit`) and its home-screen widget (`ICommitWidget`). It shows the
+web app at `APP_HOST`, keeps an offline copy, opens Google sign-in in a Safari sheet, and feeds the widget.
+
+- Simulator: `cd mac && xcodegen`, then run the `ICommit` scheme on an iPhone simulator.
+- To try a copy running on this Mac, add the launch argument `-home http://localhost:8766/` (debug builds only).
+- A real phone or TestFlight needs the team ID of a paid Apple Developer account in `Local.xcconfig`.
+
+Not built yet: the app's own notifications.

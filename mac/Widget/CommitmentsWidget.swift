@@ -30,7 +30,7 @@ struct CommitmentsWidget: Widget {
             CommitmentsWidgetView(entry: entry)
         }
         .configurationDisplayName("I Commit!")
-        .description("Today's progress and what's left. Click to open the app.")
+        .description("Today's progress and what's left. Opens the app.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
@@ -42,7 +42,7 @@ struct CommitmentsWidgetView: View {
     var body: some View {
         content
             .widgetURL(URL(string: "commitments://today"))
-            .containerBackground(for: .widget) { Color(nsColor: .windowBackgroundColor) }
+            .containerBackground(for: .widget) { Color.widgetPaper }
     }
 
     @ViewBuilder private var content: some View {

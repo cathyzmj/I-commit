@@ -23,13 +23,13 @@ browser, and as a native Mac app with a desktop widget.
 - **Sync** between devices with a private key (no accounts). Per-record merge, so edits on two
   devices don't overwrite each other.
 - **Widgets:** a Scriptable widget for iPhone and a native macOS widget (`mac/`).
-- **Offline-first:** data lives in IndexedDB on each device; Excel export and JSON backup/restore.
+- **Offline-first:** data lives in IndexedDB on each device; sign in to keep a copy and sync.
 
 ## Layout
 | Path | What it is |
 |---|---|
 | `index.html`, `app.js`, `styles.css` | The app (plain HTML/CSS/JS, no build step, no dependencies) |
-| `ics.js`, `xlsx.js` | Calendar parser (recurrence, time zones, exceptions) and a tiny Excel writer |
+| `ics.js` | Calendar parser (recurrence, time zones, exceptions) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Offline support and home-screen install |
 | `widget/commitments-widget.js` | Scriptable widget (the app fills in your key and address when you copy it) |
 | `server/` | Cloudflare Worker: `/api/ics` (calendar relay), `/api/sync`, `/api/widget`, `/api/apps` (Notion), `/api/notify` (Telegram reminders, sent by a cron every minute), `/api/feed` (calendar link), storage on D1 |
@@ -73,4 +73,4 @@ Your data stays on your devices. With sync on, a copy is stored in your own Clou
 under a hash of your private sync key. With reminders on, a plan of your next 8 days (item names and
 times) is stored there too, with your Telegram chat ID; with the calendar link on, so are the items
 the link shows. Calendar links, the sync key and the widget key are stored on
-the device (and in JSON backups), never in this repository.
+the device, never in this repository.

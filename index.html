@@ -18,7 +18,6 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="bgpic" hidden></div>
   <!-- Shown until the app starts (and to anything that reads the page without running it). -->
   <div id="app"><main class="card static-home">
     <h1>I Commit!</h1>
@@ -28,9 +27,6 @@
   </main></div>
   <div id="sheet" class="sheet-wrap" hidden></div>
   <div id="toast" role="status" hidden></div>
-  <input type="file" id="importFile" accept="application/json,.json" hidden>
-  <input type="file" id="bgFile" accept="image/*" hidden>
-  <script src="xlsx.js"></script>
   <script src="ics.js"></script>
   <script src="vendor/supabase.js"></script>
   <script src="garden.js"></script>

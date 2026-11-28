@@ -2,6 +2,8 @@ import Foundation
 import SwiftUI
 #if canImport(AppKit)
 import AppKit
+#else
+import UIKit
 #endif
 
 /// The summary the web app produces for widgets (see widgetSnapshot() in app.js).
@@ -112,11 +114,27 @@ extension Double {
 
 extension Color {
     /// The app's green (#1d7a5f light / #3cbf94 dark).
+    #if os(macOS)
     static let commitAccent = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(srgbRed: 0.235, green: 0.749, blue: 0.580, alpha: 1)
             : NSColor(srgbRed: 0.114, green: 0.478, blue: 0.373, alpha: 1)
     })
+    #else
+    static let commitAccent = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.235, green: 0.749, blue: 0.580, alpha: 1)
+            : UIColor(red: 0.114, green: 0.478, blue: 0.373, alpha: 1)
+    })
+    #endif
+
+    static var widgetPaper: Color {
+        #if os(macOS)
+        Color(nsColor: .windowBackgroundColor)
+        #else
+        Color(uiColor: .systemBackground)
+        #endif
+    }
 }
 
 extension Snapshot {
